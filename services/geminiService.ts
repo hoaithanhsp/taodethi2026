@@ -240,7 +240,7 @@ export const generateStep1Matrix = async (
   }
 
   const prompt = `
-  Hãy tạo **MA TRẬN ĐỀ THI** (HTML Table) cho môn **${data.subject}**, khối **${data.grade}**.
+  Hãy tạo **MA TRẬN ĐỀ KIỂM TRA** (HTML Table) cho môn **${data.subject}**, khối **${data.grade}**.
   
   **CẤU HÌNH ĐỀ THI:**
   - Loại đề: ${data.examType}
@@ -248,43 +248,84 @@ export const generateStep1Matrix = async (
   - Tổng số tiết trọng tâm: ${totalSelectedPeriods} tiết
   
   **CẤU TRÚC SỐ LƯỢNG CÂU HỎI (Bắt buộc tuân thủ):**
-  - Dạng I (4 lựa chọn): Biết ${config.type1.biet}, Hiểu ${config.type1.hieu}, VD ${config.type1.van_dung}
-  - Dạng II (Đúng/Sai): Biết ${config.type2.biet}, Hiểu ${config.type2.hieu}, VD ${config.type2.van_dung}
-  - Dạng III (Trả lời ngắn): Biết ${config.type3.biet}, Hiểu ${config.type3.hieu}, VD ${config.type3.van_dung}
+  - Nhiều lựa chọn (Dạng I): Biết ${config.type1.biet}, Hiểu ${config.type1.hieu}, VD ${config.type1.van_dung}
+  - Đúng - Sai (Dạng II): Biết ${config.type2.biet}, Hiểu ${config.type2.hieu}, VD ${config.type2.van_dung}
+  - Trả lời ngắn (Dạng III): Biết ${config.type3.biet}, Hiểu ${config.type3.hieu}, VD ${config.type3.van_dung}
   - Tự luận: Biết ${config.essay.biet}, Hiểu ${config.essay.hieu}, VD ${config.essay.van_dung}
   
   ${scoringInstructions}
+
+  **===== ĐỊNH DẠNG BẢNG BẮT BUỘC (Rất quan trọng - phải tuân thủ 100%) =====**
+
+  Tiêu đề bảng (in đậm, căn giữa, ở trên bảng):
+  **MA TRẬN ĐỀ KIỂM TRA ... - ${data.subject.toUpperCase()} ${data.grade.toUpperCase()}**
+
+  **HEADER BẢNG (3 tầng merge):**
+  - Tầng 1 (Row 1): 
+    + TT (rowspan=3) | Chương/chủ đề (rowspan=3) | Nội dung/đơn vị kiến thức (rowspan=3) | "Mức độ đánh giá" (colspan= tổng cột TNKQ) | Tổng số câu (colspan=3) | Tỉ lệ % điểm (rowspan=3)
+  - Tầng 2 (Row 2):
+    + "TNKQ" (colspan= tổng cột TNKQ)
+  - Tầng 3 (Row 3):
+    + "Nhiều lựa chọn" (colspan=3) → rồi bên dưới nó: Biết | Hiểu | VD
+    + "Đúng - Sai" (colspan=3) → bên dưới: Biết | Hiểu | VD  
+    + "Trả lời ngắn" (colspan=3) → bên dưới: Biết | Hiểu | VD
+    + Biết | Hiểu | VD (cho cột Tổng số câu)
+
+  Thực tế header cần 4 dòng:
+  - Dòng header 1: TT(rowspan=4) | Chương/chủ đề(rowspan=4) | Nội dung/đơn vị kiến thức(rowspan=4) | Mức độ đánh giá(colspan=9 hoặc 12 tùy có tự luận) | Tổng số câu(colspan=3, rowspan=2) | Tỉ lệ % điểm(rowspan=4)
+  - Dòng header 2: TNKQ(colspan=9 hoặc 12)
+  - Dòng header 3: Nhiều lựa chọn(colspan=3) | Đúng - Sai(colspan=3) | Trả lời ngắn(colspan=3) ${hasEssay ? '| Tự luận(colspan=3)' : ''} | Biết | Hiểu | VD
+  - Dòng header 4: Biết | Hiểu | VD | Biết | Hiểu | VD | Biết | Hiểu | VD ${hasEssay ? '| Biết | Hiểu | VD' : ''}
+
+  ${hasEssay ? 'Nếu CÓ tự luận: thêm cột "Tự luận" (colspan=3) sau "Trả lời ngắn", header TNKQ colspan tăng thêm 3.' : 'KHÔNG CÓ tự luận => KHÔNG tạo cột Tự luận.'}
+
+  **NỘI DUNG BẢNG - MỖI BÀI HỌC CÓ 2 DÒNG (sub-row):**
+  Với mỗi bài học (Nội dung/ĐVKT), tạo CHÍNH XÁC **2 dòng** (2 <tr>):
+
+  **Dòng 1 (Số lượng câu hỏi):**
+  - Ô "Nội dung" ghi: Tên bài + (X tiết) — dùng rowspan=2
+  - Các ô Biết/Hiểu/VD của từng dạng: Ghi SỐ LƯỢNG câu hỏi (ví dụ: 2, 1, 0, ...)
+  - Ô "Tổng số câu" Biết/Hiểu/VD: rowspan=2, tính tổng theo hàng ngang
+  - Ô "Tỉ lệ % điểm": rowspan=2, ví dụ "15,0%", "25,0%"
+
+  **Dòng 2 (Tên điểm / Mã câu):**
+  - Các ô Biết/Hiểu/VD: Ghi viết tắt loại điểm, ví dụ:
+    + "TD" (Tổng điểm) cho dạng Nhiều lựa chọn
+    + "TD" cho Đúng - Sai, "GQVĐ" khi cần
+    + Nếu có câu hỏi ở ô đó, ghi "TD" hoặc mã điểm. Nếu KHÔNG có ô đó (0 câu), để TRỐNG.
   
-  ${columnStructureInstructions}
+  **Merge cells STT & Chương/chủ đề:** 
+  - Nếu 1 chương có nhiều bài => cột TT dùng rowspan = (số bài × 2), cột Chương/chủ đề cũng rowspan = (số bài × 2).
+
+  **FOOTER BẢNG (3 dòng cuối):**
+  1. **Tổng số câu**: Tổng cộng số câu hỏi theo từng cột Biết/Hiểu/VD của từng dạng + tổng toàn bảng cuối.
+  2. **Tổng số điểm**: Tổng điểm theo từng cột + tổng cuối = 10.
+  3. **Tỉ lệ % điểm của ma trận**: "30%", "40%", "30%"... cho mỗi nhóm dạng, cuối cùng 100%.
 
   **QUY TẮC ĐIỂM SỐ VÀNG (BẮT BUỘC):**
-  1. **BỘI SỐ 0.25:** Mọi điểm số (từng câu và tổng dòng) PHẢI là bội số của 0.25.
-  2. **KHÔNG DÙNG SỐ LẺ:** TUYỆT ĐỐI KHÔNG dùng 0.33, 0.42...
-  3. **TÍNH TỔNG DÒNG:** Tại mỗi hàng nội dung, tính tổng điểm = (Số câu I * Điểm I) + (Số câu II * Điểm II) + ... **Làm tròn về bội 0.25 gần nhất**.
-  4. **HIỂN THỊ CỘT:** Nếu số lượng câu hỏi của một Dạng = 0 (ví dụ Tự luận = 0), thì **KHÔNG TẠO** cột cho dạng đó trong bảng.
+  1. Mọi điểm số PHẢI là bội số của 0.25.
+  2. TUYỆT ĐỐI KHÔNG dùng 0.33, 0.42...
+  3. Tổng điểm toàn bảng = 10.
+  4. Nếu số lượng câu hỏi của một Dạng = 0, thì KHÔNG TẠO cột cho dạng đó.
 
-  **DỮ LIỆU ĐẦU VÀO (Chỉ phân bổ câu hỏi cho các bài này):**
+  **DỮ LIỆU ĐẦU VÀO:**
   ${JSON.stringify(selectedChapters, null, 2)}
 
   **YÊU CẦU OUTPUT:**
-  1. Xuất ra một Full HTML Document (<!DOCTYPE html>...). 
-     - Font: Times New Roman, size 13pt.
-     - Bảng phải có border collapse, padding chuẩn.
-  2. Cấu trúc bảng HTML:
-     - Merge cells (rowspan) cho cột "Chủ đề" nếu chủ đề có nhiều bài học.
-     - Cột "Nội dung/Đơn vị kiến thức" tương ứng với tên Bài học.
-  3. Phân bổ số câu hỏi (C1, C2...) vào các ô dựa trên tỷ lệ số tiết của bài học đó so với tổng số tiết (${totalSelectedPeriods}).
-     - Bài nào nhiều tiết hơn thì nhiều câu hỏi hơn.
-     - **QUAN TRỌNG VỚI DẠNG II:** Nếu 1 câu hỏi có nhiều ý được chia nhỏ ở các mức độ khác nhau, hãy ghi rõ. Ví dụ: C13a,b ở cột Biết và C13c,d ở cột Hiểu.
-     - Đảm bảo tổng số câu khớp với cấu hình ở trên.
-  4. Cột Điểm: Tính toán CHÍNH XÁC theo cấu hình điểm số bên trên.
-  
+  1. Xuất ra Full HTML Document (<!DOCTYPE html>...). 
+  2. Tiêu đề bảng (h2, căn giữa, in đậm): "MA TRẬN ĐỀ KIỂM TRA ... - ${data.subject.toUpperCase()} ${data.grade.toUpperCase()}"
+  3. Phân bổ câu hỏi theo tỷ lệ số tiết: bài nhiều tiết hơn → nhiều câu hơn.
+  4. **QUAN TRỌNG VỚI DẠNG II (Đúng/Sai):** Nếu 1 câu hỏi có nhiều ý chia ở các mức khác nhau, ghi rõ (C13a,b ở Biết, C13c,d ở Hiểu).
+  5. Đảm bảo tổng số câu của mỗi dạng khớp chính xác cấu hình.
+
   **Style CSS (Include in <style>):**
-  body { font-family: "Times New Roman", serif; font-size: 13pt; line-height: 1.3; }
+  body { font-family: "Times New Roman", serif; font-size: 13pt; line-height: 1.3; margin: 20px; }
+  h2 { text-align: center; font-weight: bold; text-transform: uppercase; margin-bottom: 15px; }
   table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
-  th, td { border: 1px solid black; padding: 5px; text-align: center; vertical-align: middle; }
-  th { background-color: #f0f0f0; font-weight: bold; }
-  .left-align { text-align: left; }
+  th, td { border: 1px solid black; padding: 4px 6px; text-align: center; vertical-align: middle; }
+  th { font-weight: bold; }
+  .left-align { text-align: left; padding-left: 8px; }
+  .bold { font-weight: bold; }
   `;
 
   return callWithFallback(async (ai, model) => {
@@ -314,44 +355,74 @@ export const generateStep2Specs = async (
   }));
 
   const prompt = `
-  Dựa trên **Ma trận đề thi** (HTML) đã tạo (được cung cấp bên dưới hoặc đã có), hãy tạo **BẢNG ĐẶC TẢ CHI TIẾT** (Full HTML Document).
-  Nếu bạn nhận được HTML của ma trận, hãy phân tích nó để lấy số lượng câu hỏi và mã câu hỏi chính xác.
+  Dựa trên **Ma trận đề kiểm tra** (HTML) đã tạo, hãy tạo **BẢNG ĐẶC TẢ ĐỀ KIỂM TRA** (Full HTML Document).
+  Phân tích HTML ma trận để lấy số lượng câu hỏi, mã câu, cấu trúc cột chính xác.
 
   **MA TRẬN ĐẦU VÀO:**
   ${matrixContent}
 
-  **DỮ LIỆU YÊU CẦU CẦN ĐẠT (Tham khảo nội dung):**
-  ${objectivesMap.join('\n')}
+  **DỮ LIỆU YÊU CẦU CẦN ĐẠT:**
+  ${objectivesMap.join('\\n')}
 
-  **YÊU CẦU OUTPUT:**
-  1. Xuất ra Full HTML Document (<!DOCTYPE html>...). Font Times New Roman 13pt.
-  2. **CẤU TRÚC BẢNG:**
-     - Phải khớp 100% với cấu trúc cột của Ma trận (nếu Ma trận không có Tự luận thì Bảng đặc tả cũng KHÔNG CÓ).
-     - Header row 1: STT | Chủ đề | Nội dung | Mức độ KT, ĐG | [Các nhóm Dạng câu hỏi có số lượng > 0]
-  3. **NỘI DUNG:**
-     - Cột "Mức độ kiểm tra, đánh giá": Phải copy chính xác nội dung từ dữ liệu Yêu cầu cần đạt.
-     - **QUAN TRỌNG:** Tại mỗi dòng Biết/Hiểu/Vận dụng, hãy THÊM một ví dụ dạng toán ngắn gọn (in nghiêng) minh họa.
-     - Các cột Số câu hỏi: Điền chính xác mã câu (C1, C2...) khớp 100% với Ma trận.
-     - **XỬ LÝ DẠNG II (Đúng/Sai):** Nếu ma trận ghi C13a,b ở cột Biết và C13c,d ở cột Hiểu, hãy giữ nguyên cách ghi này trong Bảng đặc tả. Đừng tách thành câu riêng biệt.
+  **===== ĐỊNH DẠNG BẢNG ĐẶC TẢ BẮT BUỘC (Tuân thủ 100%) =====**
 
-     - Thêm chú thích năng lực toán học (1), (2), (3).
+  Tiêu đề bảng (in đậm, căn giữa, ở trên bảng):
+  **ĐẶC TẢ ĐỀ KIỂM TRA ... - ${data.subject.toUpperCase()} ${data.grade.toUpperCase()}**
 
-  4. **QUY TẮC CHÚ THÍCH (FOOTNOTES) - BẮT BUỘC:**
-     Cuối bảng đặc tả, hãy thêm phần chú thích năng lực toán học theo ĐÚNG FORMAT sau (giữ nguyên không đổi, mỗi dòng cách nhau 1 dòng trống):
-     
-     (1): Năng lực tư duy và lập luận toán học
-     
-     (2): Năng lực mô hình hóa toán học
-     
-     (3): Năng lực giải quyết vấn đề toán học
+  **HEADER BẢNG (4 dòng, giống hệt ma trận nhưng thêm cột "Yêu cầu cần đạt"):**
+  - Dòng header 1: TT(rowspan=4) | Chương/chủ đề(rowspan=4) | Nội dung/đơn vị kiến thức(rowspan=4) | **Yêu cầu cần đạt**(rowspan=4) | Mức độ đánh giá(colspan=...) | Tổng số câu(colspan=3, rowspan=2) | Tỉ lệ % điểm(rowspan=4)
+  - Dòng header 2: TNKQ(colspan=...)
+  - Dòng header 3: Nhiều lựa chọn(colspan=3) | Đúng - Sai(colspan=3) | Trả lời ngắn(colspan=3) [+ Tự luận(colspan=3) nếu có] | Biết | Hiểu | VD
+  - Dòng header 4: Biết | Hiểu | VD | Biết | Hiểu | VD | Biết | Hiểu | VD [+ Biết | Hiểu | VD nếu có tự luận]
+
+  CẤU TRÚC CỘT PHẢI **KHỚP 100%** với Ma trận (nếu Ma trận không có Tự luận → Đặc tả cũng không có).
+
+  **NỘI DUNG BẢNG - MỖI BÀI HỌC CÓ 2 DÒNG (sub-row):**
+  Với mỗi bài học, tạo CHÍNH XÁC **2 dòng** (2 <tr>):
+
+  **Dòng 1:**
+  - Ô "Nội dung/ĐVKT" ghi: Tên bài + (X tiết) — dùng rowspan=2
+  - Ô "Yêu cầu cần đạt" (rowspan=2): Ghi chi tiết nội dung yêu cầu cần đạt theo format:
+    ***Nhận biết :***
+    – Chi tiết nội dung biết...
+    ***Thông hiểu:***
+    – Chi tiết nội dung hiểu...
+    ***Vận dụng :***
+    – Chi tiết nội dung vận dụng...
+    (Lấy nội dung từ DỮ LIỆU YÊU CẦU CẦN ĐẠT bên trên)
+  - Các ô Biết/Hiểu/VD của từng dạng: SỐ LƯỢNG câu hỏi (khớp Ma trận)
+  - Ô "Tổng số câu" + "Tỉ lệ %" : rowspan=2, giống Ma trận
+
+  **Dòng 2:**
+  - Các ô Biết/Hiểu/VD: Ghi "TD", "GQVĐ", hoặc để trống (giống Ma trận)
+
+  **Merge cells STT & Chương/chủ đề:**
+  - Nếu 1 chương có nhiều bài => cột TT rowspan = (số bài × 2), cột Chương/chủ đề cũng rowspan = (số bài × 2).
+
+  **FOOTER BẢNG (3 dòng cuối - giống hệt Ma trận):**
+  1. **Tổng số câu:** Tổng theo từng cột + tổng cuối
+  2. **Tổng số điểm:** Tổng theo từng cột + tổng = 10
+  3. **Tỉ lệ % điểm của ma trận:** 30%, 40%, 30%... cuối = 100%
+
+  **QUAN TRỌNG:**
+  - Cột "Yêu cầu cần đạt" phải đủ rộng, text-align: left, chứa nội dung chi tiết
+  - Số câu hỏi và mã câu PHẢI khớp 100% với Ma trận
+  - Nếu Ma trận ghi "GQVĐ" ở ô nào, Đặc tả cũng ghi y chang
+
+  **QUY TẮC CHÚ THÍCH (FOOTNOTES) - BẮT BUỘC:**
+  Cuối bảng thêm:
+  (1): Năng lực tư duy và lập luận toán học
+  (2): Năng lực mô hình hóa toán học
+  (3): Năng lực giải quyết vấn đề toán học
 
   **Style CSS:**
-  body { font-family: "Times New Roman", serif; font-size: 13pt; }
-  table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-  th, td { border: 1px solid black; padding: 4px; text-align: center; vertical-align: middle; font-size: 12pt; }
-  th { background-color: #E7F3FF; font-weight: bold; }
-  .text-left { text-align: left; padding: 8px; }
-  .math-example { font-style: italic; color: #444; display: block; margin-top: 2px; font-size: 11pt; }
+  body { font-family: "Times New Roman", serif; font-size: 13pt; margin: 20px; }
+  h2 { text-align: center; font-weight: bold; text-transform: uppercase; margin-bottom: 15px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+  th, td { border: 1px solid black; padding: 4px 6px; text-align: center; vertical-align: middle; }
+  th { font-weight: bold; }
+  .left-align, .text-left { text-align: left; padding: 6px 8px; vertical-align: top; }
+  .bold { font-weight: bold; }
   `;
 
   return callWithFallback(async (ai, model) => {
