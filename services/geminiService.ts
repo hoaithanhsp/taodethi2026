@@ -110,28 +110,38 @@ export const extractInfoFromDocument = async (file: File): Promise<Partial<Input
   const base64Data = await fileToBase64(file);
 
   const prompt = `
-    Bạn là chuyên gia phân tích chương trình giáo dục. Hãy đọc file đính kèm (Kế hoạch dạy học/PPCT) và trích xuất dữ liệu cấu trúc cực kỳ chi tiết.
+    Bạn là chuyên gia phân tích chương trình giáo dục Việt Nam. Hãy đọc file đính kèm (Kế hoạch dạy học/PPCT) và trích xuất dữ liệu cấu trúc cực kỳ chi tiết.
+
+    **===== NGUYÊN TẮC VÀNG: CHỈ TRÍCH XUẤT, KHÔNG SÁNG TẠO =====**
+    1. TUYỆT ĐỐI CHỈ trích xuất nội dung CÓ SẴN trong file đính kèm. KHÔNG ĐƯỢC tự bịa đặt, suy luận, hay thêm bất kỳ thông tin nào không có trong tài liệu.
+    2. Tên môn học, tên chương, tên bài học, nội dung yêu cầu cần đạt PHẢI lấy NGUYÊN VĂN từ file gốc.
+    3. KHÔNG ĐƯỢC nhầm lẫn nội dung giữa các môn học. Ví dụ: nếu file là PPCT Tin học thì chỉ được trích xuất nội dung Tin học, KHÔNG ĐƯỢC trả về nội dung của môn Toán, Lý, Hóa hay bất kỳ môn nào khác.
+    4. Nếu không đọc được rõ một phần nào đó trong file, hãy ghi "Không đọc được" thay vì bịa nội dung.
+
+    **NGÔN NGỮ BẮT BUỘC: TIẾNG VIỆT**
+    - Toàn bộ output PHẢI bằng TIẾNG VIỆT, giữ nguyên như trong tài liệu gốc.
+    - KHÔNG ĐƯỢC dịch sang tiếng Anh. Ví dụ: "Tin học" ≠ "Informatics", "Công nghệ" ≠ "Technology".
 
     Yêu cầu đầu ra: JSON Object (không markdown) với cấu trúc sau:
     {
-      "subject": "Tên môn học",
-      "grade": "Khối lớp",
+      "subject": "Tên môn học chính xác như trong file (TIẾNG VIỆT)",
+      "grade": "Khối lớp chính xác như trong file",
       "chapters": [
         {
           "id": "c1",
-          "name": "Tên chương đầy đủ",
+          "name": "Tên chương CHÍNH XÁC từ file gốc",
           "totalPeriods": 10,
           "lessons": [
             {
               "id": "c1_l1",
-              "name": "Tên bài học",
+              "name": "Tên bài học CHÍNH XÁC từ file gốc",
               "periods": 2,
               "weekStart": 1,
               "weekEnd": 1,
               "objectives": {
-                "biet": "Nội dung yêu cầu cần đạt mức Biết...",
-                "hieu": "Nội dung yêu cầu cần đạt mức Hiểu...",
-                "van_dung": "Nội dung yêu cầu cần đạt mức Vận dụng..."
+                "biet": "Trích xuất nguyên văn yêu cầu cần đạt mức Biết từ file",
+                "hieu": "Trích xuất nguyên văn yêu cầu cần đạt mức Hiểu từ file",
+                "van_dung": "Trích xuất nguyên văn yêu cầu cần đạt mức Vận dụng từ file"
               }
             }
           ]
@@ -141,8 +151,10 @@ export const extractInfoFromDocument = async (file: File): Promise<Partial<Input
 
     Lưu ý quan trọng:
     1. Hãy cố gắng nhận diện số tiết và tuần học của từng bài. Nếu không ghi rõ, hãy ước lượng dựa trên tổng số tiết.
-    2. Phần "objectives" (Yêu cầu cần đạt) là QUAN TRỌNG NHẤT. Hãy trích xuất nguyên văn từ cột "Yêu cầu cần đạt" trong bảng PPCT.
+    2. Phần "objectives" (Yêu cầu cần đạt) là QUAN TRỌNG NHẤT. Hãy trích xuất NGUYÊN VĂN từ cột "Yêu cầu cần đạt" trong bảng PPCT. KHÔNG ĐƯỢC tự viết lại hay diễn giải.
     3. Nếu tài liệu là PDF dạng ảnh, hãy dùng khả năng Vision để đọc kỹ bảng biểu.
+    4. Xác định chính xác môn học từ NỘI DUNG THỰC TẾ trong file (tiêu đề, header, nội dung bài học), không đoán mò.
+    5. NHẮC LẠI: Toàn bộ giá trị JSON phải bằng TIẾNG VIỆT, trích xuất nguyên văn từ file, không bịa đặt.
   `;
 
   const ai = getAI();
