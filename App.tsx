@@ -93,12 +93,12 @@ const App: React.FC = () => {
     setGenState(prev => ({ ...prev, error: null }));
 
     try {
-      const extracted = await extractInfoFromDocument(file);
+      const extracted = await extractInfoFromDocument(file, inputData.subject, inputData.grade);
 
       setInputData(prev => ({
         ...prev,
-        subject: extracted.subject || prev.subject,
-        grade: extracted.grade || prev.grade,
+        subject: prev.subject || extracted.subject || '',
+        grade: prev.grade || extracted.grade || '',
         topics: extracted.topics || prev.topics, // Fallback
         chapters: extracted.chapters || [],
       }));
@@ -362,11 +362,39 @@ const App: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
           <div>
             <label className="block text-sm font-semibold text-black mb-2">Môn học</label>
-            <input name="subject" value={inputData.subject} onChange={handleInputChange} className="w-full p-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-primary outline-none bg-white" placeholder="VD: Toán học" />
+            <select name="subject" value={inputData.subject} onChange={handleInputChange} className="w-full p-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-primary outline-none bg-white">
+              <option value="">-- Chọn môn học --</option>
+              <option value="Toán học">Toán học</option>
+              <option value="Ngữ văn">Ngữ văn</option>
+              <option value="Tiếng Anh">Tiếng Anh</option>
+              <option value="Vật lí">Vật lí</option>
+              <option value="Hóa học">Hóa học</option>
+              <option value="Sinh học">Sinh học</option>
+              <option value="Lịch sử">Lịch sử</option>
+              <option value="Địa lí">Địa lí</option>
+              <option value="Tin học">Tin học</option>
+              <option value="Công nghệ">Công nghệ</option>
+              <option value="Giáo dục công dân">Giáo dục công dân (GD KT&PL)</option>
+              <option value="Giáo dục thể chất">Giáo dục thể chất</option>
+              <option value="Âm nhạc">Âm nhạc</option>
+              <option value="Mỹ thuật">Mỹ thuật</option>
+              <option value="Khoa học tự nhiên">Khoa học tự nhiên</option>
+              <option value="Lịch sử và Địa lí">Lịch sử và Địa lí</option>
+              <option value="Hoạt động trải nghiệm">Hoạt động trải nghiệm, hướng nghiệp</option>
+            </select>
           </div>
           <div>
             <label className="block text-sm font-semibold text-black mb-2">Khối lớp</label>
-            <input name="grade" value={inputData.grade} onChange={handleInputChange} className="w-full p-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-primary outline-none bg-white" placeholder="VD: 10" />
+            <select name="grade" value={inputData.grade} onChange={handleInputChange} className="w-full p-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-primary outline-none bg-white">
+              <option value="">-- Chọn khối lớp --</option>
+              <option value="6">Lớp 6</option>
+              <option value="7">Lớp 7</option>
+              <option value="8">Lớp 8</option>
+              <option value="9">Lớp 9</option>
+              <option value="10">Lớp 10</option>
+              <option value="11">Lớp 11</option>
+              <option value="12">Lớp 12</option>
+            </select>
           </div>
           <div>
             <label className="block text-sm font-semibold text-black mb-2">Loại kiểm tra (Auto Filter)</label>
