@@ -106,8 +106,19 @@ export const convertMatrixFileToHtml = async (file: File): Promise<string> => {
   }
 };
 
-export const extractInfoFromDocument = async (file: File): Promise<Partial<InputData>> => {
+export const extractInfoFromDocument = async (file: File, selectedSubject?: string, selectedGrade?: string): Promise<Partial<InputData>> => {
   const base64Data = await fileToBase64(file);
+
+  let subjectConstraint = "";
+  if (selectedSubject && selectedGrade) {
+    subjectConstraint = `
+    **ĐẶC BIỆT LƯU Ý MÔN VÀ LỚP BẮT BUỘC:** 
+    - Người dùng ĐÃ CHỌN TRƯỚC: Môn học là "${selectedSubject}" và Khối lớp là "${selectedGrade}".
+    - TUYỆT ĐỐI CHỈ trích xuất nội dung của môn "${selectedSubject}" lớp "${selectedGrade}". 
+    - NẾU file có chứa nhiều môn khác hay khối lớp khác, HÃY BỎ QUA chúng.
+    - Không được tự động đổi sang khối lớp khác hay môn học khác. Cố gắng tìm phần biểu diễn liên quan nhất.
+    `;
+  }
 
   const prompt = `
     Bạn là chuyên gia phân tích chương trình giáo dục Việt Nam. Hãy đọc file đính kèm (Kế hoạch dạy học/PPCT) và trích xuất dữ liệu cấu trúc cực kỳ chi tiết.
@@ -117,6 +128,7 @@ export const extractInfoFromDocument = async (file: File): Promise<Partial<Input
     2. Tên môn học, tên chương, tên bài học, nội dung yêu cầu cần đạt PHẢI lấy NGUYÊN VĂN từ file gốc.
     3. KHÔNG ĐƯỢC nhầm lẫn nội dung giữa các môn học. Ví dụ: nếu file là PPCT Tin học thì chỉ được trích xuất nội dung Tin học, KHÔNG ĐƯỢC trả về nội dung của môn Toán, Lý, Hóa hay bất kỳ môn nào khác.
     4. Nếu không đọc được rõ một phần nào đó trong file, hãy ghi "Không đọc được" thay vì bịa nội dung.
+    ${subjectConstraint}
 
     **NGÔN NGỮ BẮT BUỘC: TIẾNG VIỆT**
     - Toàn bộ output PHẢI bằng TIẾNG VIỆT, giữ nguyên như trong tài liệu gốc.
