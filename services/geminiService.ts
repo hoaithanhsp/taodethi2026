@@ -313,10 +313,9 @@ export const generateStep1Matrix = async (
   - Ô "Tỉ lệ % điểm": rowspan=2, ví dụ "15,0%", "25,0%"
 
   **Dòng 2 (Tên điểm / Mã câu):**
-  - Các ô Biết/Hiểu/VD: Ghi viết tắt loại điểm, ví dụ:
-    + "TD" (Tổng điểm) cho dạng Nhiều lựa chọn
-    + "TD" cho Đúng - Sai, "GQVĐ" khi cần
-    + Nếu có câu hỏi ở ô đó, ghi "TD" hoặc mã điểm. Nếu KHÔNG có ô đó (0 câu), để TRỐNG.
+  - Với các ô thuộc cột "Biết" và "Hiểu": Ghi chữ "TD" (Tư duy).
+  - Với các ô thuộc cột "VD" (Vận dụng): TUYỆT ĐỐI ghi chữ "GQVĐ" (Giải quyết vấn đề), KHÔNG ghi "TD".
+  - Nếu KHÔNG có câu hỏi ở ô đó (0 câu), để TRỐNG.
   
   **Merge cells STT & Chương/chủ đề:** 
   - Nếu 1 chương có nhiều bài => cột TT dùng rowspan = (số bài × 2), cột Chương/chủ đề cũng rowspan = (số bài × 2).
@@ -418,7 +417,7 @@ export const generateStep2Specs = async (
   - Ô "Tổng số câu" + "Tỉ lệ %" : rowspan=2, giống Ma trận
 
   **Dòng 2:**
-  - Các ô Biết/Hiểu/VD: Ghi "TD", "GQVĐ", hoặc để trống (giống Ma trận)
+  - Các ô Biết/Hiểu: Ghi "TD". Các ô VD: Ghi "GQVĐ". Khớp và giống hệt Ma trận. Nếu 0 câu thì để trống.
 
   **Merge cells STT & Chương/chủ đề:**
   - Nếu 1 chương có nhiều bài => cột TT rowspan = (số bài × 2), cột Chương/chủ đề cũng rowspan = (số bài × 2).
