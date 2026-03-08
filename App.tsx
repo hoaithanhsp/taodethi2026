@@ -318,9 +318,9 @@ const App: React.FC = () => {
     defaultV: number
   ) => (
     <div className="grid grid-cols-4 gap-4 items-center py-3 border-b border-teal-50 last:border-0">
-      <span className="text-sm font-semibold text-slate-700">{label}</span>
+      <span className="text-sm font-semibold text-teal-700">{label}</span>
       <div className="flex flex-col">
-        <span className="text-xs text-slate-500 mb-1">Biết</span>
+        <span className="text-xs text-teal-500 mb-1">Biết</span>
         <input
           type="number"
           className="w-full p-2 input-elevated text-center text-sm"
@@ -329,7 +329,7 @@ const App: React.FC = () => {
         />
       </div>
       <div className="flex flex-col">
-        <span className="text-xs text-slate-500 mb-1">Hiểu</span>
+        <span className="text-xs text-teal-500 mb-1">Hiểu</span>
         <input
           type="number"
           className="w-full p-2 input-elevated text-center text-sm"
@@ -338,7 +338,7 @@ const App: React.FC = () => {
         />
       </div>
       <div className="flex flex-col">
-        <span className="text-xs text-slate-500 mb-1">Vận dụng</span>
+        <span className="text-xs text-teal-500 mb-1">Vận dụng</span>
         <input
           type="number"
           className="w-full p-2 input-elevated text-center text-sm"
@@ -354,14 +354,14 @@ const App: React.FC = () => {
 
       {/* 1. Basic Info & Upload */}
       <div className="card-elevated p-6 sm:p-8 animate-fade-in-up">
-        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2.5">
+        <h2 className="text-xl font-bold text-teal-800 mb-6 flex items-center gap-2.5">
           <span className="badge-section text-white w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold">1</span>
           Thông tin chung & Upload PPCT
         </h2>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
           <div>
-            <label className="block text-sm font-semibold text-black mb-2">Môn học</label>
+            <label className="block text-sm font-semibold text-teal-700 mb-2">Môn học</label>
             <select name="subject" value={inputData.subject} onChange={handleInputChange} className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none">
               <option value="">-- Chọn môn học --</option>
               <option value="Toán học">Toán học</option>
@@ -384,7 +384,7 @@ const App: React.FC = () => {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-semibold text-slate-800 mb-2">Khối lớp</label>
+            <label className="block text-sm font-semibold text-teal-700 mb-2">Khối lớp</label>
             <select name="grade" value={inputData.grade} onChange={handleInputChange} className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none">
               <option value="">-- Chọn khối lớp --</option>
               <option value="6">Lớp 6</option>
@@ -397,7 +397,7 @@ const App: React.FC = () => {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-semibold text-slate-800 mb-2">Loại kiểm tra (Auto Filter)</label>
+            <label className="block text-sm font-semibold text-teal-700 mb-2">Loại kiểm tra (Auto Filter)</label>
             <select name="examType" value={inputData.examType} onChange={handleInputChange} className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none">
               <option>Kiểm tra 15 phút</option>
               <option>Kiểm tra 45 phút</option>
@@ -408,7 +408,7 @@ const App: React.FC = () => {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-semibold text-slate-800 mb-2">Thời gian (phút)</label>
+            <label className="block text-sm font-semibold text-teal-700 mb-2">Thời gian (phút)</label>
             <div className="relative">
               <input type="number" name="duration" value={inputData.duration} onChange={handleInputChange} className="w-full p-3 pl-10 input-elevated focus:ring-2 focus:ring-primary outline-none" />
               <Clock className="w-5 h-5 text-slate-400 absolute left-3 top-3.5" />
@@ -434,7 +434,7 @@ const App: React.FC = () => {
       {inputData.chapters.length > 0 && (
         <div className="card-elevated p-6 sm:p-8 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2.5">
+            <h2 className="text-xl font-bold text-teal-800 flex items-center gap-2.5">
               <span className="badge-section text-white w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold">2</span>
               Chọn chủ đề trọng tâm
             </h2>
@@ -464,7 +464,7 @@ const App: React.FC = () => {
                       ref={el => { if (el) el.indeterminate = isPartSelected; }}
                       onChange={(e) => toggleChapter(chap.id, e.target.checked)}
                     />
-                    <div className="flex-1 font-semibold text-sm text-slate-800">
+                    <div className="flex-1 font-semibold text-sm text-teal-800">
                       {chap.name}
                     </div>
                     <span className="text-xs chip-teal px-2 py-0.5 text-teal-700 ml-2">
@@ -483,7 +483,7 @@ const App: React.FC = () => {
                             checked={selectedLessonIds.has(lesson.id)}
                             onChange={() => toggleLesson(lesson.id)}
                           />
-                          <div className="flex-1 text-sm text-slate-700">
+                          <div className="flex-1 text-sm text-teal-700">
                             {lesson.name}
                           </div>
                           <div className="flex gap-2 opacity-70 group-hover:opacity-100">
@@ -498,7 +498,7 @@ const App: React.FC = () => {
               );
             })}
           </div>
-          <div className="mt-4 flex justify-between items-center text-sm text-slate-600 chip-teal p-3">
+          <div className="mt-4 flex justify-between items-center text-sm text-teal-700 chip-teal p-3">
             <span>Đã chọn: <strong className="text-primary">{selectedLessonIds.size}</strong> bài học</span>
           </div>
         </div>
@@ -506,7 +506,7 @@ const App: React.FC = () => {
 
       {/* 3. Question Configuration */}
       <div className="card-elevated p-6 sm:p-8 animate-fade-in-up" style={{ animationDelay: '0.15s' }}>
-        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2.5">
+        <h2 className="text-xl font-bold text-teal-800 mb-6 flex items-center gap-2.5">
           <span className="badge-section text-white w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold">3</span>
           Cấu trúc đề thi (Số lượng câu hỏi)
         </h2>
@@ -569,7 +569,7 @@ const App: React.FC = () => {
   ) => (
     <div className="max-w-[1400px] mx-auto h-full flex flex-col p-4 sm:p-6">
       <div className="flex justify-between items-center mb-4 card-elevated p-4 flex-shrink-0">
-        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2.5">
+        <h2 className="text-xl font-bold text-teal-800 flex items-center gap-2.5">
           <span className="w-8 h-8 rounded-full badge-section text-white flex items-center justify-center text-sm shrink-0 font-bold">
             {currentStep + 1}
           </span>
@@ -677,13 +677,13 @@ const App: React.FC = () => {
                 <Key className="w-6 h-6 text-primary" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-black">Nhập API Key</h2>
-                <p className="text-sm text-slate-500">Cần API Key Gemini để sử dụng app</p>
+                <h2 className="text-xl font-bold text-teal-800">Nhập API Key</h2>
+                <p className="text-sm text-teal-500">Cần API Key Gemini để sử dụng app</p>
               </div>
             </div>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-semibold text-black mb-2">Google AI API Key</label>
+                <label className="block text-sm font-semibold text-teal-700 mb-2">Google AI API Key</label>
                 <input
                   type="password"
                   value={tempApiKey}
@@ -724,8 +724,8 @@ const App: React.FC = () => {
               AI
             </div>
             <div>
-              <h1 className="text-lg font-bold text-black leading-tight">ExamCraft Pro</h1>
-              <p className="text-[10px] text-slate-500 font-medium">Chuẩn BGD 2025</p>
+              <h1 className="text-lg font-bold text-teal-900 leading-tight">ExamCraft Pro</h1>
+              <p className="text-[10px] text-emerald-600 font-semibold">Chuẩn BGD 2025</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -735,7 +735,7 @@ const App: React.FC = () => {
             >
               <Settings className="w-4 h-4 text-slate-600" />
               {!apiKey && <span className="text-red-500 font-medium text-xs">Lấy API key để sử dụng app</span>}
-              {apiKey && <span className="text-slate-700 font-medium text-xs">Cài đặt API Key</span>}
+              {apiKey && <span className="text-teal-700 font-medium text-xs">Cài đặt API Key</span>}
             </button>
             <Button variant="secondary" onClick={handleReset} icon={<RotateCcw className="w-4 h-4" />} className="text-sm px-3 py-1.5 h-9">
               Tạo mới
