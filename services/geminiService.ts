@@ -284,6 +284,8 @@ export const generateStep1Matrix = async (
   Tiêu đề bảng (in đậm, căn giữa, ở trên bảng):
   **MA TRẬN ĐỀ KIỂM TRA ... - ${data.subject.toUpperCase()} ${data.grade.toUpperCase()}**
 
+  **QUY TẮC NĂM HỌC (BẮT BUỘC):** Thông tin năm học phải ĐỂ TRỐNG dạng: "NĂM HỌC 20... - 20...". TUYỆT ĐỐI KHÔNG điền sẵn bất kỳ năm cụ thể nào (ví dụ KHÔNG viết 2023-2024 hay 2024-2025).
+
   **HEADER BẢNG (3 tầng merge):**
   - Tầng 1 (Row 1): 
     + TT (rowspan=3) | Chương/chủ đề (rowspan=3) | Nội dung/đơn vị kiến thức (rowspan=3) | "Mức độ đánh giá" (colspan= tổng cột TNKQ) | Tổng số câu (colspan=3) | Tỉ lệ % điểm (rowspan=3)
@@ -390,7 +392,9 @@ export const generateStep2Specs = async (
   **===== ĐỊNH DẠNG BẢNG ĐẶC TẢ BẮT BUỘC (Tuân thủ 100%) =====**
 
   Tiêu đề bảng (in đậm, căn giữa, ở trên bảng):
-  **ĐẶC TẢ ĐỀ KIỂM TRA ... - ${data.subject.toUpperCase()} ${data.grade.toUpperCase()}**
+   **ĐẶC TẢ ĐỀ KIỂM TRA ... - ${data.subject.toUpperCase()} ${data.grade.toUpperCase()}**
+
+   **QUY TẮC NĂM HỌC (BẮT BUỘC):** Thông tin năm học phải ĐỂ TRỐNG dạng: "NĂM HỌC 20... - 20...". TUYỆT ĐỐI KHÔNG điền sẵn bất kỳ năm cụ thể nào.
 
   **HEADER BẢNG (4 dòng, giống hệt ma trận nhưng thêm cột "Yêu cầu cần đạt"):**
   - Dòng header 1: TT(rowspan=4) | Chương/chủ đề(rowspan=4) | Nội dung/đơn vị kiến thức(rowspan=4) | **Yêu cầu cần đạt**(rowspan=4) | Mức độ đánh giá(colspan=...) | Tổng số câu(colspan=3, rowspan=2) | Tỉ lệ % điểm(rowspan=4)
@@ -520,6 +524,7 @@ export const generateStep3Exam = async (
   **QUY TẮC FORMAT NGHIÊM NGẶT ĐỂ XUẤT WORD:**
   
   1. **HEADER:** Sau tiêu đề ĐỀ THI, phải có thông tin: Thời gian, Họ tên, SBD...
+    **QUY TẮC NĂM HỌC (BẮT BUỘC):** Thông tin năm học phải ĐỂ TRỐNG dạng: "NĂM HỌC 20... - 20...". TUYỆT ĐỐI KHÔNG điền sẵn bất kỳ năm cụ thể nào (ví dụ KHÔNG viết 2023-2024 hay 2024-2025). Tương tự, tên trường để dạng "TRƯỜNG THPT ...............".
   2. **PHẦN:** Sau tiêu đề mỗi PHẦN (PHẦN I, PHẦN II...), nội dung bắt đầu ở dòng tiếp theo.
   3. **CÂU HỎI TRẮC NGHIỆM:**
      - Sử dụng thẻ <p> cho mỗi câu hỏi.
