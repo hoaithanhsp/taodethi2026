@@ -317,13 +317,13 @@ const App: React.FC = () => {
     defaultH: number,
     defaultV: number
   ) => (
-    <div className="grid grid-cols-4 gap-4 items-center py-2 border-b border-slate-100 last:border-0">
+    <div className="grid grid-cols-4 gap-4 items-center py-3 border-b border-teal-50 last:border-0">
       <span className="text-sm font-semibold text-slate-700">{label}</span>
       <div className="flex flex-col">
         <span className="text-xs text-slate-500 mb-1">Biết</span>
         <input
           type="number"
-          className="w-full p-2 border rounded bg-white text-center text-sm"
+          className="w-full p-2 input-elevated text-center text-sm"
           value={inputData.questionConfig[typeKey].biet}
           onChange={(e) => updateQuestionConfig(typeKey, 'biet', parseInt(e.target.value))}
         />
@@ -332,7 +332,7 @@ const App: React.FC = () => {
         <span className="text-xs text-slate-500 mb-1">Hiểu</span>
         <input
           type="number"
-          className="w-full p-2 border rounded bg-white text-center text-sm"
+          className="w-full p-2 input-elevated text-center text-sm"
           value={inputData.questionConfig[typeKey].hieu}
           onChange={(e) => updateQuestionConfig(typeKey, 'hieu', parseInt(e.target.value))}
         />
@@ -341,7 +341,7 @@ const App: React.FC = () => {
         <span className="text-xs text-slate-500 mb-1">Vận dụng</span>
         <input
           type="number"
-          className="w-full p-2 border rounded bg-white text-center text-sm"
+          className="w-full p-2 input-elevated text-center text-sm"
           value={inputData.questionConfig[typeKey].van_dung}
           onChange={(e) => updateQuestionConfig(typeKey, 'van_dung', parseInt(e.target.value))}
         />
@@ -350,19 +350,19 @@ const App: React.FC = () => {
   );
 
   const renderInputStep = () => (
-    <div className="max-w-4xl mx-auto space-y-8 pb-12">
+    <div className="max-w-4xl mx-auto space-y-8 pb-12 relative z-10">
 
       {/* 1. Basic Info & Upload */}
-      <div className="bg-white p-6 sm:p-8 rounded-xl shadow-sm border border-slate-200">
-        <h2 className="text-xl font-bold text-black mb-6 flex items-center gap-2">
-          <span className="bg-primary text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">1</span>
+      <div className="card-elevated p-6 sm:p-8 animate-fade-in-up">
+        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2.5">
+          <span className="badge-section text-white w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold">1</span>
           Thông tin chung & Upload PPCT
         </h2>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
           <div>
             <label className="block text-sm font-semibold text-black mb-2">Môn học</label>
-            <select name="subject" value={inputData.subject} onChange={handleInputChange} className="w-full p-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-primary outline-none bg-white">
+            <select name="subject" value={inputData.subject} onChange={handleInputChange} className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none">
               <option value="">-- Chọn môn học --</option>
               <option value="Toán học">Toán học</option>
               <option value="Ngữ văn">Ngữ văn</option>
@@ -384,8 +384,8 @@ const App: React.FC = () => {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-semibold text-black mb-2">Khối lớp</label>
-            <select name="grade" value={inputData.grade} onChange={handleInputChange} className="w-full p-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-primary outline-none bg-white">
+            <label className="block text-sm font-semibold text-slate-800 mb-2">Khối lớp</label>
+            <select name="grade" value={inputData.grade} onChange={handleInputChange} className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none">
               <option value="">-- Chọn khối lớp --</option>
               <option value="6">Lớp 6</option>
               <option value="7">Lớp 7</option>
@@ -397,8 +397,8 @@ const App: React.FC = () => {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-semibold text-black mb-2">Loại kiểm tra (Auto Filter)</label>
-            <select name="examType" value={inputData.examType} onChange={handleInputChange} className="w-full p-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-primary outline-none bg-white">
+            <label className="block text-sm font-semibold text-slate-800 mb-2">Loại kiểm tra (Auto Filter)</label>
+            <select name="examType" value={inputData.examType} onChange={handleInputChange} className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none">
               <option>Kiểm tra 15 phút</option>
               <option>Kiểm tra 45 phút</option>
               <option>Giữa kỳ 1</option>
@@ -408,15 +408,15 @@ const App: React.FC = () => {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-semibold text-black mb-2">Thời gian (phút)</label>
+            <label className="block text-sm font-semibold text-slate-800 mb-2">Thời gian (phút)</label>
             <div className="relative">
-              <input type="number" name="duration" value={inputData.duration} onChange={handleInputChange} className="w-full p-3 pl-10 rounded-lg border border-slate-300 focus:ring-2 focus:ring-primary outline-none bg-white" />
+              <input type="number" name="duration" value={inputData.duration} onChange={handleInputChange} className="w-full p-3 pl-10 input-elevated focus:ring-2 focus:ring-primary outline-none" />
               <Clock className="w-5 h-5 text-slate-400 absolute left-3 top-3.5" />
             </div>
           </div>
         </div>
 
-        <div className="p-4 border-2 border-dashed border-teal-200 rounded-lg bg-teal-50 text-center relative">
+        <div className="p-5 upload-zone text-center relative">
           <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".pdf,.docx" className="hidden" id="file-upload" disabled={isAnalyzingFile} />
           <label htmlFor="file-upload" className={`cursor-pointer flex flex-col items-center justify-center ${isAnalyzingFile ? 'opacity-50' : ''}`}>
             {isAnalyzingFile ? (
@@ -432,10 +432,10 @@ const App: React.FC = () => {
 
       {/* 2. Topic Selection Tree */}
       {inputData.chapters.length > 0 && (
-        <div className="bg-white p-6 sm:p-8 rounded-xl shadow-sm border border-slate-200">
+        <div className="card-elevated p-6 sm:p-8 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold text-black flex items-center gap-2">
-              <span className="bg-primary text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">2</span>
+            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2.5">
+              <span className="badge-section text-white w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold">2</span>
               Chọn chủ đề trọng tâm
             </h2>
             <div className="flex gap-2 text-xs">
@@ -443,7 +443,7 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          <div className="border rounded-lg overflow-hidden border-slate-200">
+          <div className="rounded-xl overflow-hidden border border-teal-100 shadow-sm">
             {inputData.chapters.map(chap => {
               const isExpanded = expandedChapterIds.has(chap.id);
               const activeLessonCount = chap.lessons.filter(l => selectedLessonIds.has(l.id)).length;
@@ -453,7 +453,7 @@ const App: React.FC = () => {
               return (
                 <div key={chap.id} className="border-b border-slate-100 last:border-0">
                   {/* Chapter Header */}
-                  <div className="flex items-center bg-slate-50 p-3 hover:bg-slate-100 transition-colors">
+                  <div className="flex items-center bg-teal-50/40 p-3 chapter-row">
                     <button onClick={() => toggleExpandChapter(chap.id)} className="p-1 mr-2 text-slate-500">
                       {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                     </button>
@@ -467,7 +467,7 @@ const App: React.FC = () => {
                     <div className="flex-1 font-semibold text-sm text-slate-800">
                       {chap.name}
                     </div>
-                    <span className="text-xs bg-white border border-slate-200 px-2 py-0.5 rounded text-slate-500 ml-2">
+                    <span className="text-xs chip-teal px-2 py-0.5 text-teal-700 ml-2">
                       {chap.totalPeriods} tiết
                     </span>
                   </div>
@@ -498,19 +498,19 @@ const App: React.FC = () => {
               );
             })}
           </div>
-          <div className="mt-4 flex justify-between items-center text-sm text-slate-600 bg-teal-50 p-3 rounded border border-teal-100">
+          <div className="mt-4 flex justify-between items-center text-sm text-slate-600 chip-teal p-3">
             <span>Đã chọn: <strong className="text-primary">{selectedLessonIds.size}</strong> bài học</span>
           </div>
         </div>
       )}
 
       {/* 3. Question Configuration */}
-      <div className="bg-white p-6 sm:p-8 rounded-xl shadow-sm border border-slate-200">
-        <h2 className="text-xl font-bold text-black mb-6 flex items-center gap-2">
-          <span className="bg-primary text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">3</span>
+      <div className="card-elevated p-6 sm:p-8 animate-fade-in-up" style={{ animationDelay: '0.15s' }}>
+        <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2.5">
+          <span className="badge-section text-white w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold">3</span>
           Cấu trúc đề thi (Số lượng câu hỏi)
         </h2>
-        <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+        <div className="config-table">
           {renderQuestionConfigRow("Dạng I (4 lựa chọn)", "type1", 8, 4, 0)}
           {renderQuestionConfigRow("Dạng II (Đúng/Sai)", "type2", 1, 1, 0)}
           {renderQuestionConfigRow("Dạng III (Trả lời ngắn)", "type3", 1, 1, 2)}
@@ -531,8 +531,8 @@ const App: React.FC = () => {
       </div>
 
       {/* Shortcut Upload */}
-      <div className="mt-12 pt-8 border-t-2 border-slate-100">
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className="mt-12 pt-8 border-t-2 border-teal-100/50">
+        <div className="shortcut-box p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div>
             <h3 className="text-lg font-bold text-blue-800">Lối tắt: Bạn đã có file Ma trận?</h3>
             <p className="text-sm text-blue-600">Tải lên file Ma trận (HTML, Word, PDF) để bỏ qua các bước cấu hình và sinh ngay Bảng đặc tả.</p>
@@ -568,9 +568,9 @@ const App: React.FC = () => {
     onUpdateContent: (val: string) => void
   ) => (
     <div className="max-w-[1400px] mx-auto h-full flex flex-col p-4 sm:p-6">
-      <div className="flex justify-between items-center mb-4 bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex-shrink-0">
-        <h2 className="text-xl font-bold text-black flex items-center gap-2">
-          <span className="w-8 h-8 rounded-full bg-teal-50 text-primary flex items-center justify-center text-sm border border-teal-200 shrink-0 font-bold">
+      <div className="flex justify-between items-center mb-4 card-elevated p-4 flex-shrink-0">
+        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2.5">
+          <span className="w-8 h-8 rounded-full badge-section text-white flex items-center justify-center text-sm shrink-0 font-bold">
             {currentStep + 1}
           </span>
           {title}
@@ -621,8 +621,8 @@ const App: React.FC = () => {
 
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-6 pb-2">
         {/* Editor Side */}
-        <div className="flex flex-col h-full bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-          <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex-shrink-0 flex justify-between items-center">
+        <div className="flex flex-col h-full panel-elevated">
+          <div className="bg-slate-50/80 px-4 py-2.5 border-b border-teal-100/50 flex-shrink-0 flex justify-between items-center">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Source Code (HTML/Markdown)</label>
           </div>
           <textarea
@@ -634,8 +634,8 @@ const App: React.FC = () => {
         </div>
 
         {/* Preview Side */}
-        <div className="flex flex-col h-full bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-          <div className="bg-teal-50 px-4 py-2 border-b border-teal-100 flex-shrink-0">
+        <div className="flex flex-col h-full panel-elevated">
+          <div className="bg-gradient-to-r from-teal-50 to-emerald-50 px-4 py-2.5 border-b border-teal-100/50 flex-shrink-0">
             <label className="text-xs font-bold text-primary uppercase tracking-wider">Xem trước</label>
           </div>
           <div className="flex-1 overflow-auto bg-white p-2">
@@ -667,11 +667,11 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="h-screen w-full flex flex-col bg-slate-50 font-sans text-black overflow-hidden">
+    <div className="h-screen w-full flex flex-col bg-app-gradient font-sans text-black overflow-hidden">
       {/* API Key Modal */}
       {showApiKeyModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8">
+          <div className="modal-elevated max-w-md w-full p-8">
             <div className="flex items-center gap-3 mb-6">
               <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center">
                 <Key className="w-6 h-6 text-primary" />
@@ -690,7 +690,7 @@ const App: React.FC = () => {
                   onChange={(e) => setTempApiKey(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSaveApiKey()}
                   placeholder="AIzaSy..."
-                  className="w-full p-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-primary outline-none bg-white font-mono text-sm"
+                  className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none font-mono text-sm"
                   autoFocus
                 />
               </div>
@@ -717,10 +717,10 @@ const App: React.FC = () => {
       )}
 
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 shrink-0 z-20 shadow-sm">
+      <header className="glass-header shrink-0 z-20">
         <div className="max-w-[1600px] mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 bg-primary rounded-lg flex items-center justify-center text-white font-bold text-lg">
+            <div className="w-9 h-9 badge-section rounded-xl flex items-center justify-center text-white font-bold text-lg">
               AI
             </div>
             <div>
@@ -745,7 +745,7 @@ const App: React.FC = () => {
       </header>
 
       {/* Progress */}
-      <div className="shrink-0 bg-white border-b border-slate-200">
+      <div className="shrink-0">
         <StepIndicator currentStep={currentStep} setStep={setCurrentStep} completedSteps={completedSteps} />
       </div>
 
@@ -759,13 +759,13 @@ const App: React.FC = () => {
         )}
 
         {currentStep === AppStep.INPUT && (
-          <div className="absolute inset-0 overflow-y-auto p-4 bg-slate-50">
+          <div className="absolute inset-0 overflow-y-auto p-4 sm:p-6">
             {renderInputStep()}
           </div>
         )}
 
         {currentStep === AppStep.MATRIX && (
-          <div className="absolute inset-0 bg-slate-50">
+          <div className="absolute inset-0">
             {renderContentStep(
               "Ma trận đề thi",
               genState.matrix,
@@ -778,7 +778,7 @@ const App: React.FC = () => {
         )}
 
         {currentStep === AppStep.SPECS && (
-          <div className="absolute inset-0 bg-slate-50">
+          <div className="absolute inset-0">
             {renderContentStep(
               "Bảng đặc tả",
               genState.specs,
@@ -791,7 +791,7 @@ const App: React.FC = () => {
         )}
 
         {currentStep === AppStep.EXAM && (
-          <div className="absolute inset-0 bg-slate-50">
+          <div className="absolute inset-0">
             {renderContentStep(
               "Đề thi hoàn chỉnh",
               genState.exam,

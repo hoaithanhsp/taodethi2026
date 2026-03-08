@@ -1,6 +1,7 @@
+
 import React from 'react';
 import { AppStep } from '../types';
-import { CheckCircle2, Circle, ChevronRight } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 
 interface Props {
   currentStep: AppStep;
@@ -17,45 +18,49 @@ const steps = [
 
 const StepIndicator: React.FC<Props> = ({ currentStep, setStep, completedSteps }) => {
   return (
-    <div className="w-full bg-white border-b border-slate-200 py-4 px-6 mb-6">
-      <div className="flex items-center justify-between max-w-4xl mx-auto">
-        {steps.map((step, index) => {
-          const isActive = currentStep === step.id;
-          const isCompleted = step.id <= completedSteps;
-          const isClickable = step.id <= completedSteps;
+    <div className="w-full shrink-0">
+      <div className="step-bar-floating">
+        <div className="flex items-center justify-between max-w-4xl mx-auto">
+          {steps.map((step, index) => {
+            const isActive = currentStep === step.id;
+            const isCompleted = step.id <= completedSteps;
+            const isClickable = step.id <= completedSteps;
 
-          return (
-            <React.Fragment key={step.id}>
-              <div 
-                onClick={() => isClickable && setStep(step.id)}
-                className={`flex items-center gap-2 cursor-pointer transition-colors ${!isClickable ? 'pointer-events-none opacity-50' : ''}`}
-              >
-                {isActive ? (
-                  <div className="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center font-bold text-sm shadow-md ring-2 ring-primary ring-offset-2">
-                    {index + 1}
-                  </div>
-                ) : isCompleted ? (
-                  <CheckCircle2 className="w-8 h-8 text-green-500" />
-                ) : (
-                  <div className="w-8 h-8 rounded-full border-2 border-slate-300 text-slate-400 flex items-center justify-center font-medium text-sm">
-                    {index + 1}
+            return (
+              <React.Fragment key={step.id}>
+                <div
+                  onClick={() => isClickable && setStep(step.id)}
+                  className={`flex items-center gap-2.5 cursor-pointer transition-all duration-200 ${!isClickable ? 'pointer-events-none opacity-40' : 'hover:scale-105'}`}
+                >
+                  {isActive ? (
+                    <div className="w-9 h-9 rounded-full bg-primary text-white flex items-center justify-center font-bold text-sm step-active-glow">
+                      {index + 1}
+                    </div>
+                  ) : isCompleted ? (
+                    <div className="w-9 h-9 rounded-full bg-emerald-50 flex items-center justify-center">
+                      <CheckCircle2 className="w-7 h-7 text-emerald-500" />
+                    </div>
+                  ) : (
+                    <div className="w-9 h-9 rounded-full border-2 border-slate-200 text-slate-400 flex items-center justify-center font-medium text-sm bg-white">
+                      {index + 1}
+                    </div>
+                  )}
+                  <span className={`text-sm font-semibold transition-colors ${isActive ? 'text-primary' : isCompleted ? 'text-emerald-600' : 'text-slate-400'}`}>
+                    {step.label}
+                  </span>
+                </div>
+                {index < steps.length - 1 && (
+                  <div className="h-[3px] flex-1 bg-slate-100 mx-4 rounded-full relative overflow-hidden">
+                    <div
+                      className="absolute top-0 left-0 h-full progress-gradient transition-all duration-700 ease-out"
+                      style={{ width: step.id < completedSteps ? '100%' : '0%' }}
+                    ></div>
                   </div>
                 )}
-                <span className={`text-sm font-medium ${isActive ? 'text-primary' : 'text-slate-600'}`}>
-                  {step.label}
-                </span>
-              </div>
-              {index < steps.length - 1 && (
-                <div className="h-[2px] flex-1 bg-slate-200 mx-4 relative">
-                    <div 
-                        className="absolute top-0 left-0 h-full bg-green-500 transition-all duration-500" 
-                        style={{ width: step.id < completedSteps ? '100%' : '0%' }}
-                    ></div>
-                </div>
-              )}
-            </React.Fragment>
-          );
-        })}
+              </React.Fragment>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
