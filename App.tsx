@@ -724,8 +724,7 @@ const App: React.FC = () => {
               AI
             </div>
             <div>
-              <h1 className="text-lg font-bold text-teal-900 leading-tight">ExamCraft Pro</h1>
-              <p className="text-[10px] text-emerald-600 font-semibold">Chuẩn BGD 2025</p>
+              <h1 className="text-lg font-bold text-teal-900 leading-tight">TẠO ĐỀ THI THEO CV 7991</h1>
             </div>
           </div>
           <div className="flex items-center gap-3">
