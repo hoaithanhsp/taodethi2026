@@ -185,16 +185,21 @@ export const extractInfoFromDocument = async (file: File, selectedSubject?: stri
     });
 
     const text = response.text || "{}";
+    let jsonToParse = text;
     try {
-      const parsed = JSON.parse(text);
-      return parsed;
+      const start = text.indexOf('{');
+      const end = text.lastIndexOf('}');
+      if (start !== -1 && end !== -1 && end >= start) {
+        jsonToParse = text.substring(start, end + 1);
+      }
+      return JSON.parse(jsonToParse);
     } catch (e) {
-      const cleaned = text.replace(/```json/g, '').replace(/```/g, '');
-      return JSON.parse(cleaned);
+      console.error("Failed to parse JSON. Raw text:", text);
+      throw new Error("Không thể nhận diện nội dung file. Vui lòng kiểm tra lại định dạng hoặc thử file khác.");
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error extracting info:", error);
-    return {};
+    throw new Error(error.message || "Đã xảy ra lỗi khi phân tích file.");
   }
 };
 
