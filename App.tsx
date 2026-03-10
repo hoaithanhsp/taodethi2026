@@ -42,6 +42,7 @@ const App: React.FC = () => {
 
   const [isAnalyzingFile, setIsAnalyzingFile] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [isCustomSubject, setIsCustomSubject] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const matrixUploadRef = useRef<HTMLInputElement>(null); // Ref for Step 2 upload
   const matrixDirectUploadRef = useRef<HTMLInputElement>(null); // Ref for Step 1 direct upload
@@ -362,7 +363,20 @@ const App: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
           <div>
             <label className="block text-sm font-semibold text-teal-700 mb-2">Môn học</label>
-            <select name="subject" value={inputData.subject} onChange={handleInputChange} className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none">
+            <select
+              name="subject"
+              value={isCustomSubject ? '__custom__' : inputData.subject}
+              onChange={(e) => {
+                if (e.target.value === '__custom__') {
+                  setIsCustomSubject(true);
+                  setInputData(prev => ({ ...prev, subject: '' }));
+                } else {
+                  setIsCustomSubject(false);
+                  handleInputChange(e);
+                }
+              }}
+              className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none"
+            >
               <option value="">-- Chọn môn học --</option>
               <option value="Toán học">Toán học</option>
               <option value="Ngữ văn">Ngữ văn</option>
@@ -381,12 +395,29 @@ const App: React.FC = () => {
               <option value="Khoa học tự nhiên">Khoa học tự nhiên</option>
               <option value="Lịch sử và Địa lí">Lịch sử và Địa lí</option>
               <option value="Hoạt động trải nghiệm">Hoạt động trải nghiệm, hướng nghiệp</option>
+              <option value="__custom__">✏️ Nhập môn khác...</option>
             </select>
+            {isCustomSubject && (
+              <input
+                type="text"
+                name="subject"
+                value={inputData.subject}
+                onChange={handleInputChange}
+                placeholder="Nhập tên môn học của bạn..."
+                className="w-full p-3 mt-2 input-elevated focus:ring-2 focus:ring-primary outline-none"
+                autoFocus
+              />
+            )}
           </div>
           <div>
             <label className="block text-sm font-semibold text-teal-700 mb-2">Khối lớp</label>
             <select name="grade" value={inputData.grade} onChange={handleInputChange} className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none">
               <option value="">-- Chọn khối lớp --</option>
+              <option value="1">Lớp 1</option>
+              <option value="2">Lớp 2</option>
+              <option value="3">Lớp 3</option>
+              <option value="4">Lớp 4</option>
+              <option value="5">Lớp 5</option>
               <option value="6">Lớp 6</option>
               <option value="7">Lớp 7</option>
               <option value="8">Lớp 8</option>
@@ -417,16 +448,17 @@ const App: React.FC = () => {
         </div>
 
         <div className="p-5 upload-zone text-center relative">
-          <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".pdf,.docx" className="hidden" id="file-upload" disabled={isAnalyzingFile} />
+          <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".pdf" className="hidden" id="file-upload" disabled={isAnalyzingFile} />
           <label htmlFor="file-upload" className={`cursor-pointer flex flex-col items-center justify-center ${isAnalyzingFile ? 'opacity-50' : ''}`}>
             {isAnalyzingFile ? (
               <div className="flex items-center gap-2 text-primary font-medium"><div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin"></div> Đang phân tích...</div>
             ) : uploadedFileName ? (
               <div className="flex items-center gap-2 text-green-700 font-medium"><Check className="w-5 h-5" /> {uploadedFileName} (Click thay đổi)</div>
             ) : (
-              <div className="flex items-center gap-2 text-primary font-medium"><Upload className="w-5 h-5" /> Upload File PPCT (.pdf, .docx)</div>
+              <div className="flex items-center gap-2 text-primary font-medium"><Upload className="w-5 h-5" /> Upload File PPCT (.pdf)</div>
             )}
           </label>
+          <p className="text-xs text-slate-500 mt-2 italic">📌 Chỉ hỗ trợ file định dạng <strong>.pdf</strong>. Vui lòng chuyển đổi file Word (.docx) sang PDF trước khi tải lên.</p>
         </div>
       </div>
 
@@ -659,6 +691,7 @@ const App: React.FC = () => {
         }
       });
       setUploadedFileName(null);
+      setIsCustomSubject(false);
       setCurrentStep(AppStep.INPUT);
       setCompletedSteps(0);
       setSelectedLessonIds(new Set());
