@@ -96,6 +96,10 @@ const App: React.FC = () => {
     try {
       const extracted = await extractInfoFromDocument(file, inputData.subject, inputData.grade);
 
+      if (!extracted || !extracted.chapters || extracted.chapters.length === 0) {
+        throw new Error("AI không tìm thấy thông tin bài học/chủ đề nào trong file này. Hãy đảm bảo file là kế hoạch dạy học (PPCT) hợp lệ.");
+      }
+
       setInputData(prev => ({
         ...prev,
         subject: prev.subject || extracted.subject || '',
