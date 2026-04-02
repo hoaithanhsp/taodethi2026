@@ -100,6 +100,16 @@ const App: React.FC = () => {
         throw new Error("AI không tìm thấy thông tin bài học/chủ đề nào trong file này. Hãy đảm bảo file là kế hoạch dạy học (PPCT) hợp lệ.");
       }
 
+      // Fix 3: Validation — cảnh báo nếu AI trả về môn khác với môn đã chọn
+      if (inputData.subject && extracted.subject && extracted.subject !== inputData.subject) {
+        const aiSubject = extracted.subject;
+        const userSubject = inputData.subject;
+        // Kiểm tra không phải chỉ khác cách viết (ví dụ: "Công nghệ" vs "Công Nghệ")
+        if (aiSubject.toLowerCase().trim() !== userSubject.toLowerCase().trim()) {
+          alert(`⚠️ CẢNH BÁO: Bạn đã chọn môn "${userSubject}" nhưng AI phát hiện file này có nội dung môn "${aiSubject}".\n\nVui lòng kiểm tra lại file PPCT đã upload có đúng môn "${userSubject}" không.`);
+        }
+      }
+
       setInputData(prev => ({
         ...prev,
         subject: prev.subject || extracted.subject || '',
@@ -188,7 +198,7 @@ const App: React.FC = () => {
         if (type.includes('Giữa kỳ 1')) shouldSelect = end <= 10;
         else if (type.includes('Cuối kỳ 1')) shouldSelect = end <= 18;
         else if (type.includes('Giữa kỳ 2')) shouldSelect = start >= 19 && end <= 27;
-        else if (type.includes('Cuối kỳ 2')) shouldSelect = true; // All
+        else if (type.includes('Cuối kỳ 2')) shouldSelect = start >= 19; // Chỉ HK2 (tuần 19+)
         else shouldSelect = true; // 15 mins etc (User manual select)
 
         if (shouldSelect) newSelection.add(lesson.id);
@@ -271,7 +281,7 @@ const App: React.FC = () => {
   const handleGenerateExam = async () => {
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
-      const exam = await generateStep3Exam(genState.specs, inputData.questionConfig);
+      const exam = await generateStep3Exam(genState.specs, inputData.questionConfig, inputData);
       setGenState(prev => ({ ...prev, exam, isLoading: false }));
       setCurrentStep(AppStep.EXAM);
       setCompletedSteps(Math.max(completedSteps, 3));
