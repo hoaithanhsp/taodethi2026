@@ -130,13 +130,19 @@ export const extractInfoFromDocument = async (file: File, selectedSubject?: stri
     4. Nếu không đọc được rõ một phần nào đó trong file, hãy ghi "Không đọc được" thay vì bịa nội dung.
     ${subjectConstraint}
 
+    **===== QUY TẮC XÁC ĐỊNH MÔN HỌC (CỰC KỲ QUAN TRỌNG) =====**
+    - Xác định môn học dựa trên TIÊU ĐỀ, HEADER của file (ví dụ: "KẾ HOẠCH DẠY HỌC MÔN CÔNG NGHỆ 8").
+    - Nếu file chứa nội dung NHIỀU MÔN (ví dụ file tổng hợp PPCT cả trường), CHỈ trích xuất phần thuộc môn được chỉ định.
+    - TUYỆT ĐỐI KHÔNG trộn lẫn nội dung các môn khác nhau.
+    - Nếu không tìm thấy nội dung của môn được chỉ định trong file, hãy trả về chapters rỗng [] và ghi subject là môn bạn thực sự tìm thấy trong file.
+
     **NGÔN NGỮ BẮT BUỘC: TIẾNG VIỆT**
     - Toàn bộ output PHẢI bằng TIẾNG VIỆT, giữ nguyên như trong tài liệu gốc.
     - KHÔNG ĐƯỢC dịch sang tiếng Anh. Ví dụ: "Tin học" ≠ "Informatics", "Công nghệ" ≠ "Technology".
 
     Yêu cầu đầu ra: JSON Object (không markdown) với cấu trúc sau:
     {
-      "subject": "Tên môn học chính xác như trong file (TIẾNG VIỆT)",
+      "subject": "Tên môn học CHÍNH XÁC như trong file (TIẾNG VIỆT) - phải khớp với nội dung thực tế trong file",
       "grade": "Khối lớp chính xác như trong file",
       "chapters": [
         {
@@ -167,6 +173,7 @@ export const extractInfoFromDocument = async (file: File, selectedSubject?: stri
     3. Nếu tài liệu là PDF dạng ảnh, hãy dùng khả năng Vision để đọc kỹ bảng biểu.
     4. Xác định chính xác môn học từ NỘI DUNG THỰC TẾ trong file (tiêu đề, header, nội dung bài học), không đoán mò.
     5. NHẮC LẠI: Toàn bộ giá trị JSON phải bằng TIẾNG VIỆT, trích xuất nguyên văn từ file, không bịa đặt.
+    6. Trường "subject" trong JSON output phải phản ánh ĐÚNG môn học mà bạn thực sự đọc được từ file, KHÔNG ĐƯỢC copy môn từ constraint mà không xác minh.
   `;
 
   const ai = getAI();
@@ -472,7 +479,8 @@ export const generateStep2Specs = async (
 
 export const generateStep3Exam = async (
   specsContent: string,
-  questionConfig: QuestionConfig
+  questionConfig: QuestionConfig,
+  inputData: InputData
 ): Promise<string> => {
 
   const counts = {
@@ -509,10 +517,22 @@ export const generateStep3Exam = async (
   }
 
   const prompt = `
+  **===== THÔNG TIN ĐỀ THI BẮT BUỘC (CỰC KỲ QUAN TRỌNG) =====**
+  - **Môn học:** ${inputData.subject}
+  - **Khối lớp:** Lớp ${inputData.grade}
+  - **Loại đề:** ${inputData.examType}
+  - **Thời gian:** ${inputData.duration} phút
+
+  **===== RÀNG BUỘC MÔN HỌC =====**
+  - TUYỆT ĐỐI CHỈ tạo câu hỏi về nội dung **môn ${inputData.subject} lớp ${inputData.grade}**.
+  - KHÔNG ĐƯỢC tạo câu hỏi thuộc môn học khác hoặc khối lớp khác.
+  - Nội dung câu hỏi phải phù hợp với chương trình **${inputData.examType}** (${inputData.examType.includes('2') ? 'Học kỳ 2' : 'Học kỳ 1'}).
+  - Nếu là đề Cuối kỳ 2 hoặc Giữa kỳ 2: CHỈ ra câu hỏi về kiến thức HỌC KỲ 2, KHÔNG ra kiến thức Học kỳ 1.
+
   Dựa trên **Bảng đặc tả** sau (HTML):
   ${specsContent}
 
-  Hãy soạn thảo **ĐỀ THI HOÀN CHỈNH** và **HƯỚNG DẪN CHẤM**.
+  Hãy soạn thảo **ĐỀ THI HOÀN CHỈNH** và **HƯỚNG DẪN CHẤM** cho môn **${inputData.subject}** lớp **${inputData.grade}** — **${inputData.examType}**.
   
   ${structureInstructions}
 
@@ -529,6 +549,7 @@ export const generateStep3Exam = async (
   **QUY TẮC FORMAT NGHIÊM NGẶT ĐỂ XUẤT WORD:**
   
   1. **HEADER:** Sau tiêu đề ĐỀ THI, phải có thông tin: Thời gian, Họ tên, SBD...
+    - Tiêu đề phải ghi rõ: "ĐỀ KIỂM TRA ${inputData.examType.toUpperCase()} - MÔN ${inputData.subject.toUpperCase()} ${inputData.grade.toUpperCase()}"
     **QUY TẮC NĂM HỌC (BẮT BUỘC):** Thông tin năm học phải ĐỂ TRỐNG dạng: "NĂM HỌC 20... - 20...". TUYỆT ĐỐI KHÔNG điền sẵn bất kỳ năm cụ thể nào (ví dụ KHÔNG viết 2023-2024 hay 2024-2025). Tương tự, tên trường để dạng "TRƯỜNG THPT ...............".
   2. **PHẦN:** Sau tiêu đề mỗi PHẦN (PHẦN I, PHẦN II...), nội dung bắt đầu ở dòng tiếp theo.
   3. **CÂU HỎI TRẮC NGHIỆM:**
@@ -564,6 +585,7 @@ export const generateStep3Exam = async (
   **NGUYÊN TẮC CHUNG:**
   1. **KHÔNG TẠO PHẦN THỪA:** Nếu số lượng câu hỏi = 0, tuyệt đối không sinh ra phần đó.
   2. **CÔNG THỨC:** Dùng LaTeX $...$ hoặc $$...$$ (Nhưng lưu ý HTML thuần không render LaTeX tự động, hãy cố gắng dùng ký tự Unicode nếu đơn giản, hoặc giữ nguyên LaTeX để người dùng convert sau bằng MathType trong Word).
+  3. **LƯU Ý MÔN HỌC:** Toàn bộ câu hỏi PHẢI thuộc phạm vi kiến thức môn ${inputData.subject} lớp ${inputData.grade}. KHÔNG được ra câu hỏi thuộc môn khác.
   `;
 
   return callWithFallback(async (ai, model) => {
