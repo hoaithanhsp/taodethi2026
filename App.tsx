@@ -160,6 +160,34 @@ const App: React.FC = () => {
     }
   };
 
+  // Helper: detect if HTML content mentions essay/tự luận columns
+  const detectEssayInHtml = (html: string): boolean => {
+    const lowerHtml = html.toLowerCase();
+    // Check for explicit essay column headers in the matrix/specs table
+    return (
+      lowerHtml.includes('tự luận') ||
+      lowerHtml.includes('tu luan') ||
+      lowerHtml.includes('essay')
+    );
+  };
+
+  // Auto-sync questionConfig.essay based on matrix HTML content
+  const syncEssayConfigFromMatrix = (matrixHtml: string) => {
+    const hasEssay = detectEssayInHtml(matrixHtml);
+    if (!hasEssay) {
+      console.log('[ExamCraft] Ma trận KHÔNG có tự luận → reset essay config = 0');
+      setInputData(prev => ({
+        ...prev,
+        questionConfig: {
+          ...prev.questionConfig,
+          essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
+        }
+      }));
+    } else {
+      console.log('[ExamCraft] Ma trận CÓ tự luận → giữ nguyên essay config');
+    }
+  };
+
   // Common logic for processing uploaded matrix file
   const processMatrixUpload = async (file: File) => {
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
@@ -194,6 +222,9 @@ const App: React.FC = () => {
       else {
         content = await convertMatrixFileToHtml(file);
       }
+
+      // Auto-detect & sync essay config from the matrix content
+      syncEssayConfigFromMatrix(content);
 
       setGenState(prev => ({ ...prev, matrix: content, isLoading: false }));
       return true;
@@ -299,6 +330,8 @@ const App: React.FC = () => {
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
       const matrix = await generateStep1Matrix(inputData, selectedLessonIds);
+      // Sync essay config: nếu matrix sinh ra không có tự luận, reset essay = 0
+      syncEssayConfigFromMatrix(matrix);
       setGenState(prev => ({ ...prev, matrix, isLoading: false }));
       setCurrentStep(AppStep.MATRIX);
       setCompletedSteps(Math.max(completedSteps, 1));
@@ -322,9 +355,23 @@ const App: React.FC = () => {
   const handleGenerateExam = async () => {
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
+      // Double-check: nếu cả ma trận VÀ đặc tả đều không nhắc "tự luận",
+      // thì force essay = 0 bất kể questionConfig hiện tại
+      let finalQuestionConfig = { ...inputData.questionConfig };
+      const matrixHasEssay = detectEssayInHtml(genState.matrix);
+      const specsHasEssay = detectEssayInHtml(genState.specs);
+      
+      if (!matrixHasEssay && !specsHasEssay) {
+        console.log('[ExamCraft] DOUBLE-CHECK: Ma trận + Đặc tả đều KHÔNG có tự luận → force essay = 0');
+        finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
+      } else if (!matrixHasEssay) {
+        console.log('[ExamCraft] DOUBLE-CHECK: Ma trận KHÔNG có tự luận → force essay = 0');
+        finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
+      }
+
       const exam = await generateStep3Exam(
         genState.specs,
-        inputData.questionConfig,
+        finalQuestionConfig,
         inputData,
         referenceDoc?.text,
         referenceDoc?.images
