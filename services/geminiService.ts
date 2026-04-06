@@ -569,6 +569,13 @@ export const generateStep3Exam = async (
     essay: questionConfig.essay.biet + questionConfig.essay.hieu + questionConfig.essay.van_dung + questionConfig.essay.van_dung_cao,
   };
 
+  // Build a clear whitelist of allowed parts
+  const allowedParts: string[] = [];
+  if (counts.type1 > 0) allowedParts.push('PHẦN I (Trắc nghiệm nhiều lựa chọn)');
+  if (counts.type2 > 0) allowedParts.push('PHẦN II (Đúng/Sai)');
+  if (counts.type3 > 0) allowedParts.push('PHẦN III (Trả lời ngắn)');
+  if (counts.essay > 0) allowedParts.push('PHẦN IV (Tự luận)');
+
   let structureInstructions = "**CẤU TRÚC ĐỀ THI & ĐÁP ÁN CẦN TẠO (CHỈ TẠO CÁC PHẦN SAU):**\n";
 
   if (counts.type1 > 0) {
@@ -592,8 +599,11 @@ export const generateStep3Exam = async (
   if (counts.essay > 0) {
     structureInstructions += `- **PHẦN IV (Tự luận):** Tạo ${counts.essay} câu hỏi và Đáp án/Hướng dẫn chấm chi tiết Phần IV.\n`;
   } else {
-    structureInstructions += `- **PHẦN IV:** KHÔNG ĐƯỢC TẠO (Số câu = 0). TUYỆT ĐỐI KHÔNG SINH RA PHẦN TỰ LUẬN.\n`;
+    structureInstructions += `- **PHẦN IV (Tự luận):** ⛔ CẤM TẠO. Số câu = 0. TUYỆT ĐỐI KHÔNG SINH RA BẤT KỲ CÂU TỰ LUẬN NÀO.\n`;
   }
+
+  structureInstructions += `\n**⚠️ DANH SÁCH PHẦN ĐƯỢC PHÉP TẠO (WHITELIST):** ${allowedParts.length > 0 ? allowedParts.join(', ') : 'Không có phần nào'}.\n`;
+  structureInstructions += `**⛔ NGHIÊM CẤM:** Bất kỳ phần nào KHÔNG có trong whitelist trên đều KHÔNG ĐƯỢC TẠO. Nếu tự luận không nằm trong danh sách trên thì KHÔNG ĐƯỢC tạo phần tự luận.\n`;
 
   // Build reference section
   let referenceSection = '';
@@ -687,10 +697,11 @@ export const generateStep3Exam = async (
      - <p><strong>Câu 1:</strong> A</p>
      - <p><strong>Câu 2:</strong> C</p>
 
-  **NGUYÊN TẮC CHUNG:**
-  1. **KHÔNG TẠO PHẦN THỪA:** Nếu số lượng câu hỏi = 0, tuyệt đối không sinh ra phần đó.
+  **NGUYÊN TẮC CHUNG (BẮT BUỘC TUÂN THỦ):**
+  1. **⛔ CẤM TẠO PHẦN THỪA (QUAN TRỌNG NHẤT):** Đề thi CHỈ ĐƯỢC CHỨA các phần có trong WHITELIST ở trên: [${allowedParts.join(', ')}]. Nếu PHẦN IV (Tự luận) KHÔNG có trong whitelist → TUYỆT ĐỐI KHÔNG tạo câu tự luận, không tạo tiêu đề "PHẦN IV", không nhắc đến tự luận.
   2. **CÔNG THỨC:** Dùng LaTeX $...$ hoặc $$...$$ (Nhưng lưu ý HTML thuần không render LaTeX tự động, hãy cố gắng dùng ký tự Unicode nếu đơn giản, hoặc giữ nguyên LaTeX để người dùng convert sau bằng MathType trong Word).
   3. **LƯU Ý MÔN HỌC:** Toàn bộ câu hỏi PHẢI thuộc phạm vi kiến thức môn ${inputData.subject} lớp ${inputData.grade}. KHÔNG được ra câu hỏi thuộc môn khác.
+  4. **KIỂM TRA CUỐI CÙNG:** Trước khi trả output, hãy tự kiểm tra: Đề thi có chứa phần nào KHÔNG nằm trong whitelist không? Nếu có → XÓA phần đó.
   `;
 
   return callWithFallback(async (ai, model) => {
