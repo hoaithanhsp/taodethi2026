@@ -31,10 +31,10 @@ export interface Chapter {
 
 // Configuration for question counts per Type and Level
 export interface QuestionConfig {
-  type1: { biet: number; hieu: number; van_dung: number }; // Trắc nghiệm 4 lựa chọn
-  type2: { biet: number; hieu: number; van_dung: number }; // Đúng/Sai
-  type3: { biet: number; hieu: number; van_dung: number }; // Trả lời ngắn
-  essay: { biet: number; hieu: number; van_dung: number }; // Tự luận
+  type1: { biet: number; hieu: number; van_dung: number; van_dung_cao: number }; // Trắc nghiệm 4 lựa chọn
+  type2: { biet: number; hieu: number; van_dung: number; van_dung_cao: number }; // Đúng/Sai
+  type3: { biet: number; hieu: number; van_dung: number; van_dung_cao: number }; // Trả lời ngắn
+  essay: { biet: number; hieu: number; van_dung: number; van_dung_cao: number }; // Tự luận
 }
 
 export interface InputData {

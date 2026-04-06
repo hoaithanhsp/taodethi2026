@@ -42,10 +42,16 @@ Trước khi sinh bất kỳ nội dung nào, hãy kiểm tra:
 - Tự luận: 0.0 điểm
 `;
 
-export const MODEL_NAME = 'gemini-3-pro-preview';
+export const MODEL_NAME = 'gemini-3-flash-preview';
 
 export const FALLBACK_MODELS = [
    'gemini-3-flash-preview',
    'gemini-3-pro-preview',
    'gemini-2.5-flash',
+];
+
+export const AVAILABLE_MODELS = [
+  { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', desc: 'Nhanh, tiết kiệm, khuyên dùng', badge: 'Mặc định' },
+  { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro', desc: 'Chất lượng cao, chậm hơn', badge: 'Pro' },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Ổn định, dự phòng', badge: 'Stable' },
 ];

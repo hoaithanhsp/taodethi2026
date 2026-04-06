@@ -4,8 +4,10 @@ import { AppStep, InputData, GenerationState, Lesson, Chapter, QuestionConfig } 
 import StepIndicator from './components/StepIndicator';
 import Button from './components/Button';
 import MarkdownView from './components/MarkdownView';
-import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, getApiKey, setApiKey as saveApiKey } from './services/geminiService';
-import { ArrowRight, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink } from 'lucide-react';
+import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, getApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel } from './services/geminiService';
+import { parseDocxWithMath } from './services/docxMathParser';
+import { AVAILABLE_MODELS } from './constants';
+import { ArrowRight, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen } from 'lucide-react';
 
 const App: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<AppStep>(AppStep.INPUT);
@@ -21,12 +23,25 @@ const App: React.FC = () => {
     additionalNotes: '',
     chapters: [],
     questionConfig: {
-      type1: { biet: 8, hieu: 4, van_dung: 0 },
-      type2: { biet: 1, hieu: 1, van_dung: 0 },
-      type3: { biet: 1, hieu: 1, van_dung: 2 },
-      essay: { biet: 0, hieu: 1, van_dung: 2 },
+      type1: { biet: 8, hieu: 4, van_dung: 0, van_dung_cao: 0 },
+      type2: { biet: 1, hieu: 1, van_dung: 0, van_dung_cao: 0 },
+      type3: { biet: 1, hieu: 1, van_dung: 2, van_dung_cao: 0 },
+      essay: { biet: 0, hieu: 1, van_dung: 1, van_dung_cao: 1 },
     }
   });
+
+  // -- Dark Mode State --
+  const [darkMode, setDarkMode] = useState(() => {
+    return localStorage.getItem('examcraft_dark_mode') === 'true';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+    localStorage.setItem('examcraft_dark_mode', String(darkMode));
+  }, [darkMode]);
+
+  // -- Selected Model State --
+  const [selectedModel, setSelectedModelState] = useState(getSelectedModel() || AVAILABLE_MODELS[0].id);
 
   // -- UI State --
   const [selectedLessonIds, setSelectedLessonIds] = useState<Set<string>>(new Set());
@@ -46,6 +61,17 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const matrixUploadRef = useRef<HTMLInputElement>(null); // Ref for Step 2 upload
   const matrixDirectUploadRef = useRef<HTMLInputElement>(null); // Ref for Step 1 direct upload
+  const referenceUploadRef = useRef<HTMLInputElement>(null); // Ref for reference doc upload
+
+  // -- Reference Document State --
+  const [referenceDoc, setReferenceDoc] = useState<{
+    text: string;
+    images: { base64: string; mimeType: string }[];
+    fileName: string;
+    method: string;
+    wmfCount: number;
+  } | null>(null);
+  const [isParsingReference, setIsParsingReference] = useState(false);
 
   // -- API Key State --
   const [apiKey, setApiKeyState] = useState<string>(getApiKey() || '');
@@ -234,14 +260,14 @@ const App: React.FC = () => {
   };
 
   // -- Question Config Logic --
-  const updateQuestionConfig = (type: keyof QuestionConfig, level: 'biet' | 'hieu' | 'van_dung', value: number) => {
+  const updateQuestionConfig = (type: keyof QuestionConfig, level: 'biet' | 'hieu' | 'van_dung' | 'van_dung_cao', value: number) => {
     setInputData(prev => ({
       ...prev,
       questionConfig: {
         ...prev.questionConfig,
         [type]: {
           ...prev.questionConfig[type],
-          [level]: Math.max(0, value)
+          [level]: Math.max(0, isNaN(value) ? 0 : value)
         }
       }
     }));
@@ -281,12 +307,45 @@ const App: React.FC = () => {
   const handleGenerateExam = async () => {
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
-      const exam = await generateStep3Exam(genState.specs, inputData.questionConfig, inputData);
+      const exam = await generateStep3Exam(
+        genState.specs,
+        inputData.questionConfig,
+        inputData,
+        referenceDoc?.text,
+        referenceDoc?.images
+      );
       setGenState(prev => ({ ...prev, exam, isLoading: false }));
       setCurrentStep(AppStep.EXAM);
       setCompletedSteps(Math.max(completedSteps, 3));
     } catch (err: any) {
       setGenState(prev => ({ ...prev, isLoading: false, error: err.message }));
+    }
+  };
+
+  // -- Reference Document Upload Handler --
+  const handleReferenceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsParsingReference(true);
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await parseDocxWithMath(arrayBuffer);
+      
+      setReferenceDoc({
+        text: result.text,
+        images: result.images,
+        fileName: file.name,
+        method: result.method,
+        wmfCount: result.wmfCount,
+      });
+      
+      console.log(`[Reference] Parsed: ${result.text.length} chars, ${result.images.length} images, method=${result.method}, wmf=${result.wmfCount}`);
+    } catch (err: any) {
+      setGenState(prev => ({ ...prev, error: `Lỗi đọc file tham khảo: ${err.message}` }));
+    } finally {
+      setIsParsingReference(false);
+      if (referenceUploadRef.current) referenceUploadRef.current.value = '';
     }
   };
 
@@ -330,9 +389,10 @@ const App: React.FC = () => {
     typeKey: keyof QuestionConfig,
     defaultB: number,
     defaultH: number,
-    defaultV: number
+    defaultV: number,
+    defaultVC: number = 0
   ) => (
-    <div className="grid grid-cols-4 gap-4 items-center py-3 border-b border-teal-50 last:border-0">
+    <div className="grid grid-cols-5 gap-3 items-center py-3 border-b border-teal-50 last:border-0">
       <span className="text-sm font-semibold text-teal-700">{label}</span>
       <div className="flex flex-col">
         <span className="text-xs text-teal-500 mb-1">Biết</span>
@@ -340,7 +400,8 @@ const App: React.FC = () => {
           type="number"
           className="w-full p-2 input-elevated text-center text-sm"
           value={inputData.questionConfig[typeKey].biet}
-          onChange={(e) => updateQuestionConfig(typeKey, 'biet', parseInt(e.target.value))}
+          onChange={(e) => updateQuestionConfig(typeKey, 'biet', parseInt(e.target.value) || 0)}
+          min={0}
         />
       </div>
       <div className="flex flex-col">
@@ -349,7 +410,8 @@ const App: React.FC = () => {
           type="number"
           className="w-full p-2 input-elevated text-center text-sm"
           value={inputData.questionConfig[typeKey].hieu}
-          onChange={(e) => updateQuestionConfig(typeKey, 'hieu', parseInt(e.target.value))}
+          onChange={(e) => updateQuestionConfig(typeKey, 'hieu', parseInt(e.target.value) || 0)}
+          min={0}
         />
       </div>
       <div className="flex flex-col">
@@ -358,7 +420,18 @@ const App: React.FC = () => {
           type="number"
           className="w-full p-2 input-elevated text-center text-sm"
           value={inputData.questionConfig[typeKey].van_dung}
-          onChange={(e) => updateQuestionConfig(typeKey, 'van_dung', parseInt(e.target.value))}
+          onChange={(e) => updateQuestionConfig(typeKey, 'van_dung', parseInt(e.target.value) || 0)}
+          min={0}
+        />
+      </div>
+      <div className="flex flex-col">
+        <span className="text-xs text-teal-500 mb-1">VD cao</span>
+        <input
+          type="number"
+          className="w-full p-2 input-elevated text-center text-sm"
+          value={inputData.questionConfig[typeKey].van_dung_cao}
+          onChange={(e) => updateQuestionConfig(typeKey, 'van_dung_cao', parseInt(e.target.value) || 0)}
+          min={0}
         />
       </div>
     </div>
@@ -462,7 +535,7 @@ const App: React.FC = () => {
         </div>
 
         <div className="p-5 upload-zone text-center relative">
-          <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".pdf" className="hidden" id="file-upload" disabled={isAnalyzingFile} />
+          <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".pdf,.docx,.doc" className="hidden" id="file-upload" disabled={isAnalyzingFile} />
           <label htmlFor="file-upload" className={`cursor-pointer flex flex-col items-center justify-center ${isAnalyzingFile ? 'opacity-50' : ''}`}>
             {isAnalyzingFile ? (
               <div className="flex items-center gap-2 text-primary font-medium"><div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin"></div> Đang phân tích...</div>
@@ -665,6 +738,73 @@ const App: React.FC = () => {
         </div>
       </div>
 
+      {/* Reference Document Upload - Only for SPECS step */}
+      {currentStep === AppStep.SPECS && (
+        <div className="mb-4 card-elevated p-4 flex-shrink-0">
+          <div className="flex items-center gap-2 mb-2">
+            <BookOpen className="w-4 h-4 text-teal-600" />
+            <span className="text-sm font-bold text-teal-800">Tài liệu tham khảo</span>
+            <span className="text-xs text-slate-400">(tùy chọn)</span>
+          </div>
+          <p className="text-xs text-slate-500 mb-3">
+            Upload đề mẫu hoặc ngân hàng câu hỏi (.docx) để AI tham khảo phong cách, dạng câu hỏi và mức độ khó khi tạo đề thi.
+          </p>
+
+          <input
+            type="file"
+            ref={referenceUploadRef}
+            onChange={handleReferenceUpload}
+            className="hidden"
+            accept=".docx,.doc"
+          />
+
+          {!referenceDoc ? (
+            <button
+              onClick={() => referenceUploadRef.current?.click()}
+              disabled={isParsingReference}
+              className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-teal-200 rounded-lg hover:border-teal-400 hover:bg-teal-50/50 transition-all text-sm text-teal-600 w-full justify-center"
+            >
+              {isParsingReference ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
+                  <span>Đang phân tích tài liệu...</span>
+                </>
+              ) : (
+                <>
+                  <Paperclip className="w-4 h-4" />
+                  <span>Chọn file .docx tham khảo</span>
+                </>
+              )}
+            </button>
+          ) : (
+            <div className="flex items-center gap-3 px-4 py-2.5 bg-teal-50 border border-teal-200 rounded-lg">
+              <div className="w-8 h-8 bg-teal-100 rounded-lg flex items-center justify-center shrink-0">
+                <FileText className="w-4 h-4 text-teal-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-teal-800 truncate">{referenceDoc.fileName}</p>
+                <p className="text-xs text-slate-500">
+                  {referenceDoc.method === 'hybrid'
+                    ? `Hybrid: ${referenceDoc.wmfCount} công thức MathType + ${referenceDoc.images.length} hình`
+                    : referenceDoc.method === 'xml'
+                    ? `XML: ${referenceDoc.text.length} ký tự (OMML → LaTeX)`
+                    : `Mammoth: ${referenceDoc.images.length} hình ảnh`
+                  }
+                  {' · '}{Math.round(referenceDoc.text.length / 1000)}K ký tự
+                </p>
+              </div>
+              <button
+                onClick={() => setReferenceDoc(null)}
+                className="shrink-0 p-1.5 rounded-md hover:bg-red-100 text-slate-400 hover:text-red-500 transition-colors"
+                title="Xóa tài liệu tham khảo"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-6 pb-2">
         {/* Editor Side */}
         <div className="flex flex-col h-full panel-elevated">
@@ -698,10 +838,10 @@ const App: React.FC = () => {
         subject: '', grade: '', duration: 45, examType: 'Giữa kỳ 1', topics: '', additionalNotes: '',
         chapters: [],
         questionConfig: {
-          type1: { biet: 8, hieu: 4, van_dung: 0 },
-          type2: { biet: 1, hieu: 1, van_dung: 0 },
-          type3: { biet: 1, hieu: 1, van_dung: 2 },
-          essay: { biet: 0, hieu: 1, van_dung: 2 },
+          type1: { biet: 8, hieu: 4, van_dung: 0, van_dung_cao: 0 },
+          type2: { biet: 1, hieu: 1, van_dung: 0, van_dung_cao: 0 },
+          type3: { biet: 1, hieu: 1, van_dung: 2, van_dung_cao: 0 },
+          essay: { biet: 0, hieu: 1, van_dung: 1, van_dung_cao: 1 },
         }
       });
       setUploadedFileName(null);
@@ -710,33 +850,35 @@ const App: React.FC = () => {
       setCompletedSteps(0);
       setSelectedLessonIds(new Set());
       setExpandedChapterIds(new Set());
+      setReferenceDoc(null);
     }
   }
 
   return (
     <div className="h-screen w-full flex flex-col bg-app-gradient font-sans text-black overflow-hidden">
-      {/* API Key Modal */}
+      {/* Settings Modal */}
       {showApiKeyModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="modal-elevated max-w-md w-full p-8">
+          <div className="modal-elevated max-w-lg w-full p-8 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center gap-3 mb-6">
               <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center">
-                <Key className="w-6 h-6 text-primary" />
+                <Settings className="w-6 h-6 text-primary" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-teal-800">Nhập API Key</h2>
-                <p className="text-sm text-teal-500">Cần API Key Gemini để sử dụng app</p>
+                <h2 className="text-xl font-bold text-teal-800">Cài đặt</h2>
+                <p className="text-sm text-teal-500">API Key & Model AI</p>
               </div>
             </div>
-            <div className="space-y-4">
+            <div className="space-y-5">
+              {/* API Key Section */}
               <div>
-                <label className="block text-sm font-semibold text-teal-700 mb-2">Google AI API Key</label>
+                <label className="text-sm font-semibold text-teal-700 mb-2 block">🔑 API Key</label>
                 <input
                   type="password"
                   value={tempApiKey}
                   onChange={(e) => setTempApiKey(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSaveApiKey()}
-                  placeholder="AIzaSy..."
+                  placeholder="Dán API Key tại đây..."
                   className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none font-mono text-sm"
                   autoFocus
                 />
@@ -750,8 +892,37 @@ const App: React.FC = () => {
                 <ExternalLink className="w-4 h-4" />
                 Lấy API Key miễn phí tại Google AI Studio
               </a>
+
+              {/* Model Selector */}
+              <div>
+                <label className="text-sm font-semibold text-teal-700 mb-3 block">🤖 Chọn Model AI</label>
+                <div className="space-y-2">
+                  {AVAILABLE_MODELS.map(m => (
+                    <button
+                      key={m.id}
+                      onClick={() => { setSelectedModelState(m.id); setSelectedModel(m.id); }}
+                      className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all text-left ${
+                        selectedModel === m.id
+                          ? 'border-teal-500 bg-teal-50 shadow-sm'
+                          : 'border-slate-200 hover:border-teal-300 hover:bg-teal-50/30'
+                      }`}
+                    >
+                      <div>
+                        <div className="font-semibold text-sm text-teal-800">{m.name}</div>
+                        <div className="text-xs text-slate-500">{m.desc}</div>
+                      </div>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                        m.badge === 'Mặc định' ? 'bg-teal-100 text-teal-700' :
+                        m.badge === 'Pro' ? 'bg-amber-100 text-amber-700' :
+                        'bg-blue-100 text-blue-700'
+                      }`}>{m.badge}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <Button onClick={handleSaveApiKey} disabled={!tempApiKey.trim()} className="w-full py-3" icon={<Key className="w-4 h-4" />}>
-                Lưu API Key & Bắt đầu
+                Lưu & Bắt đầu
               </Button>
               {apiKey && (
                 <button onClick={() => setShowApiKeyModal(false)} className="w-full text-center text-sm text-slate-500 hover:text-slate-800 py-2">
@@ -774,14 +945,22 @@ const App: React.FC = () => {
               <h1 className="text-lg font-bold text-teal-900 leading-tight">TẠO ĐỀ THI THEO CV 7991</h1>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            {/* Dark Mode Toggle */}
+            <button
+              onClick={() => setDarkMode(prev => !prev)}
+              className="flex items-center justify-center w-9 h-9 rounded-lg border border-slate-300 hover:bg-slate-50 transition-colors"
+              title={darkMode ? 'Chế độ sáng' : 'Chế độ tối'}
+            >
+              {darkMode ? <Sun className="w-4 h-4 text-amber-500" /> : <Moon className="w-4 h-4 text-slate-600" />}
+            </button>
             <button
               onClick={() => { setTempApiKey(apiKey || ''); setShowApiKeyModal(true); }}
               className="flex items-center gap-2 text-sm px-3 py-1.5 h-9 rounded-lg border border-slate-300 hover:bg-slate-50 transition-colors"
             >
               <Settings className="w-4 h-4 text-slate-600" />
               {!apiKey && <span className="text-red-500 font-medium text-xs">Lấy API key để sử dụng app</span>}
-              {apiKey && <span className="text-teal-700 font-medium text-xs">Cài đặt API Key</span>}
+              {apiKey && <span className="text-teal-700 font-medium text-xs">Cài đặt</span>}
             </button>
             <Button variant="secondary" onClick={handleReset} icon={<RotateCcw className="w-4 h-4" />} className="text-sm px-3 py-1.5 h-9">
               Tạo mới
@@ -799,8 +978,12 @@ const App: React.FC = () => {
       <main className="flex-1 relative w-full overflow-hidden">
         {/* Error Toast */}
         {genState.error && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-red-100 border border-red-200 text-red-700 px-4 py-2 rounded shadow-lg flex items-center gap-2 animate-bounce">
-            <AlertCircle className="w-5 h-5" /> {genState.error}
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-red-100 border border-red-200 text-red-700 px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2 max-w-xl animate-fade-in-up">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            <span className="text-sm flex-1">{genState.error}</span>
+            <button onClick={() => setGenState(prev => ({...prev, error: null}))} className="shrink-0 hover:bg-red-200 rounded p-0.5 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
           </div>
         )}
 
@@ -849,6 +1032,11 @@ const App: React.FC = () => {
           </div>
         )}
       </main>
+
+      {/* Footer */}
+      <footer className="shrink-0 text-center py-2 text-xs text-slate-400 border-t border-slate-200/50">
+        Tạo Đề Thi Theo CV 7991 © 2026 | Powered by Google Gemini AI
+      </footer>
     </div>
   );
 };

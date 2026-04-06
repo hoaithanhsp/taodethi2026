@@ -5,6 +5,7 @@ import { InputData, QuestionConfig } from '../types';
 
 // --- API Key Management (localStorage-based) ---
 const API_KEY_STORAGE_KEY = 'examcraft_api_key';
+const MODEL_STORAGE_KEY = 'examcraft_selected_model';
 
 export const getApiKey = (): string | null => {
   return localStorage.getItem(API_KEY_STORAGE_KEY);
@@ -18,6 +19,14 @@ export const removeApiKey = (): void => {
   localStorage.removeItem(API_KEY_STORAGE_KEY);
 };
 
+export const getSelectedModel = (): string | null => {
+  return localStorage.getItem(MODEL_STORAGE_KEY);
+};
+
+export const setSelectedModel = (model: string): void => {
+  localStorage.setItem(MODEL_STORAGE_KEY, model);
+};
+
 const getAI = (): GoogleGenAI => {
   const key = getApiKey();
   if (!key) throw new Error("Chưa có API Key. Vui lòng nhập API Key trong phần Settings.");
@@ -29,7 +38,9 @@ const callWithFallback = async (
   promptFn: (ai: GoogleGenAI, model: string) => Promise<string>
 ): Promise<string> => {
   const ai = getAI();
-  const modelsToTry = [MODEL_NAME, ...FALLBACK_MODELS.filter(m => m !== MODEL_NAME)];
+  const userModel = getSelectedModel();
+  const primaryModel = userModel || MODEL_NAME;
+  const modelsToTry = [primaryModel, ...FALLBACK_MODELS.filter(m => m !== primaryModel)];
   let lastError: any = null;
 
   for (const model of modelsToTry) {
@@ -39,7 +50,6 @@ const callWithFallback = async (
     } catch (err: any) {
       lastError = err;
       console.warn(`[ExamCraft] Model ${model} failed:`, err.message || err);
-      // Check if it's a quota error
       if (err.message?.includes('quota') || err.message?.includes('429') || err.status === 429) {
         console.warn(`[ExamCraft] Quota exceeded for ${model}, trying next model...`);
       }
@@ -93,7 +103,7 @@ export const convertMatrixFileToHtml = async (file: File): Promise<string> => {
       model: 'gemini-2.5-flash',
       contents: {
         parts: [
-          { inlineData: { mimeType: file.type === 'application/pdf' ? 'application/pdf' : 'image/jpeg', data: base64Data } },
+          { inlineData: { mimeType: file.type || 'application/octet-stream', data: base64Data } },
           { text: prompt }
         ]
       },
@@ -182,7 +192,7 @@ export const extractInfoFromDocument = async (file: File, selectedSubject?: stri
       model: 'gemini-2.5-flash',
       contents: {
         parts: [
-          { inlineData: { mimeType: file.type === 'application/pdf' ? 'application/pdf' : 'text/plain', data: base64Data } },
+          { inlineData: { mimeType: file.type || 'application/octet-stream', data: base64Data } },
           { text: prompt }
         ]
       },
@@ -234,7 +244,7 @@ export const generateStep1Matrix = async (
 
   const config = data.questionConfig;
 
-  const totalEssayQuestions = config.essay.biet + config.essay.hieu + config.essay.van_dung;
+  const totalEssayQuestions = config.essay.biet + config.essay.hieu + config.essay.van_dung + config.essay.van_dung_cao;
   const hasEssay = totalEssayQuestions > 0;
 
   let scoringInstructions = "";
@@ -284,10 +294,10 @@ export const generateStep1Matrix = async (
   - Tổng số tiết trọng tâm: ${totalSelectedPeriods} tiết
   
   **CẤU TRÚC SỐ LƯỢNG CÂU HỎI (Bắt buộc tuân thủ):**
-  - Nhiều lựa chọn (Dạng I): Biết ${config.type1.biet}, Hiểu ${config.type1.hieu}, VD ${config.type1.van_dung}
-  - Đúng - Sai (Dạng II): Biết ${config.type2.biet}, Hiểu ${config.type2.hieu}, VD ${config.type2.van_dung}
-  - Trả lời ngắn (Dạng III): Biết ${config.type3.biet}, Hiểu ${config.type3.hieu}, VD ${config.type3.van_dung}
-  - Tự luận: Biết ${config.essay.biet}, Hiểu ${config.essay.hieu}, VD ${config.essay.van_dung}
+  - Nhiều lựa chọn (Dạng I): Biết ${config.type1.biet}, Hiểu ${config.type1.hieu}, VD ${config.type1.van_dung}, VDC ${config.type1.van_dung_cao}
+  - Đúng - Sai (Dạng II): Biết ${config.type2.biet}, Hiểu ${config.type2.hieu}, VD ${config.type2.van_dung}, VDC ${config.type2.van_dung_cao}
+  - Trả lời ngắn (Dạng III): Biết ${config.type3.biet}, Hiểu ${config.type3.hieu}, VD ${config.type3.van_dung}, VDC ${config.type3.van_dung_cao}
+  - Tự luận: Biết ${config.essay.biet}, Hiểu ${config.essay.hieu}, VD ${config.essay.van_dung}, VDC ${config.essay.van_dung_cao}
   
   ${scoringInstructions}
 
@@ -296,48 +306,38 @@ export const generateStep1Matrix = async (
   Tiêu đề bảng (in đậm, căn giữa, ở trên bảng):
   **MA TRẬN ĐỀ KIỂM TRA ... - ${data.subject.toUpperCase()} ${data.grade.toUpperCase()}**
 
-  **QUY TẮC NĂM HỌC (BẮT BUỘC):** Thông tin năm học phải ĐỂ TRỐNG dạng: "NĂM HỌC 20... - 20...". TUYỆT ĐỐI KHÔNG điền sẵn bất kỳ năm cụ thể nào (ví dụ KHÔNG viết 2023-2024 hay 2024-2025).
+  **QUY TẮC NĂM HỌC (BẮT BUỘC):** Thông tin năm học phải ĐỂ TRỐNG dạng: "NĂM HỌC 20... - 20...". TUYỆT ĐỐI KHÔNG điền sẵn bất kỳ năm cụ thể nào.
 
-  **HEADER BẢNG (3 tầng merge):**
-  - Tầng 1 (Row 1): 
-    + TT (rowspan=3) | Chương/chủ đề (rowspan=3) | Nội dung/đơn vị kiến thức (rowspan=3) | "Mức độ đánh giá" (colspan= tổng cột TNKQ) | Tổng số câu (colspan=3) | Tỉ lệ % điểm (rowspan=3)
-  - Tầng 2 (Row 2):
-    + "TNKQ" (colspan= tổng cột TNKQ)
-  - Tầng 3 (Row 3):
-    + "Nhiều lựa chọn" (colspan=3) → rồi bên dưới nó: Biết | Hiểu | VD
-    + "Đúng - Sai" (colspan=3) → bên dưới: Biết | Hiểu | VD  
-    + "Trả lời ngắn" (colspan=3) → bên dưới: Biết | Hiểu | VD
-    + Biết | Hiểu | VD (cho cột Tổng số câu)
-
+  **HEADER BẢNG (4 tầng merge):**
   Thực tế header cần 4 dòng:
-  - Dòng header 1: TT(rowspan=4) | Chương/chủ đề(rowspan=4) | Nội dung/đơn vị kiến thức(rowspan=4) | Mức độ đánh giá(colspan=9 hoặc 12 tùy có tự luận) | Tổng số câu(colspan=3, rowspan=2) | Tỉ lệ % điểm(rowspan=4)
-  - Dòng header 2: TNKQ(colspan=9 hoặc 12)
-  - Dòng header 3: Nhiều lựa chọn(colspan=3) | Đúng - Sai(colspan=3) | Trả lời ngắn(colspan=3) ${hasEssay ? '| Tự luận(colspan=3)' : ''} | Biết | Hiểu | VD
-  - Dòng header 4: Biết | Hiểu | VD | Biết | Hiểu | VD | Biết | Hiểu | VD ${hasEssay ? '| Biết | Hiểu | VD' : ''}
+  - Dòng header 1: TT(rowspan=4) | Chương/chủ đề(rowspan=4) | Nội dung/đơn vị kiến thức(rowspan=4) | Mức độ đánh giá(colspan=${hasEssay ? 16 : 12}) | Tổng số câu(colspan=4, rowspan=2) | Tỉ lệ % điểm(rowspan=4)
+  - Dòng header 2: TNKQ(colspan=${hasEssay ? 16 : 12})
+  - Dòng header 3: Nhiều lựa chọn(colspan=4) | Đúng - Sai(colspan=4) | Trả lời ngắn(colspan=4) ${hasEssay ? '| Tự luận(colspan=4)' : ''} | Biết | Hiểu | VD | VDC
+  - Dòng header 4: Biết | Hiểu | VD | VDC | Biết | Hiểu | VD | VDC | Biết | Hiểu | VD | VDC ${hasEssay ? '| Biết | Hiểu | VD | VDC' : ''}
 
-  ${hasEssay ? 'Nếu CÓ tự luận: thêm cột "Tự luận" (colspan=3) sau "Trả lời ngắn", header TNKQ colspan tăng thêm 3.' : 'KHÔNG CÓ tự luận => KHÔNG tạo cột Tự luận.'}
+  ${hasEssay ? 'Nếu CÓ tự luận: thêm cột "Tự luận" (colspan=4) sau "Trả lời ngắn".' : 'KHÔNG CÓ tự luận => KHÔNG tạo cột Tự luận.'}
 
   **NỘI DUNG BẢNG - MỖI BÀI HỌC CÓ 2 DÒNG (sub-row):**
   Với mỗi bài học (Nội dung/ĐVKT), tạo CHÍNH XÁC **2 dòng** (2 <tr>):
 
   **Dòng 1 (Số lượng câu hỏi):**
   - Ô "Nội dung" ghi: Tên bài + (X tiết) — dùng rowspan=2
-  - Các ô Biết/Hiểu/VD của từng dạng: Ghi SỐ LƯỢNG câu hỏi (ví dụ: 2, 1, 0, ...)
-  - Ô "Tổng số câu" Biết/Hiểu/VD: rowspan=2, tính tổng theo hàng ngang
+  - Các ô Biết/Hiểu/VD/VDC của từng dạng: Ghi SỐ LƯỢNG câu hỏi (ví dụ: 2, 1, 0, ...)
+  - Ô "Tổng số câu" Biết/Hiểu/VD/VDC: rowspan=2, tính tổng theo hàng ngang
   - Ô "Tỉ lệ % điểm": rowspan=2, ví dụ "15,0%", "25,0%"
 
   **Dòng 2 (Tên điểm / Mã câu):**
   - Với các ô thuộc cột "Biết" và "Hiểu": Ghi chữ "TD" (Tư duy).
-  - Với các ô thuộc cột "VD" (Vận dụng): TUYỆT ĐỐI ghi chữ "GQVĐ" (Giải quyết vấn đề), KHÔNG ghi "TD".
+  - Với các ô thuộc cột "VD" (Vận dụng) và "VDC" (Vận dụng cao): TUYỆT ĐỐI ghi chữ "GQVĐ" (Giải quyết vấn đề), KHÔNG ghi "TD".
   - Nếu KHÔNG có câu hỏi ở ô đó (0 câu), để TRỐNG.
   
   **Merge cells STT & Chương/chủ đề:** 
   - Nếu 1 chương có nhiều bài => cột TT dùng rowspan = (số bài × 2), cột Chương/chủ đề cũng rowspan = (số bài × 2).
 
   **FOOTER BẢNG (3 dòng cuối):**
-  1. **Tổng số câu**: Tổng cộng số câu hỏi theo từng cột Biết/Hiểu/VD của từng dạng + tổng toàn bảng cuối.
+  1. **Tổng số câu**: Tổng cộng số câu hỏi theo từng cột Biết/Hiểu/VD/VDC của từng dạng + tổng toàn bảng cuối.
   2. **Tổng số điểm**: Tổng điểm theo từng cột + tổng cuối = 10.
-  3. **Tỉ lệ % điểm của ma trận**: "30%", "40%", "30%"... cho mỗi nhóm dạng, cuối cùng 100%.
+  3. **Tỉ lệ % điểm của ma trận**: cho mỗi nhóm dạng, cuối cùng 100%.
 
   **QUY TẮC ĐIỂM SỐ VÀNG (BẮT BUỘC):**
   1. Mọi điểm số PHẢI là bội số của 0.25.
@@ -387,7 +387,7 @@ export const generateStep2Specs = async (
   const objectivesMap: string[] = [];
   data.chapters.forEach(c => c.lessons.forEach(l => {
     if (selectedLessonIds.has(l.id)) {
-      objectivesMap.push(`- Bài "${l.name}": \n   + Biết: ${l.objectives.biet || '...'}\n   + Hiểu: ${l.objectives.hieu || '...'}\n   + Vận dụng: ${l.objectives.van_dung || '...'}`);
+      objectivesMap.push(`- Bài "${l.name}": \n   + Biết: ${l.objectives.biet || '...'}\n   + Hiểu: ${l.objectives.hieu || '...'}\n   + Vận dụng: ${l.objectives.van_dung || '...'}\n   + Vận dụng cao: ${l.objectives.van_dung_cao || '...'}`);
     }
   }));
 
@@ -480,14 +480,16 @@ export const generateStep2Specs = async (
 export const generateStep3Exam = async (
   specsContent: string,
   questionConfig: QuestionConfig,
-  inputData: InputData
+  inputData: InputData,
+  referenceText?: string,
+  referenceImages?: { base64: string; mimeType: string }[]
 ): Promise<string> => {
 
   const counts = {
-    type1: questionConfig.type1.biet + questionConfig.type1.hieu + questionConfig.type1.van_dung,
-    type2: questionConfig.type2.biet + questionConfig.type2.hieu + questionConfig.type2.van_dung,
-    type3: questionConfig.type3.biet + questionConfig.type3.hieu + questionConfig.type3.van_dung,
-    essay: questionConfig.essay.biet + questionConfig.essay.hieu + questionConfig.essay.van_dung,
+    type1: questionConfig.type1.biet + questionConfig.type1.hieu + questionConfig.type1.van_dung + questionConfig.type1.van_dung_cao,
+    type2: questionConfig.type2.biet + questionConfig.type2.hieu + questionConfig.type2.van_dung + questionConfig.type2.van_dung_cao,
+    type3: questionConfig.type3.biet + questionConfig.type3.hieu + questionConfig.type3.van_dung + questionConfig.type3.van_dung_cao,
+    essay: questionConfig.essay.biet + questionConfig.essay.hieu + questionConfig.essay.van_dung + questionConfig.essay.van_dung_cao,
   };
 
   let structureInstructions = "**CẤU TRÚC ĐỀ THI & ĐÁP ÁN CẦN TẠO (CHỈ TẠO CÁC PHẦN SAU):**\n";
@@ -516,6 +518,30 @@ export const generateStep3Exam = async (
     structureInstructions += `- **PHẦN IV:** KHÔNG ĐƯỢC TẠO (Số câu = 0). TUYỆT ĐỐI KHÔNG SINH RA PHẦN TỰ LUẬN.\n`;
   }
 
+  // Build reference section
+  let referenceSection = '';
+  if (referenceText && referenceText.trim()) {
+    const hasImages = referenceImages && referenceImages.length > 0;
+    referenceSection = `
+  **===== TÀI LIỆU THAM KHẢO (ĐỀ MẪU / NGÂN HÀNG CÂU HỎI) =====**
+  
+  Dưới đây là nội dung tài liệu tham khảo được người dùng upload. ${hasImages ? `Có ${referenceImages!.length} hình ảnh đính kèm (bao gồm công thức toán đã chuyển thành hình).` : ''}
+  
+  **CÁCH SỬ DỤNG TÀI LIỆU THAM KHẢO:**
+  - Phân tích phong cách ra đề, dạng câu hỏi, và mức độ khó trong tài liệu tham khảo.
+  - Lấy cảm hứng từ cách diễn đạt, cấu trúc câu hỏi, và dạng bài tập.
+  - **TUYỆT ĐỐI KHÔNG COPY NGUYÊN VĂN** câu hỏi từ tài liệu tham khảo.
+  - Tạo câu hỏi MỚI có phong cách và mức độ khó tương tự, nhưng với dữ liệu/số liệu/nội dung khác.
+  ${hasImages ? '- Đọc KỸ các hình ảnh đính kèm — đặc biệt là hình công thức toán. Chuyển đổi nội dung hình sang LaTeX khi cần.' : ''}
+  
+  **NỘI DUNG TÀI LIỆU THAM KHẢO:**
+  ${referenceText.substring(0, 15000)}
+  ${referenceText.length > 15000 ? '\n[... Nội dung đã được cắt ngắn do quá dài ...]' : ''}
+  
+  **===== HẾT TÀI LIỆU THAM KHẢO =====**
+  `;
+  }
+
   const prompt = `
   **===== THÔNG TIN ĐỀ THI BẮT BUỘC (CỰC KỲ QUAN TRỌNG) =====**
   - **Môn học:** ${inputData.subject}
@@ -531,6 +557,8 @@ export const generateStep3Exam = async (
 
   Dựa trên **Bảng đặc tả** sau (HTML):
   ${specsContent}
+
+  ${referenceSection}
 
   Hãy soạn thảo **ĐỀ THI HOÀN CHỈNH** và **HƯỚNG DẪN CHẤM** cho môn **${inputData.subject}** lớp **${inputData.grade}** — **${inputData.examType}**.
   
@@ -589,9 +617,31 @@ export const generateStep3Exam = async (
   `;
 
   return callWithFallback(async (ai, model) => {
+    // Build content parts
+    const parts: any[] = [];
+    
+    // Add reference images first (if any) — Gemini can "see" these
+    if (referenceImages && referenceImages.length > 0) {
+      // Limit to max 15 images to avoid token overflow
+      const imagesToSend = referenceImages.slice(0, 15);
+      console.log(`[ExamCraft] Sending ${imagesToSend.length} reference images to Gemini`);
+      
+      for (const img of imagesToSend) {
+        parts.push({
+          inlineData: {
+            mimeType: img.mimeType,
+            data: img.base64,
+          }
+        });
+      }
+    }
+    
+    // Add text prompt
+    parts.push({ text: prompt });
+
     const response = await ai.models.generateContent({
       model,
-      contents: prompt,
+      contents: [{ role: 'user', parts }],
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         temperature: 0.7,
