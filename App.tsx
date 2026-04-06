@@ -4,7 +4,7 @@ import { AppStep, InputData, GenerationState, Lesson, Chapter, QuestionConfig } 
 import StepIndicator from './components/StepIndicator';
 import Button from './components/Button';
 import MarkdownView from './components/MarkdownView';
-import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, getApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel } from './services/geminiService';
+import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, getApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel } from './services/geminiService';
 import { parseDocxWithMath } from './services/docxMathParser';
 import { AVAILABLE_MODELS } from './constants';
 import { ArrowRight, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen } from 'lucide-react';
@@ -175,7 +175,22 @@ const App: React.FC = () => {
           reader.readAsText(file);
         });
       }
-      // If PDF or Doc/Docx, convert using AI
+      // If DOCX/DOC, extract text via docxMathParser then convert to HTML table via AI
+      else if (file.name.endsWith(".docx") || file.name.endsWith(".doc")) {
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const parsed = await parseDocxWithMath(arrayBuffer);
+          console.log(`[MatrixUpload] DOCX parsed: ${parsed.text.length} chars, ${parsed.images.length} images, method=${parsed.method}`);
+          
+          // Send extracted text + images to AI for conversion to HTML table
+          content = await convertMatrixTextToHtml(parsed.text, parsed.images);
+        } catch (docxErr: any) {
+          console.warn('[MatrixUpload] DOCX parse failed, trying direct AI:', docxErr);
+          // Fallback: try direct AI conversion (works for PDF-like formats)
+          content = await convertMatrixFileToHtml(file);
+        }
+      }
+      // If PDF, convert using AI directly (Gemini supports PDF)
       else {
         content = await convertMatrixFileToHtml(file);
       }
@@ -542,10 +557,10 @@ const App: React.FC = () => {
             ) : uploadedFileName ? (
               <div className="flex items-center gap-2 text-green-700 font-medium"><Check className="w-5 h-5" /> {uploadedFileName} (Click thay đổi)</div>
             ) : (
-              <div className="flex items-center gap-2 text-primary font-medium"><Upload className="w-5 h-5" /> Upload File PPCT (.pdf)</div>
+              <div className="flex items-center gap-2 text-primary font-medium"><Upload className="w-5 h-5" /> Upload File PPCT (.pdf, .docx)</div>
             )}
           </label>
-          <p className="text-xs text-slate-500 mt-2 italic">📌 Chỉ hỗ trợ file định dạng <strong>.pdf</strong>. Vui lòng chuyển đổi file Word (.docx) sang PDF trước khi tải lên.</p>
+          <p className="text-xs text-slate-500 mt-2 italic">📌 Hỗ trợ file <strong>.pdf</strong> và <strong>.docx</strong> (Word). Công thức toán MathType sẽ được tự động trích xuất.</p>
         </div>
       </div>
 
