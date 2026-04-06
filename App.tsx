@@ -26,7 +26,7 @@ const App: React.FC = () => {
       type1: { biet: 8, hieu: 4, van_dung: 0, van_dung_cao: 0 },
       type2: { biet: 1, hieu: 1, van_dung: 0, van_dung_cao: 0 },
       type3: { biet: 1, hieu: 1, van_dung: 2, van_dung_cao: 0 },
-      essay: { biet: 0, hieu: 1, van_dung: 1, van_dung_cao: 1 },
+      essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
     }
   });
 
@@ -856,7 +856,7 @@ const App: React.FC = () => {
           type1: { biet: 8, hieu: 4, van_dung: 0, van_dung_cao: 0 },
           type2: { biet: 1, hieu: 1, van_dung: 0, van_dung_cao: 0 },
           type3: { biet: 1, hieu: 1, van_dung: 2, van_dung_cao: 0 },
-          essay: { biet: 0, hieu: 1, van_dung: 1, van_dung_cao: 1 },
+          essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
         }
       });
       setUploadedFileName(null);
