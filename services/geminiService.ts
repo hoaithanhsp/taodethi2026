@@ -116,8 +116,63 @@ export const convertMatrixFileToHtml = async (file: File): Promise<string> => {
   }
 };
 
+// Convert extracted DOCX text + images to HTML table
+export const convertMatrixTextToHtml = async (
+  text: string,
+  images?: { base64: string; mimeType: string }[]
+): Promise<string> => {
+  const hasImages = images && images.length > 0;
+  
+  const prompt = `
+    Bạn là một chuyên gia chuyển đổi dữ liệu.
+    Nội dung dưới đây là **MA TRẬN ĐỀ THI** được trích xuất từ file Word (.docx).
+    ${hasImages ? `Có ${images!.length} hình ảnh đính kèm (bao gồm công thức toán đã chuyển thành hình). Hãy đọc kỹ các hình để hiểu nội dung.` : ''}
+    
+    Nhiệm vụ của bạn là:
+    1. Đọc nội dung ma trận từ text dưới đây.
+    2. Chuyển đổi toàn bộ thành một bảng **HTML Table** chuẩn.
+    
+    YÊU CẦU KỸ THUẬT:
+    - Giữ nguyên cấu trúc merge cells (rowspan, colspan) của bản gốc.
+    - Font chữ: Times New Roman, size 13pt.
+    - Table border: 1px solid black.
+    - Output: Chỉ trả về mã HTML của bảng (<table>...</table>) hoặc (<!DOCTYPE html>...), KHÔNG bao gồm markdown \`\`\`.
+    - Nếu text chứa LaTeX ($...$), giữ nguyên LaTeX trong bảng.
+    
+    **NỘI DUNG MA TRẬN:**
+    ${text.substring(0, 20000)}
+  `;
+
+  const parts: any[] = [];
+  
+  // Add images first (if any)
+  if (hasImages) {
+    const imagesToSend = images!.slice(0, 10);
+    for (const img of imagesToSend) {
+      parts.push({
+        inlineData: {
+          mimeType: img.mimeType,
+          data: img.base64,
+        }
+      });
+    }
+  }
+  
+  // Add text prompt
+  parts.push({ text: prompt });
+
+  return callWithFallback(async (ai, model) => {
+    const response = await ai.models.generateContent({
+      model,
+      contents: [{ role: 'user', parts }],
+    });
+    const resultText = response.text || "";
+    return resultText.replace(/```html/g, '').replace(/```/g, '');
+  });
+};
+
 export const extractInfoFromDocument = async (file: File, selectedSubject?: string, selectedGrade?: string): Promise<Partial<InputData>> => {
-  const base64Data = await fileToBase64(file);
+  const isDocx = file.name.endsWith('.docx') || file.name.endsWith('.doc');
 
   let subjectConstraint = "";
   if (selectedSubject && selectedGrade) {
@@ -131,7 +186,7 @@ export const extractInfoFromDocument = async (file: File, selectedSubject?: stri
   }
 
   const prompt = `
-    Bạn là chuyên gia phân tích chương trình giáo dục Việt Nam. Hãy đọc file đính kèm (Kế hoạch dạy học/PPCT) và trích xuất dữ liệu cấu trúc cực kỳ chi tiết.
+    Bạn là chuyên gia phân tích chương trình giáo dục Việt Nam. ${isDocx ? 'Nội dung dưới đây được trích xuất từ file Word (.docx).' : 'Hãy đọc file đính kèm (Kế hoạch dạy học/PPCT)'} và trích xuất dữ liệu cấu trúc cực kỳ chi tiết.
 
     **===== NGUYÊN TẮC VÀNG: CHỈ TRÍCH XUẤT, KHÔNG SÁNG TẠO =====**
     1. TUYỆT ĐỐI CHỈ trích xuất nội dung CÓ SẴN trong file đính kèm. KHÔNG ĐƯỢC tự bịa đặt, suy luận, hay thêm bất kỳ thông tin nào không có trong tài liệu.
@@ -188,14 +243,36 @@ export const extractInfoFromDocument = async (file: File, selectedSubject?: stri
 
   const ai = getAI();
   try {
+    // Build parts based on file type
+    const parts: any[] = [];
+
+    if (isDocx) {
+      // DOCX: Parse text + images first, then send to AI
+      const { parseDocxWithMath } = await import('./docxMathParser');
+      const arrayBuffer = await file.arrayBuffer();
+      const parsed = await parseDocxWithMath(arrayBuffer);
+      console.log(`[ExtractInfo] DOCX parsed: ${parsed.text.length} chars, ${parsed.images.length} images, method=${parsed.method}`);
+      
+      // Send images inline (if any)
+      if (parsed.images.length > 0) {
+        const imagesToSend = parsed.images.slice(0, 10);
+        for (const img of imagesToSend) {
+          parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
+        }
+      }
+      
+      // Send text prompt with DOCX content appended
+      parts.push({ text: prompt + `\n\n**NỘI DUNG FILE DOCX:**\n${parsed.text.substring(0, 25000)}` });
+    } else {
+      // PDF/Image: Send binary directly (Gemini supports these)
+      const base64Data = await fileToBase64(file);
+      parts.push({ inlineData: { mimeType: file.type || 'application/octet-stream', data: base64Data } });
+      parts.push({ text: prompt });
+    }
+
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: {
-        parts: [
-          { inlineData: { mimeType: file.type || 'application/octet-stream', data: base64Data } },
-          { text: prompt }
-        ]
-      },
+      contents: [{ role: 'user', parts }],
       config: {
         responseMimeType: "application/json",
       }
