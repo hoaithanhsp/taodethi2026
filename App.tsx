@@ -958,6 +958,7 @@ const App: React.FC = () => {
             </div>
             <div>
               <h1 className="text-lg font-bold text-teal-900 leading-tight">TẠO ĐỀ THI THEO CV 7991</h1>
+              <p className="text-xs text-slate-500 leading-tight">Phát triển bởi thầy Trần Hoài Thanh - zalo 0348296773</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -1049,8 +1050,9 @@ const App: React.FC = () => {
       </main>
 
       {/* Footer */}
-      <footer className="shrink-0 text-center py-2 text-xs text-slate-400 border-t border-slate-200/50">
-        Tạo Đề Thi Theo CV 7991 © 2026 | Powered by Google Gemini AI
+      <footer className="shrink-0 text-center py-3 text-xs text-slate-400 border-t border-slate-200/50 space-y-1">
+        <p>Tạo Đề Thi Theo CV 7991 © 2026 | Powered by Google Gemini AI</p>
+        <p>Mọi tool AI và khóa học tạo app dành cho giáo viên có tại: <a href="https://giaovienai.vercel.app/" target="_blank" rel="noopener noreferrer" className="text-teal-600 hover:text-teal-800 underline font-medium">giaovienai.vercel.app</a></p>
       </footer>
     </div>
   );
