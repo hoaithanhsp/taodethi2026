@@ -64,3 +64,15 @@ export interface ChatMessage {
   role: Role;
   text: string;
 }
+
+// Extracted question from reference document
+export interface ExtractedQuestion {
+  id: string;
+  type: 'type1' | 'type2' | 'type3' | 'essay'; // Dạng câu hỏi
+  level: 'biet' | 'hieu' | 'van_dung' | 'van_dung_cao'; // Mức độ
+  topic: string; // Chủ đề/Chương
+  content: string; // Nội dung câu hỏi (full HTML hoặc text)
+  options?: string[]; // Đáp án (A,B,C,D cho type1)
+  answer?: string; // Đáp án đúng
+  subItems?: string[]; // Các ý a,b,c,d cho type2
+}

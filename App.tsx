@@ -1,10 +1,10 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { AppStep, InputData, GenerationState, Lesson, Chapter, QuestionConfig } from './types';
+import { AppStep, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion } from './types';
 import StepIndicator from './components/StepIndicator';
 import Button from './components/Button';
 import MarkdownView from './components/MarkdownView';
-import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, getApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel } from './services/geminiService';
+import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel } from './services/geminiService';
 import { parseDocxWithMath } from './services/docxMathParser';
 import { AVAILABLE_MODELS } from './constants';
 import { ArrowRight, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen } from 'lucide-react';
@@ -62,6 +62,13 @@ const App: React.FC = () => {
   const matrixUploadRef = useRef<HTMLInputElement>(null); // Ref for Step 2 upload
   const matrixDirectUploadRef = useRef<HTMLInputElement>(null); // Ref for Step 1 direct upload
   const referenceUploadRef = useRef<HTMLInputElement>(null); // Ref for reference doc upload
+  const comboMatrixUploadRef = useRef<HTMLInputElement>(null); // Ref for combo shortcut - matrix
+  const comboSpecsUploadRef = useRef<HTMLInputElement>(null); // Ref for combo shortcut - specs
+
+  // -- Combo Shortcut State --
+  const [comboMatrixFile, setComboMatrixFile] = useState<File | null>(null);
+  const [comboSpecsFile, setComboSpecsFile] = useState<File | null>(null);
+  const [isComboProcessing, setIsComboProcessing] = useState(false);
 
   // -- Reference Document State --
   const [referenceDoc, setReferenceDoc] = useState<{
@@ -72,6 +79,8 @@ const App: React.FC = () => {
     wmfCount: number;
   } | null>(null);
   const [isParsingReference, setIsParsingReference] = useState(false);
+  const [extractedQuestions, setExtractedQuestions] = useState<ExtractedQuestion[]>([]);
+  const [isExtractingQuestions, setIsExtractingQuestions] = useState(false);
 
   // -- API Key State --
   const [apiKey, setApiKeyState] = useState<string>(getApiKey() || '');
@@ -256,6 +265,73 @@ const App: React.FC = () => {
     if (matrixDirectUploadRef.current) matrixDirectUploadRef.current.value = '';
   };
 
+  // -- Combo Shortcut: Upload cả Ma trận + Đặc tả → Nhảy thẳng sang tạo đề --
+  const handleComboMatrixSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setComboMatrixFile(file);
+    if (comboMatrixUploadRef.current) comboMatrixUploadRef.current.value = '';
+  };
+
+  const handleComboSpecsSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setComboSpecsFile(file);
+    if (comboSpecsUploadRef.current) comboSpecsUploadRef.current.value = '';
+  };
+
+  const processComboShortcut = async () => {
+    if (!comboMatrixFile || !comboSpecsFile) {
+      alert('Vui lòng chọn cả 2 file: Ma trận VÀ Đặc tả.');
+      return;
+    }
+
+    setIsComboProcessing(true);
+    setGenState(prev => ({ ...prev, isLoading: true, error: null }));
+
+    try {
+      // Step 1: Process Matrix file
+      const matrixSuccess = await processMatrixUpload(comboMatrixFile);
+      if (!matrixSuccess) throw new Error('Không thể xử lý file Ma trận.');
+
+      // Step 2: Process Specs file (same logic)
+      let specsContent = '';
+      const specsFile = comboSpecsFile;
+
+      if (specsFile.type === 'text/html' || specsFile.type === 'text/plain' || specsFile.name.endsWith('.html') || specsFile.name.endsWith('.txt')) {
+        specsContent = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve(e.target?.result as string);
+          reader.readAsText(specsFile);
+        });
+      } else if (specsFile.name.endsWith('.docx') || specsFile.name.endsWith('.doc')) {
+        try {
+          const arrayBuffer = await specsFile.arrayBuffer();
+          const parsed = await parseDocxWithMath(arrayBuffer);
+          specsContent = await convertMatrixTextToHtml(parsed.text, parsed.images);
+        } catch {
+          specsContent = await convertMatrixFileToHtml(specsFile);
+        }
+      } else {
+        specsContent = await convertMatrixFileToHtml(specsFile);
+      }
+
+      setGenState(prev => ({ ...prev, specs: specsContent, isLoading: false }));
+
+      // Jump to SPECS step → user clicks "Tạo đề" from there
+      setCurrentStep(AppStep.SPECS);
+      setCompletedSteps(Math.max(completedSteps, 2));
+
+      // Clear combo state
+      setComboMatrixFile(null);
+      setComboSpecsFile(null);
+    } catch (err: any) {
+      setGenState(prev => ({ ...prev, isLoading: false, error: err.message }));
+    } finally {
+      setIsComboProcessing(false);
+    }
+  };
+
   // -- Topic Selection Logic --
 
   const applySmartFilter = (type: string, chapters: Chapter[]) => {
@@ -369,12 +445,35 @@ const App: React.FC = () => {
         finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
       }
 
+      // Auto-extract questions from reference doc if not done yet
+      let questionsToUse = extractedQuestions;
+      if (referenceDoc && extractedQuestions.length === 0) {
+        console.log('[ExamCraft] Auto-extracting questions from reference doc before exam generation...');
+        try {
+          const extracted = await extractQuestionsFromReference(
+            referenceDoc.text,
+            referenceDoc.images,
+            genState.specs,
+            inputData.subject,
+            inputData.grade
+          );
+          if (extracted.length > 0) {
+            setExtractedQuestions(extracted);
+            questionsToUse = extracted;
+            console.log(`[ExamCraft] Auto-extracted ${extracted.length} questions`);
+          }
+        } catch (extractErr: any) {
+          console.warn('[ExamCraft] Auto-extraction failed, falling back to raw text:', extractErr.message);
+        }
+      }
+
       const exam = await generateStep3Exam(
         genState.specs,
         finalQuestionConfig,
         inputData,
         referenceDoc?.text,
-        referenceDoc?.images
+        referenceDoc?.images,
+        questionsToUse.length > 0 ? questionsToUse : undefined
       );
       setGenState(prev => ({ ...prev, exam, isLoading: false }));
       setCurrentStep(AppStep.EXAM);
@@ -390,6 +489,7 @@ const App: React.FC = () => {
     if (!file) return;
 
     setIsParsingReference(true);
+    setExtractedQuestions([]); // Reset previous extraction
     try {
       const arrayBuffer = await file.arrayBuffer();
       const result = await parseDocxWithMath(arrayBuffer);
@@ -403,6 +503,27 @@ const App: React.FC = () => {
       });
       
       console.log(`[Reference] Parsed: ${result.text.length} chars, ${result.images.length} images, method=${result.method}, wmf=${result.wmfCount}`);
+
+      // Auto-trigger AI extraction if specs are available
+      if (genState.specs) {
+        setIsExtractingQuestions(true);
+        try {
+          const questions = await extractQuestionsFromReference(
+            result.text,
+            result.images,
+            genState.specs,
+            inputData.subject,
+            inputData.grade
+          );
+          setExtractedQuestions(questions);
+          console.log(`[Reference] Extracted ${questions.length} questions`);
+        } catch (extractErr: any) {
+          console.warn('[Reference] Question extraction failed:', extractErr.message);
+          // Non-fatal: app still works with raw text fallback
+        } finally {
+          setIsExtractingQuestions(false);
+        }
+      }
     } catch (err: any) {
       setGenState(prev => ({ ...prev, error: `Lỗi đọc file tham khảo: ${err.message}` }));
     } finally {
@@ -501,6 +622,117 @@ const App: React.FC = () => {
 
   const renderInputStep = () => (
     <div className="max-w-4xl mx-auto space-y-8 pb-12 relative z-10">
+
+      {/* === SHORTCUT SECTION (Moved to top) === */}
+      <div className="animate-fade-in-up">
+        <div className="space-y-4">
+          {/* Shortcut 1: Có file Ma trận */}
+          <div className="shortcut-box p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-blue-800">⚡ Lối tắt: Bạn đã có file Ma trận?</h3>
+              <p className="text-sm text-blue-600">Tải lên file Ma trận (HTML, Word, PDF) để bỏ qua các bước cấu hình và sinh ngay Bảng đặc tả.</p>
+            </div>
+            <input
+              type="file"
+              ref={matrixDirectUploadRef}
+              onChange={handleMatrixSkipUpload}
+              className="hidden"
+              accept=".html,.txt,.pdf,.docx,.doc"
+            />
+            <Button
+              variant="secondary"
+              onClick={() => matrixDirectUploadRef.current?.click()}
+              icon={<FileUp className="w-4 h-4" />}
+              className="whitespace-nowrap"
+              isLoading={genState.isLoading && currentStep === AppStep.INPUT && !isComboProcessing}
+            >
+              Upload Ma trận & Đi tiếp
+            </Button>
+          </div>
+
+          {/* Shortcut 2: Có cả Ma trận + Đặc tả */}
+          <div className="shortcut-box p-5" style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 50%, #f0f9ff 100%)' }}>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-emerald-800">🚀 Lối tắt: Bạn đã có file Ma trận + Đặc tả?</h3>
+                <p className="text-sm text-emerald-600">Tải lên cả 2 file để nhảy thẳng sang bước tạo đề thi!</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              {/* Upload Ma trận */}
+              <input type="file" ref={comboMatrixUploadRef} onChange={handleComboMatrixSelect} className="hidden" accept=".html,.txt,.pdf,.docx,.doc" />
+              <button
+                onClick={() => comboMatrixUploadRef.current?.click()}
+                className={`flex items-center gap-3 p-3.5 rounded-xl border-2 border-dashed transition-all text-left ${
+                  comboMatrixFile
+                    ? 'border-emerald-400 bg-emerald-50'
+                    : 'border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/30'
+                }`}
+              >
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                  comboMatrixFile ? 'bg-emerald-100' : 'bg-slate-100'
+                }`}>
+                  {comboMatrixFile ? <Check className="w-5 h-5 text-emerald-600" /> : <FileUp className="w-5 h-5 text-slate-400" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-sm font-semibold ${comboMatrixFile ? 'text-emerald-700' : 'text-slate-600'}`}>
+                    {comboMatrixFile ? comboMatrixFile.name : '📋 Chọn file Ma trận'}
+                  </p>
+                  <p className="text-xs text-slate-400">{comboMatrixFile ? 'Đã chọn · Click để đổi' : 'HTML, Word, PDF'}</p>
+                </div>
+              </button>
+
+              {/* Upload Đặc tả */}
+              <input type="file" ref={comboSpecsUploadRef} onChange={handleComboSpecsSelect} className="hidden" accept=".html,.txt,.pdf,.docx,.doc" />
+              <button
+                onClick={() => comboSpecsUploadRef.current?.click()}
+                className={`flex items-center gap-3 p-3.5 rounded-xl border-2 border-dashed transition-all text-left ${
+                  comboSpecsFile
+                    ? 'border-emerald-400 bg-emerald-50'
+                    : 'border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/30'
+                }`}
+              >
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                  comboSpecsFile ? 'bg-emerald-100' : 'bg-slate-100'
+                }`}>
+                  {comboSpecsFile ? <Check className="w-5 h-5 text-emerald-600" /> : <FileUp className="w-5 h-5 text-slate-400" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-sm font-semibold ${comboSpecsFile ? 'text-emerald-700' : 'text-slate-600'}`}>
+                    {comboSpecsFile ? comboSpecsFile.name : '📝 Chọn file Đặc tả'}
+                  </p>
+                  <p className="text-xs text-slate-400">{comboSpecsFile ? 'Đã chọn · Click để đổi' : 'HTML, Word, PDF'}</p>
+                </div>
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-emerald-500 italic">
+                {comboMatrixFile && comboSpecsFile
+                  ? '✅ Đã chọn đủ 2 file — Nhấn nút để xử lý'
+                  : `⏳ Còn thiếu: ${!comboMatrixFile ? 'Ma trận' : ''}${!comboMatrixFile && !comboSpecsFile ? ' + ' : ''}${!comboSpecsFile ? 'Đặc tả' : ''}`
+                }
+              </p>
+              <Button
+                onClick={processComboShortcut}
+                disabled={!comboMatrixFile || !comboSpecsFile}
+                isLoading={isComboProcessing}
+                icon={<ArrowRight className="w-4 h-4" />}
+                className="whitespace-nowrap"
+              >
+                Xử lý & Tạo đề thi
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Divider */}
+      <div className="relative flex items-center justify-center">
+        <div className="absolute inset-0 flex items-center"><div className="w-full border-t-2 border-teal-100/60"></div></div>
+        <span className="relative bg-white px-4 py-1 text-xs font-bold text-teal-500 uppercase tracking-wider rounded-full border border-teal-100">Hoặc bắt đầu từ đầu</span>
+      </div>
 
       {/* 1. Basic Info & Upload */}
       <div className="card-elevated p-6 sm:p-8 animate-fade-in-up">
@@ -711,32 +943,6 @@ const App: React.FC = () => {
         </Button>
       </div>
 
-      {/* Shortcut Upload */}
-      <div className="mt-12 pt-8 border-t-2 border-teal-100/50">
-        <div className="shortcut-box p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div>
-            <h3 className="text-lg font-bold text-blue-800">Lối tắt: Bạn đã có file Ma trận?</h3>
-            <p className="text-sm text-blue-600">Tải lên file Ma trận (HTML, Word, PDF) để bỏ qua các bước cấu hình và sinh ngay Bảng đặc tả.</p>
-          </div>
-          <input
-            type="file"
-            ref={matrixDirectUploadRef}
-            onChange={handleMatrixSkipUpload}
-            className="hidden"
-            accept=".html,.txt,.pdf,.docx,.doc"
-          />
-          <Button
-            variant="secondary"
-            onClick={() => matrixDirectUploadRef.current?.click()}
-            icon={<FileUp className="w-4 h-4" />}
-            className="whitespace-nowrap"
-            isLoading={genState.isLoading && currentStep === AppStep.INPUT}
-          >
-            Upload Ma trận & Đi tiếp
-          </Button>
-        </div>
-      </div>
-
     </div>
   );
 
@@ -805,11 +1011,11 @@ const App: React.FC = () => {
         <div className="mb-4 card-elevated p-4 flex-shrink-0">
           <div className="flex items-center gap-2 mb-2">
             <BookOpen className="w-4 h-4 text-teal-600" />
-            <span className="text-sm font-bold text-teal-800">Tài liệu tham khảo</span>
+            <span className="text-sm font-bold text-teal-800">Tài liệu tham khảo — Ngân hàng câu hỏi</span>
             <span className="text-xs text-slate-400">(tùy chọn)</span>
           </div>
           <p className="text-xs text-slate-500 mb-3">
-            Upload đề mẫu hoặc ngân hàng câu hỏi (.docx) để AI tham khảo phong cách, dạng câu hỏi và mức độ khó khi tạo đề thi.
+            Upload đề mẫu hoặc ngân hàng câu hỏi (.docx) — AI sẽ <strong>trích xuất chính xác</strong> các câu hỏi và sử dụng nguyên văn vào đề thi (phù hợp với ma trận, đặc tả).
           </p>
 
           <input
@@ -817,7 +1023,7 @@ const App: React.FC = () => {
             ref={referenceUploadRef}
             onChange={handleReferenceUpload}
             className="hidden"
-            accept=".docx,.doc"
+            accept=".docx,.doc,.pdf"
           />
 
           {!referenceDoc ? (
@@ -834,34 +1040,85 @@ const App: React.FC = () => {
               ) : (
                 <>
                   <Paperclip className="w-4 h-4" />
-                  <span>Chọn file .docx tham khảo</span>
+                  <span>Chọn file đề mẫu / ngân hàng câu hỏi (.docx, .pdf)</span>
                 </>
               )}
             </button>
           ) : (
-            <div className="flex items-center gap-3 px-4 py-2.5 bg-teal-50 border border-teal-200 rounded-lg">
-              <div className="w-8 h-8 bg-teal-100 rounded-lg flex items-center justify-center shrink-0">
-                <FileText className="w-4 h-4 text-teal-600" />
+            <div className="space-y-3">
+              {/* File Info Row */}
+              <div className="flex items-center gap-3 px-4 py-2.5 bg-teal-50 border border-teal-200 rounded-lg">
+                <div className="w-8 h-8 bg-teal-100 rounded-lg flex items-center justify-center shrink-0">
+                  <FileText className="w-4 h-4 text-teal-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-teal-800 truncate">{referenceDoc.fileName}</p>
+                  <p className="text-xs text-slate-500">
+                    {referenceDoc.method === 'hybrid'
+                      ? `Hybrid: ${referenceDoc.wmfCount} công thức MathType + ${referenceDoc.images.length} hình`
+                      : referenceDoc.method === 'xml'
+                      ? `XML: ${referenceDoc.text.length} ký tự (OMML → LaTeX)`
+                      : `Mammoth: ${referenceDoc.images.length} hình ảnh`
+                    }
+                    {' · '}{Math.round(referenceDoc.text.length / 1000)}K ký tự
+                  </p>
+                </div>
+                <button
+                  onClick={() => { setReferenceDoc(null); setExtractedQuestions([]); }}
+                  className="shrink-0 p-1.5 rounded-md hover:bg-red-100 text-slate-400 hover:text-red-500 transition-colors"
+                  title="Xóa tài liệu tham khảo"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-teal-800 truncate">{referenceDoc.fileName}</p>
-                <p className="text-xs text-slate-500">
-                  {referenceDoc.method === 'hybrid'
-                    ? `Hybrid: ${referenceDoc.wmfCount} công thức MathType + ${referenceDoc.images.length} hình`
-                    : referenceDoc.method === 'xml'
-                    ? `XML: ${referenceDoc.text.length} ký tự (OMML → LaTeX)`
-                    : `Mammoth: ${referenceDoc.images.length} hình ảnh`
-                  }
-                  {' · '}{Math.round(referenceDoc.text.length / 1000)}K ký tự
+
+              {/* Extraction Status */}
+              {isExtractingQuestions && (
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                  <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-sm text-amber-700 font-medium">Đang trích xuất câu hỏi bằng AI...</span>
+                </div>
+              )}
+
+              {/* Extracted Questions Summary */}
+              {extractedQuestions.length > 0 && !isExtractingQuestions && (
+                <div className="px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Check className="w-4 h-4 text-emerald-600" />
+                    <span className="text-sm font-bold text-emerald-800">
+                      Đã trích xuất {extractedQuestions.length} câu hỏi
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    {(() => {
+                      const byType = {
+                        type1: extractedQuestions.filter(q => q.type === 'type1').length,
+                        type2: extractedQuestions.filter(q => q.type === 'type2').length,
+                        type3: extractedQuestions.filter(q => q.type === 'type3').length,
+                        essay: extractedQuestions.filter(q => q.type === 'essay').length,
+                      };
+                      return (
+                        <>
+                          {byType.type1 > 0 && <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded-md">Dạng I: {byType.type1} câu</span>}
+                          {byType.type2 > 0 && <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded-md">Dạng II: {byType.type2} câu</span>}
+                          {byType.type3 > 0 && <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded-md">Dạng III: {byType.type3} câu</span>}
+                          {byType.essay > 0 && <span className="bg-pink-100 text-pink-700 px-2 py-1 rounded-md">Tự luận: {byType.essay} câu</span>}
+                        </>
+                      );
+                    })()}
+                  </div>
+                  <p className="text-xs text-emerald-600 mt-2 italic">
+                    ✅ Các câu hỏi này sẽ được sử dụng NGUYÊN VĂN trong đề thi (phù hợp ma trận + đặc tả).
+                  </p>
+                </div>
+              )}
+
+              {/* No questions extracted */}
+              {referenceDoc && !isExtractingQuestions && extractedQuestions.length === 0 && (
+                <p className="text-xs text-slate-400 italic px-1">
+                  ⏳ Câu hỏi sẽ được trích xuất khi bạn nhấn "Tạo đề thi". Hoặc AI sẽ tham khảo nội dung trực tiếp.
                 </p>
-              </div>
-              <button
-                onClick={() => setReferenceDoc(null)}
-                className="shrink-0 p-1.5 rounded-md hover:bg-red-100 text-slate-400 hover:text-red-500 transition-colors"
-                title="Xóa tài liệu tham khảo"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              )}
             </div>
           )}
         </div>
@@ -913,6 +1170,9 @@ const App: React.FC = () => {
       setSelectedLessonIds(new Set());
       setExpandedChapterIds(new Set());
       setReferenceDoc(null);
+      setExtractedQuestions([]);
+      setComboMatrixFile(null);
+      setComboSpecsFile(null);
     }
   }
 

@@ -1,7 +1,7 @@
 
 import { GoogleGenAI } from "@google/genai";
 import { SYSTEM_INSTRUCTION, MODEL_NAME, FALLBACK_MODELS } from '../constants';
-import { InputData, QuestionConfig } from '../types';
+import { InputData, QuestionConfig, ExtractedQuestion } from '../types';
 
 // --- API Key Management (localStorage-based) ---
 const API_KEY_STORAGE_KEY = 'examcraft_api_key';
@@ -554,12 +554,132 @@ export const generateStep2Specs = async (
   });
 };
 
+// --- Extract questions from reference document ---
+export const extractQuestionsFromReference = async (
+  text: string,
+  images: { base64: string; mimeType: string }[],
+  specsHtml: string,
+  subject: string,
+  grade: string
+): Promise<ExtractedQuestion[]> => {
+  const hasImages = images && images.length > 0;
+
+  const prompt = `
+  Bạn là chuyên gia trích xuất câu hỏi từ tài liệu giáo dục Việt Nam.
+  
+  **NHIỆM VỤ:** Trích xuất CHÍNH XÁC từng câu hỏi trong tài liệu dưới đây.
+  - Môn: ${subject}, Lớp: ${grade}
+  ${hasImages ? `- Có ${images.length} hình ảnh đính kèm (gồm công thức MathType đã chuyển PNG). Hãy ĐỌC KỸ từng hình và CHUYỂN ĐỔI công thức trong hình sang LaTeX $...$.` : ''}
+  
+  **QUY TẮC TRÍCH XUẤT (CỰC KỲ QUAN TRỌNG):**
+  1. Giữ NGUYÊN VĂN nội dung câu hỏi, KHÔNG sửa đổi, KHÔNG diễn giải lại.
+  2. Nếu câu hỏi có công thức toán:
+     - OMML đã chuyển LaTeX: giữ nguyên dạng $...$ hoặc $$...$$
+     - MathType (hình ảnh): đọc hình → chuyển sang LaTeX $...$
+  3. Phân loại mỗi câu theo:
+     - **type**: "type1" (4 lựa chọn A/B/C/D), "type2" (Đúng/Sai 4 ý a,b,c,d), "type3" (Trả lời ngắn), "essay" (Tự luận)
+     - **level**: "biet" (Nhận biết), "hieu" (Thông hiểu), "van_dung" (Vận dụng), "van_dung_cao" (Vận dụng cao)
+  4. Nếu có đáp án trong tài liệu, trích xuất luôn.
+  5. Trích xuất TẤT CẢ câu hỏi, kể cả câu hỏi không hoàn chỉnh.
+
+  **BẢNG ĐẶC TẢ (ĐỂ THAM CHIẾU MỨC ĐỘ):**
+  ${specsHtml.substring(0, 8000)}
+  
+  **NỘI DUNG TÀI LIỆU:**
+  ${text.substring(0, 25000)}
+  ${text.length > 25000 ? '\n[... Nội dung đã được cắt ngắn ...]' : ''}
+  
+  **OUTPUT:** JSON Array, mỗi phần tử là 1 câu hỏi:
+  [
+    {
+      "id": "q1",
+      "type": "type1",
+      "level": "biet",
+      "topic": "Tên chủ đề/chương",
+      "content": "Nội dung câu hỏi NGUYÊN VĂN (bao gồm LaTeX nếu có)",
+      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+      "answer": "A",
+      "subItems": null
+    },
+    {
+      "id": "q2",
+      "type": "type2",
+      "level": "hieu",
+      "topic": "...",
+      "content": "Đề dẫn chung cho câu Đúng/Sai",
+      "options": null,
+      "answer": "a-Đ, b-S, c-Đ, d-S",
+      "subItems": ["a) Mệnh đề 1...", "b) Mệnh đề 2...", "c) ...", "d) ..."]
+    }
+  ]
+  
+  CHỈ trả về JSON array, không markdown.
+  `;
+
+  const parts: any[] = [];
+
+  // Send images first (mammoth-converted WMF→PNG + other images)
+  if (hasImages) {
+    const imagesToSend = images.slice(0, 15);
+    for (const img of imagesToSend) {
+      parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
+    }
+  }
+
+  parts.push({ text: prompt });
+
+  const ai = getAI();
+  const userModel = getSelectedModel();
+  const primaryModel = userModel || MODEL_NAME;
+  const modelsToTry = [primaryModel, ...FALLBACK_MODELS.filter(m => m !== primaryModel)];
+
+  for (const model of modelsToTry) {
+    try {
+      console.log(`[ExamCraft] Extracting questions with model: ${model}`);
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts }],
+        config: {
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+        },
+      });
+
+      const resultText = response.text || '[]';
+      try {
+        let jsonStr = resultText;
+        if (jsonStr.includes('```')) {
+          jsonStr = jsonStr.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+        }
+        const start = jsonStr.indexOf('[');
+        const end = jsonStr.lastIndexOf(']');
+        if (start !== -1 && end !== -1 && end >= start) {
+          jsonStr = jsonStr.substring(start, end + 1);
+        }
+        const questions: ExtractedQuestion[] = JSON.parse(jsonStr);
+        console.log(`[ExamCraft] Extracted ${questions.length} questions from reference`);
+        return questions;
+      } catch (e) {
+        console.error('[ExamCraft] Failed to parse extracted questions:', resultText.substring(0, 500));
+        return [];
+      }
+    } catch (err: any) {
+      console.warn(`[ExamCraft] Model ${model} failed for extraction:`, err.message);
+      continue;
+    }
+  }
+
+  console.error('[ExamCraft] All models failed for question extraction');
+  return [];
+};
+
 export const generateStep3Exam = async (
   specsContent: string,
   questionConfig: QuestionConfig,
   inputData: InputData,
   referenceText?: string,
-  referenceImages?: { base64: string; mimeType: string }[]
+  referenceImages?: { base64: string; mimeType: string }[],
+  extractedQuestions?: ExtractedQuestion[]
 ): Promise<string> => {
 
   const counts = {
@@ -607,7 +727,58 @@ export const generateStep3Exam = async (
 
   // Build reference section
   let referenceSection = '';
-  if (referenceText && referenceText.trim()) {
+  const hasExtractedQuestions = extractedQuestions && extractedQuestions.length > 0;
+
+  if (hasExtractedQuestions) {
+    // === MODE 1: Có câu hỏi đã trích xuất → ƯU TIÊN DÙNG CHÍNH XÁC ===
+    const questionsByType = {
+      type1: extractedQuestions!.filter(q => q.type === 'type1'),
+      type2: extractedQuestions!.filter(q => q.type === 'type2'),
+      type3: extractedQuestions!.filter(q => q.type === 'type3'),
+      essay: extractedQuestions!.filter(q => q.type === 'essay'),
+    };
+
+    let questionsListing = '';
+    for (const [typeKey, questions] of Object.entries(questionsByType)) {
+      if (questions.length === 0) continue;
+      const typeName = typeKey === 'type1' ? 'Dạng I (4 lựa chọn)' : typeKey === 'type2' ? 'Dạng II (Đúng/Sai)' : typeKey === 'type3' ? 'Dạng III (Trả lời ngắn)' : 'Tự luận';
+      questionsListing += `\n### ${typeName} (${questions.length} câu):\n`;
+      for (const q of questions) {
+        questionsListing += `\n**[${q.id}] Mức: ${q.level} | Chủ đề: ${q.topic}**\n`;
+        questionsListing += `${q.content}\n`;
+        if (q.options && q.options.length > 0) {
+          questionsListing += q.options.join('\n') + '\n';
+        }
+        if (q.subItems && q.subItems.length > 0) {
+          questionsListing += q.subItems.join('\n') + '\n';
+        }
+        if (q.answer) {
+          questionsListing += `Đáp án: ${q.answer}\n`;
+        }
+      }
+    }
+
+    referenceSection = `
+  **===== NGÂN HÀNG CÂU HỎI ĐÃ TRÍCH XUẤT (BẮT BUỘC SỬ DỤNG) =====**
+  
+  Dưới đây là ${extractedQuestions!.length} câu hỏi đã được trích xuất CHÍNH XÁC từ tài liệu tham khảo của người dùng.
+  Phân bổ: Dạng I: ${questionsByType.type1.length}, Dạng II: ${questionsByType.type2.length}, Dạng III: ${questionsByType.type3.length}, Tự luận: ${questionsByType.essay.length}
+  
+  **CÁCH SỬ DỤNG NGÂN HÀNG CÂU HỎI (BẮT BUỘC TUÂN THỦ):**
+  1. ƯU TIÊN SỐ 1: Sử dụng CHÍNH XÁC NGUYÊN VĂN các câu hỏi từ ngân hàng bên dưới.
+  2. Chọn câu hỏi PHÙ HỢP với Ma trận và Đặc tả (đúng dạng, đúng mức độ, đúng chủ đề).
+  3. KHÔNG ĐƯỢC thay đổi nội dung, số liệu, hay cách diễn đạt của câu hỏi gốc.
+  4. Giữ nguyên công thức toán LaTeX $...$ hoặc $$...$$ như trong ngân hàng.
+  5. Nếu ngân hàng KHÔNG ĐỦ câu hỏi cho một dạng/mức độ nào đó → BỔ SUNG thêm câu hỏi MỚI theo phong cách tương tự.
+  6. Sắp xếp lại số thứ tự câu hỏi (Câu 1, Câu 2...) cho liên tục.
+  
+  **DANH SÁCH CÂU HỎI:**
+  ${questionsListing}
+  
+  **===== HẾT NGÂN HÀNG CÂU HỎI =====**
+  `;
+  } else if (referenceText && referenceText.trim()) {
+    // === MODE 2: Có text tham khảo nhưng chưa trích xuất → tham khảo phong cách ===
     const hasImages = referenceImages && referenceImages.length > 0;
     referenceSection = `
   **===== TÀI LIỆU THAM KHẢO (ĐỀ MẪU / NGÂN HÀNG CÂU HỎI) =====**
@@ -615,10 +786,9 @@ export const generateStep3Exam = async (
   Dưới đây là nội dung tài liệu tham khảo được người dùng upload. ${hasImages ? `Có ${referenceImages!.length} hình ảnh đính kèm (bao gồm công thức toán đã chuyển thành hình).` : ''}
   
   **CÁCH SỬ DỤNG TÀI LIỆU THAM KHẢO:**
-  - Phân tích phong cách ra đề, dạng câu hỏi, và mức độ khó trong tài liệu tham khảo.
-  - Lấy cảm hứng từ cách diễn đạt, cấu trúc câu hỏi, và dạng bài tập.
-  - **TUYỆT ĐỐI KHÔNG COPY NGUYÊN VĂN** câu hỏi từ tài liệu tham khảo.
-  - Tạo câu hỏi MỚI có phong cách và mức độ khó tương tự, nhưng với dữ liệu/số liệu/nội dung khác.
+  - Sử dụng CHÍNH XÁC các câu hỏi có sẵn trong tài liệu tham khảo nếu phù hợp với ma trận, đặc tả.
+  - Ưu tiên lấy nguyên văn câu hỏi thay vì tạo mới.
+  - Chỉ tạo câu hỏi MỚI khi tài liệu tham khảo không đủ câu cho một dạng/mức độ cụ thể.
   ${hasImages ? '- Đọc KỸ các hình ảnh đính kèm — đặc biệt là hình công thức toán. Chuyển đổi nội dung hình sang LaTeX khi cần.' : ''}
   
   **NỘI DUNG TÀI LIỆU THAM KHẢO:**
