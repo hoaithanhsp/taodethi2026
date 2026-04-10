@@ -1,4 +1,4 @@
-
+﻿
 import { GoogleGenAI } from "@google/genai";
 import { SYSTEM_INSTRUCTION, MODEL_NAME, FALLBACK_MODELS, GRADE_NO_ESSAY, getSubjectFootnotes } from '../constants';
 import { InputData, QuestionConfig, ExtractedQuestion } from '../types';
@@ -527,24 +527,63 @@ export const generateStep2Specs = async (
     }
   }));
 
+  const config = data.questionConfig;
+  const totalEssayQuestions = config.essay.biet + config.essay.hieu + config.essay.van_dung + config.essay.van_dung_cao;
+  const hasEssay = totalEssayQuestions > 0;
+
+  const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
+  const type2Total = { biet: config.type2.biet, hieu: config.type2.hieu, vd: config.type2.van_dung + config.type2.van_dung_cao };
+  const type3Total = { biet: config.type3.biet, hieu: config.type3.hieu, vd: config.type3.van_dung + config.type3.van_dung_cao };
+  const essayTotal = { biet: config.essay.biet, hieu: config.essay.hieu, vd: config.essay.van_dung + config.essay.van_dung_cao };
+
   const isGiuaKy = data.examType.includes('Giữa');
-  const examTypeLabel = i  - Dòng header 1: TT(rowspan=2) | Chương(rowspan=2) | Nội dung/đơn vị kiến thức(rowspan=2) | **Cấp độ tư duy**(rowspan=2) | **Yêu cầu cần đạt**(rowspan=2) | Số lượng câu hỏi ở các mức độ(colspan=...)
+  const examTypeLabel = isGiuaKy ? 'GIỮA HỌC KÌ' : 'CUỐI KÌ';
+  const semesterNum = data.examType.includes('1') ? 'I' : 'II';
+  const footnotes = getSubjectFootnotes(data.subject);
+
+  const prompt = `
+  Dựa trên **Ma trận đề kiểm tra** (HTML) đã tạo, hãy tạo **BẢNG ĐẶC TẢ ĐỀ KIỂM TRA** (Full HTML Document).
+  Phân tích HTML ma trận để lấy số lượng câu hỏi, mã câu, cấu trúc cột chính xác.
+
+  **MA TRẬN ĐẦU VÀO:**
+  ${matrixContent}
+
+  **DỮ LIỆU YÊU CẦU CẦN ĐẠT:**
+  ${objectivesMap.join('\\n')}
+
+  **===== BẢNG SỐ LƯỢNG GỐC (PHẢI KHỚP 100% - ƯU TIÊN HƠN MA TRẬN NẾU CÓ XUNG ĐỘT) =====**
+  | Dạng câu hỏi         | Biết | Hiểu | VD  | TỔNG |
+  |---------------------|------|------|-----|------|
+  | Dạng I (4 lựa chọn)  | ${type1Total.biet}    | ${type1Total.hieu}    | ${type1Total.vd}   | ${type1Total.biet + type1Total.hieu + type1Total.vd}    |
+  | Dạng II (Đúng-Sai) (ý) | ${type2Total.biet}    | ${type2Total.hieu}    | ${type2Total.vd}   | ${type2Total.biet + type2Total.hieu + type2Total.vd}    |
+  | Dạng III (Trả lời ngắn) | ${type3Total.biet}    | ${type3Total.hieu}    | ${type3Total.vd}   | ${type3Total.biet + type3Total.hieu + type3Total.vd}    |
+  ${hasEssay ? `| Tự luận (IV)       | ${essayTotal.biet}    | ${essayTotal.hieu}    | ${essayTotal.vd}   | ${essayTotal.biet + essayTotal.hieu + essayTotal.vd}    |` : ''}
+
+  **===== ĐỊNH DẠNG BẢNG ĐẶC TẢ BẮT BUỘC (Tuân thủ 100%) =====**
+
+  Tiêu đề bảng (in đậm, căn giữa, ở trên bảng):
+   **ĐẶC TẢ ĐỀ KIỂM TRA ${examTypeLabel} ${semesterNum} - LỚP ${data.grade} - MÔN ${data.subject.toUpperCase()} - NĂM HỌC 20... - 20...**
+
+  **QUY TẮC NĂM HỌC (BẮT BUỘC):** Thông tin năm học phải ĐỂ TRỐNG dạng: "NĂM HỌC 20... - 20...". TUYỆT ĐỐI KHÔNG điền sẵn bất kỳ năm cụ thể nào.
+
+  **HEADER BẢNG (2 dòng):**
+  - Dòng header 1: TT(rowspan=2) | Chương(rowspan=2) | Nội dung/đơn vị kiến thức(rowspan=2) | **Cấp độ tư duy**(rowspan=2) | **Yêu cầu cần đạt**(rowspan=2) | Số lượng câu hỏi ở các mức độ(colspan=...)
   - Dòng header 2 (chia nhỏ cột "Số lượng câu hỏi"):
     + Trắc nghiệm: Nhiều lựa chọn | Đúng-Sai | Trả lời ngắn
     + Tự luận: (nếu có)
 
-  CẤU TRÚC CỘT PHẢI **KHỚP** với Ma trận. Nếu Ma trận không có Tự luận → Đặc tả cũng không có.
+  CẤU TRÚC CỘT PHẢI **KHỚP** với Ma trận. Nếu Ma trận không có Tự luận thì Đặc tả cũng không có.
 
   **NỘI DUNG BẢNG (Quan trọng nhất):**
   Với mỗi bài học/nội dung kiến thức, tạo CÁC DÒNG theo mức độ:
 
   - Ô "TT" và "Chương/chủ đề": Merge theo chương (rowspan)
   - Ô "Nội dung/ĐVKT": Tên bài
-  - Ô "Cấp độ tư duy": Ghi **NB** (Nhận biết), **TH** (Thông hiểu), hoặc **VD** (Vận dụng) — mỗi mức là 1 dòng riêng
+  - Ô "Cấp độ tư duy": Ghi **NB** (Nhận biết), **TH** (Thông hiểu), hoặc **VD** (Vận dụng) - mỗi mức là 1 dòng riêng
   - Ô "Yêu cầu cần đạt": Nội dung CHI TIẾT yêu cầu cần đạt ở mức độ tương ứng. Text-align: left.
-  - Các ô mã câu: Ghi mã câu tương ứng (I.1, I.2, II.1a II.1b, III.1, IV.1a...) — PHẢI KHỚP 100% với Ma trận
+  - Các ô mã câu: Ghi mã câu tương ứng (I.1, I.2, II.1a II.1b, III.1, IV.1a...) - PHẢI KHỚP 100% với Ma trận
 
-  **QUAN TRỌNG — FORMAT TỪNG HÀNG:**
+  **QUAN TRỌNG - FORMAT TỪNG HÀNG:**
   Mỗi bài học có 3 dòng (NB, TH, VD):
   | Nội dung (rowspan=3) | NB | Yêu cầu cần đạt mức NB | I.1 I.2 | | | III.1 | ... |
   | | TH | Yêu cầu cần đạt mức TH | | II.1c | | ... |
@@ -553,9 +592,9 @@ export const generateStep2Specs = async (
   **QUAN TRỌNG:**
   - Cột "Yêu cầu cần đạt" phải đủ rộng, text-align: left, chứa nội dung chi tiết
   - Số câu hỏi và mã câu PHẢI khớp 100% với BẢNG SỐ LƯỢNG GỐC ở trên (ưu tiên hơn Ma trận nếu có sai lệch)
-  - Nếu Ma trận không có cột Tự luận → Đặc tả cũng KHÔNG có
+  - Nếu Ma trận không có cột Tự luận thì Đặc tả cũng KHÔNG có
 
-  **⚠️ KIỂM TRA CUỐI CÙNG:** Đếm tổng số mã câu trong đặc tả cho mỗi dạng và mức độ. Phải khớp CHÍNH XÁC: Dạng I: B=${type1Total.biet}/H=${type1Total.hieu}/VD=${type1Total.vd}, Dạng II: B=${type2Total.biet}/H=${type2Total.hieu}/VD=${type2Total.vd} (ý), Dạng III: B=${type3Total.biet}/H=${type3Total.hieu}/VD=${type3Total.vd}${totalEssay > 0 ? `, Tự luận: B=${essayTotal.biet}/H=${essayTotal.hieu}/VD=${essayTotal.vd}` : ''}. Nếu sai → sửa lại trước khi trả output.
+  **ĐỂ KIỂM TRA CUỐI CÙNG:** Đếm tổng số mã câu trong đặc tả cho mỗi dạng và mức độ. Phải khớp CHÍNH XÁC: Dạng I: B=${type1Total.biet}/H=${type1Total.hieu}/VD=${type1Total.vd}, Dạng II: B=${type2Total.biet}/H=${type2Total.hieu}/VD=${type2Total.vd} (ý), Dạng III: B=${type3Total.biet}/H=${type3Total.hieu}/VD=${type3Total.vd}${totalEssayQuestions > 0 ? `, Tự luận: B=${essayTotal.biet}/H=${essayTotal.hieu}/VD=${essayTotal.vd}` : ''}. Nếu sai thì sửa lại trước khi trả output.
 
   **QUY TẮC CHÚ THÍCH (FOOTNOTES) - BẮT BUỘC:**
   Cuối bảng thêm:
@@ -578,73 +617,6 @@ export const generateStep2Specs = async (
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         temperature: 0.1,
-      },
-    });
-    return response.text || "Lỗi tạo đặc tả.";
-  });
-};��n đạt"):**
-  - Dòng header 1: TT(rowspan=4) | Chương/chủ đề(rowspan=4) | Nội dung/đơn vị kiến thức(rowspan=4) | **Yêu cầu cần đạt**(rowspan=4) | Mức độ đánh giá(colspan=...) | Tổng số câu(colspan=3, rowspan=2) | Tỉ lệ % điểm(rowspan=4)
-  - Dòng header 2: TNKQ(colspan=...)
-  - Dòng header 3: Nhiều lựa chọn(colspan=3) | Đúng - Sai(colspan=3) | Trả lời ngắn(colspan=3) [+ Tự luận(colspan=3) nếu có] | Biết | Hiểu | VD
-  - Dòng header 4: Biết | Hiểu | VD | Biết | Hiểu | VD | Biết | Hiểu | VD [+ Biết | Hiểu | VD nếu có tự luận]
-
-  CẤU TRÚC CỘT PHẢI **KHỚP 100%** với Ma trận (nếu Ma trận không có Tự luận → Đặc tả cũng không có).
-
-  **NỘI DUNG BẢNG - MỖI BÀI HỌC CÓ 2 DÒNG (sub-row):**
-  Với mỗi bài học, tạo CHÍNH XÁC **2 dòng** (2 <tr>):
-
-  **Dòng 1:**
-  - Ô "Nội dung/ĐVKT" ghi: Tên bài + (X tiết) — dùng rowspan=2
-  - Ô "Yêu cầu cần đạt" (rowspan=2): Ghi chi tiết nội dung yêu cầu cần đạt theo format:
-    ***Nhận biết :***
-    – Chi tiết nội dung biết...
-    ***Thông hiểu:***
-    – Chi tiết nội dung hiểu...
-    ***Vận dụng :***
-    – Chi tiết nội dung vận dụng...
-    (Lấy nội dung từ DỮ LIỆU YÊU CẦU CẦN ĐẠT bên trên)
-  - Các ô Biết/Hiểu/VD của từng dạng: SỐ LƯỢNG câu hỏi (khớp Ma trận)
-  - Ô "Tổng số câu" + "Tỉ lệ %" : rowspan=2, giống Ma trận
-
-  **Dòng 2:**
-  - Các ô Biết/Hiểu: Ghi "TD". Các ô VD: Ghi "GQVĐ". Khớp và giống hệt Ma trận. Nếu 0 câu thì để trống.
-
-  **Merge cells STT & Chương/chủ đề:**
-  - Nếu 1 chương có nhiều bài => cột TT rowspan = (số bài × 2), cột Chương/chủ đề cũng rowspan = (số bài × 2).
-
-  **FOOTER BẢNG (3 dòng cuối - giống hệt Ma trận):**
-  1. **Tổng số câu:** Tổng theo từng cột + tổng cuối
-  2. **Tổng số điểm:** Tổng theo từng cột + tổng = 10
-  3. **Tỉ lệ % điểm của ma trận:** 30%, 40%, 30%... cuối = 100%
-
-  **QUAN TRỌNG:**
-  - Cột "Yêu cầu cần đạt" phải đủ rộng, text-align: left, chứa nội dung chi tiết
-  - Số câu hỏi và mã câu PHẢI khớp 100% với Ma trận
-  - Nếu Ma trận ghi "GQVĐ" ở ô nào, Đặc tả cũng ghi y chang
-
-  **QUY TẮC CHÚ THÍCH (FOOTNOTES) - BẮT BUỘC:**
-  Cuối bảng thêm:
-  (1): Năng lực tư duy và lập luận toán học
-  (2): Năng lực mô hình hóa toán học
-  (3): Năng lực giải quyết vấn đề toán học
-
-  **Style CSS:**
-  body { font-family: "Times New Roman", serif; font-size: 13pt; margin: 20px; }
-  h2 { text-align: center; font-weight: bold; text-transform: uppercase; margin-bottom: 15px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-  th, td { border: 1px solid black; padding: 4px 6px; text-align: center; vertical-align: middle; }
-  th { font-weight: bold; }
-  .left-align, .text-left { text-align: left; padding: 6px 8px; vertical-align: top; }
-  .bold { font-weight: bold; }
-  `;
-
-  return callWithFallback(async (ai, model) => {
-    const response = await ai.models.generateContent({
-      model,
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.2,
       },
     });
     return response.text || "Lỗi tạo đặc tả.";
@@ -927,6 +899,51 @@ export const generateStep3Exam = async (
      - .question-number { font-weight: bold; }
      - .options { margin-left: 20px; }
      - .option-item { margin-bottom: 5px; }
+     - /* CSS cho bảng biến thiên */
+     - .bbthien { border-collapse: collapse; margin: 10px auto; font-size: 13pt; }
+     - .bbthien td, .bbthien th { border: 1px solid black; padding: 4px 8px; text-align: center; vertical-align: middle; min-width: 40px; }
+     - .bbthien .header-row { background-color: #f0f0f0; font-weight: bold; }
+     - .bbthien .label-col { text-align: left; font-weight: bold; padding-left: 8px; width: 60px; }
+
+  **===== BẢNG BIẾN THIÊN (CỰC KỲ QUAN TRỌNG - TUÂN THỦ 100%) =====**
+  
+  Khi đề thi có câu hỏi liên quan đến hàm số cần bảng biến thiên, PHẢI dùng HTML TABLE với cấu trúc CHÍNH XÁC sau:
+
+  **NGUYÊN TẮC VÀNG:**
+  1. Mỗi phần tử (x, dấu f'(x), mũi tên, giá trị f(x)) là MỘT Ô RIÊNG BIỆT (<td>).
+  2. Số cột phải ĐỒNG NHẤT giữa tất cả các hàng. Dùng colspan nếu cần.
+  3. TUYỆT ĐỐI KHÔNG dùng text thuần, ký tự đặc biệt hay ASCII art để vẽ bảng biến thiên.
+  4. Mỗi khoảng đồng biến/nghịch biến cần CÓ ô mũi tên: ↗ (đồng biến lên), ↘ (nghịch biến xuống).
+  5. Hàng x: liệt kê các giá trị đặc biệt (−∞, điểm cực trị, +∞).
+  6. Hàng f'(x): ghi dấu +, 0, − tương ứng với từng khoảng.
+  7. Hàng f(x): ghi giá trị cực trị và chiều mũi tên.
+
+  **MẪU HTML BẢNG BIẾN THIÊN (ví dụ hàm bậc 3 có 2 cực trị x=a, x=b):**
+  <table class="bbthien">
+    <tr>
+      <td class="label-col">x</td>
+      <td>−∞</td><td></td><td>a</td><td></td><td>b</td><td></td><td>+∞</td>
+    </tr>
+    <tr>
+      <td class="label-col">f'(x)</td>
+      <td></td><td>+</td><td>0</td><td>−</td><td>0</td><td>+</td><td></td>
+    </tr>
+    <tr>
+      <td class="label-col">f(x)</td>
+      <td>−∞</td><td>↗</td><td>f(a)</td><td>↘</td><td>f(b)</td><td>↗</td><td>+∞</td>
+    </tr>
+  </table>
+  
+  **QUY TẮC ĐẾM Ô (BẮT BUỘC):**
+  - Nếu hàng x có N ô (kể cả ô label) thì TẤT CẢ các hàng đều phải có ĐÚNG N ô.
+  - Ô trống dùng <td></td>, KHÔNG được bỏ qua.
+  - Khoảng giữa 2 giá trị x đặc biệt cần 1 ô cho dấu/mũi tên.
+  
+  **CÁC LOẠI BẢNG BIẾN THIÊN:**
+  - Hàm bậc 2: 1 đỉnh = hàng x có 5 cột nội dung (−∞, trống, đỉnh, trống, +∞) + 1 label = 6 cột
+  - Hàm bậc 3: 2 cực trị = hàng x có 7 cột nội dung + 1 label = 8 cột
+  - Hàm phân thức có tiệm cận đứng: thêm cột cho tiệm cận, dùng || hoặc ∥
+  - KIỂM TRA: Đếm số <td> trong mỗi <tr>, phải BẰNG NHAU. Nếu không bằng thì SỬA NGAY.
 
   **QUY TẮC FORMAT NGHIÊM NGẶT ĐỂ XUẤT WORD:**
   
