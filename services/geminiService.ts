@@ -1,6 +1,6 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { SYSTEM_INSTRUCTION, MODEL_NAME, FALLBACK_MODELS } from '../constants';
+import { SYSTEM_INSTRUCTION, MODEL_NAME, FALLBACK_MODELS, GRADE_NO_ESSAY, getSubjectFootnotes } from '../constants';
 import { InputData, QuestionConfig, ExtractedQuestion } from '../types';
 
 // --- API Key Management (localStorage-based) ---
@@ -33,7 +33,52 @@ const getAI = (): GoogleGenAI => {
   return new GoogleGenAI({ apiKey: key });
 };
 
-// --- Fallback wrapper: try models in order ---
+// --- Retry helper for 503/overloaded errors ---
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const isRetryableError = (err: any): boolean => {
+  const msg = (err.message || '').toLowerCase();
+  const status = err.status || err.code || 0;
+  return (
+    status === 503 ||
+    status === 429 ||
+    msg.includes('503') ||
+    msg.includes('unavailable') ||
+    msg.includes('overloaded') ||
+    msg.includes('high demand') ||
+    msg.includes('quota') ||
+    msg.includes('429') ||
+    msg.includes('resource_exhausted')
+  );
+};
+
+const callWithRetry = async <T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  label: string = ''
+): Promise<T> => {
+  let lastError: any = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        const waitMs = Math.min(2000 * Math.pow(2, attempt - 1), 15000);
+        console.log(`[ExamCraft] ${label} Retry ${attempt}/${maxRetries} sau ${waitMs / 1000}s...`);
+        await delay(waitMs);
+      }
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+      if (isRetryableError(err) && attempt < maxRetries) {
+        console.warn(`[ExamCraft] ${label} Lỗi tạm thời (${err.status || err.code || '503'}), sẽ thử lại...`);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
+};
+
+// --- Fallback wrapper: try models in order with retry ---
 const callWithFallback = async (
   promptFn: (ai: GoogleGenAI, model: string) => Promise<string>
 ): Promise<string> => {
@@ -46,7 +91,11 @@ const callWithFallback = async (
   for (const model of modelsToTry) {
     try {
       console.log(`[ExamCraft] Trying model: ${model}`);
-      return await promptFn(ai, model);
+      return await callWithRetry(
+        () => promptFn(ai, model),
+        2,
+        `[${model}]`
+      );
     } catch (err: any) {
       lastError = err;
       console.warn(`[ExamCraft] Model ${model} failed:`, err.message || err);
@@ -60,6 +109,9 @@ const callWithFallback = async (
   // All models failed
   if (lastError?.message?.includes('quota') || lastError?.message?.includes('429')) {
     throw new Error("Tất cả model đều hết quota. Vui lòng lấy API key của Gmail khác để dán vào dùng tiếp, hoặc chờ đến hôm sau.");
+  }
+  if (isRetryableError(lastError)) {
+    throw new Error("Hệ thống Gemini đang quá tải. Vui lòng đợi 1-2 phút rồi thử lại.");
   }
   throw new Error(`Lỗi API Gemini: ${lastError?.message || 'Không xác định'}`);
 };
@@ -97,10 +149,9 @@ export const convertMatrixFileToHtml = async (file: File): Promise<string> => {
     - Nếu không đọc được, hãy trả về thông báo lỗi trong thẻ <p>.
   `;
 
-  const ai = getAI();
-  try {
+  return callWithFallback(async (ai, model) => {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model,
       contents: {
         parts: [
           { inlineData: { mimeType: file.type || 'application/octet-stream', data: base64Data } },
@@ -110,10 +161,7 @@ export const convertMatrixFileToHtml = async (file: File): Promise<string> => {
     });
     const text = response.text || "";
     return text.replace(/```html/g, '').replace(/```/g, '');
-  } catch (error) {
-    console.error("Error converting matrix:", error);
-    throw new Error("Không thể chuyển đổi file ma trận này. Vui lòng thử lại.");
-  }
+  });
 };
 
 // Convert extracted DOCX text + images to HTML table
@@ -241,59 +289,55 @@ export const extractInfoFromDocument = async (file: File, selectedSubject?: stri
     6. Trường "subject" trong JSON output phải phản ánh ĐÚNG môn học mà bạn thực sự đọc được từ file, KHÔNG ĐƯỢC copy môn từ constraint mà không xác minh.
   `;
 
-  const ai = getAI();
-  try {
-    // Build parts based on file type
-    const parts: any[] = [];
+  // Build parts based on file type
+  const parts: any[] = [];
 
-    if (isDocx) {
-      // DOCX: Parse text + images first, then send to AI
-      const { parseDocxWithMath } = await import('./docxMathParser');
-      const arrayBuffer = await file.arrayBuffer();
-      const parsed = await parseDocxWithMath(arrayBuffer);
-      console.log(`[ExtractInfo] DOCX parsed: ${parsed.text.length} chars, ${parsed.images.length} images, method=${parsed.method}`);
-      
-      // Send images inline (if any)
-      if (parsed.images.length > 0) {
-        const imagesToSend = parsed.images.slice(0, 10);
-        for (const img of imagesToSend) {
-          parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
-        }
+  if (isDocx) {
+    // DOCX: Parse text + images first, then send to AI
+    const { parseDocxWithMath } = await import('./docxMathParser');
+    const arrayBuffer = await file.arrayBuffer();
+    const parsed = await parseDocxWithMath(arrayBuffer);
+    console.log(`[ExtractInfo] DOCX parsed: ${parsed.text.length} chars, ${parsed.images.length} images, method=${parsed.method}`);
+    
+    // Send images inline (if any)
+    if (parsed.images.length > 0) {
+      const imagesToSend = parsed.images.slice(0, 10);
+      for (const img of imagesToSend) {
+        parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
       }
-      
-      // Send text prompt with DOCX content appended
-      parts.push({ text: prompt + `\n\n**NỘI DUNG FILE DOCX:**\n${parsed.text.substring(0, 25000)}` });
-    } else {
-      // PDF/Image: Send binary directly (Gemini supports these)
-      const base64Data = await fileToBase64(file);
-      parts.push({ inlineData: { mimeType: file.type || 'application/octet-stream', data: base64Data } });
-      parts.push({ text: prompt });
     }
+    
+    // Send text prompt with DOCX content appended
+    parts.push({ text: prompt + `\n\n**NỘI DUNG FILE DOCX:**\n${parsed.text.substring(0, 25000)}` });
+  } else {
+    // PDF/Image: Send binary directly (Gemini supports these)
+    const base64Data = await fileToBase64(file);
+    parts.push({ inlineData: { mimeType: file.type || 'application/octet-stream', data: base64Data } });
+    parts.push({ text: prompt });
+  }
 
+  const resultText = await callWithFallback(async (ai, model) => {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model,
       contents: [{ role: 'user', parts }],
       config: {
         responseMimeType: "application/json",
       }
     });
+    return response.text || "{}";
+  });
 
-    const text = response.text || "{}";
-    let jsonToParse = text;
-    try {
-      const start = text.indexOf('{');
-      const end = text.lastIndexOf('}');
-      if (start !== -1 && end !== -1 && end >= start) {
-        jsonToParse = text.substring(start, end + 1);
-      }
-      return JSON.parse(jsonToParse);
-    } catch (e) {
-      console.error("Failed to parse JSON. Raw text:", text);
-      throw new Error("Không thể nhận diện nội dung file. Vui lòng kiểm tra lại định dạng hoặc thử file khác.");
+  try {
+    let jsonToParse = resultText;
+    const start = resultText.indexOf('{');
+    const end = resultText.lastIndexOf('}');
+    if (start !== -1 && end !== -1 && end >= start) {
+      jsonToParse = resultText.substring(start, end + 1);
     }
-  } catch (error: any) {
-    console.error("Error extracting info:", error);
-    throw new Error(error.message || "Đã xảy ra lỗi khi phân tích file.");
+    return JSON.parse(jsonToParse);
+  } catch (e) {
+    console.error("Failed to parse JSON. Raw text:", resultText);
+    throw new Error("Không thể nhận diện nội dung file. Vui lòng kiểm tra lại định dạng hoặc thử file khác.");
   }
 };
 
@@ -322,99 +366,100 @@ export const generateStep1Matrix = async (
   const config = data.questionConfig;
 
   const totalEssayQuestions = config.essay.biet + config.essay.hieu + config.essay.van_dung + config.essay.van_dung_cao;
-  const hasEssay = totalEssayQuestions > 0;
+  const isGradeNoEssay = GRADE_NO_ESSAY.includes(data.grade);
+  const hasEssay = !isGradeNoEssay && totalEssayQuestions > 0;
+
+  // Gộp VD + VDC thành 3 mức: Biết, Hiểu, VD (theo chuẩn CV 7991)
+  const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
+  const type2Total = { biet: config.type2.biet, hieu: config.type2.hieu, vd: config.type2.van_dung + config.type2.van_dung_cao };
+  const type3Total = { biet: config.type3.biet, hieu: config.type3.hieu, vd: config.type3.van_dung + config.type3.van_dung_cao };
+  const essayTotal = { biet: config.essay.biet, hieu: config.essay.hieu, vd: config.essay.van_dung + config.essay.van_dung_cao };
 
   let scoringInstructions = "";
-  let columnStructureInstructions = "";
 
   if (hasEssay) {
     scoringInstructions = `
     **KỊCH BẢN A: CÓ TỰ LUẬN (Tổng 10 điểm)**
-    - Dạng I: 3.0 điểm. (Mỗi câu **0.25 điểm**).
-    - Dạng II: 2.0 điểm. (Mỗi câu **0.5 điểm**).
-    - Dạng III: 2.0 điểm. (Mỗi câu khoảng **0.33 điểm** -> Bắt buộc làm tròn tổng điểm hàng về bội 0.25).
-    - Tự luận: 3.0 điểm. (Mỗi câu tùy độ khó).
-    `;
-    columnStructureInstructions = `
-    **CẤU TRÚC BẢNG (16 Cột):**
-    1. STT | 2. Chủ đề | 3. Nội dung/ĐVKT
-    4-6. Dạng I (Biết, Hiểu, VD)
-    7-9. Dạng II (Biết, Hiểu, VD)
-    10-12. Dạng III (Biết, Hiểu, VD)
-    13-15. Tự luận (Biết, Hiểu, VD)
-    16. Tổng điểm (rowspan=3)
+    - Dạng I (TNKQ nhiều lựa chọn): 3.0 điểm. Mỗi câu **0.25 điểm**.
+    - Dạng II (Đúng-Sai): 2.0 điểm. Mỗi câu **1.0 điểm** (4 ý a,b,c,d).
+    - Dạng III (Trả lời ngắn): 2.0 điểm. Mỗi câu **0.5 điểm**.
+    - Tự luận (IV): 3.0 điểm. Mỗi câu tùy độ khó.
+    - **TỈ LỆ %:** Dạng I: 30% | Dạng II: 20% | Dạng III: 20% | Tự luận: 30%
+    - **TỈ LỆ NGANG:** Biết: 40% | Hiểu: 30% | VD: 30%
     `;
   } else {
     scoringInstructions = `
-    **KỊCH BẢN B: KHÔNG TỰ LUẬN (Tổng 10 điểm)**
-    - Dạng I: 3.0 điểm. (Mỗi câu **0.25 điểm**).
-    - Dạng II: 4.0 điểm. (Mỗi câu **1.0 điểm**).
-    - Dạng III: 3.0 điểm. (Mỗi câu **0.5 điểm**).
-    - Tự luận: 0.0 điểm (KHÔNG CÓ PHẦN NÀY).
-    `;
-    columnStructureInstructions = `
-    **CẤU TRÚC BẢNG (13 Cột):**
-    1. STT | 2. Chủ đề | 3. Nội dung/ĐVKT
-    4-6. Dạng I (Biết, Hiểu, VD)
-    7-9. Dạng II (Biết, Hiểu, VD)
-    10-12. Dạng III (Biết, Hiểu, VD)
-    13. Tổng điểm (rowspan=3)
+    **KỊCH BẢN B: KHÔNG TỰ LUẬN (Tổng 10 điểm) — BẮT BUỘC cho Lớp 12**
+    - Dạng I (TNKQ nhiều lựa chọn): 3.0 điểm.
+    - Dạng II (Đúng-Sai): 4.0 điểm. (QUAN TRỌNG: Tăng lên 4.0)
+    - Dạng III (Trả lời ngắn): 3.0 điểm. (QUAN TRỌNG: Tăng lên 3.0)
+    - Tự luận: 0.0 điểm (TUYỆT ĐỐI KHÔNG TẠO).
     `;
   }
 
+  const isGiuaKy = data.examType.includes('Giữa');
+  const examTypeLabel = isGiuaKy ? 'GIỮA HỌC KÌ' : 'CUỐI KÌ';
+  const semesterNum = data.examType.includes('1') ? 'I' : 'II';
+  const footnotes = getSubjectFootnotes(data.subject);
+
   const prompt = `
-  Hãy tạo **MA TRẬN ĐỀ KIỂM TRA** (HTML Table) cho môn **${data.subject}**, khối **${data.grade}**.
+  Hãy tạo **MA TRẬN ĐỀ KIỂM TRA** (HTML Table) cho môn **${data.subject}**, khối **Lớp ${data.grade}**.
   
   **CẤU HÌNH ĐỀ THI:**
-  - Loại đề: ${data.examType}
+  - Loại đề: ${data.examType} (Kiểm tra ${examTypeLabel} ${semesterNum})
   - Thời gian: ${data.duration} phút
   - Tổng số tiết trọng tâm: ${totalSelectedPeriods} tiết
   
-  **CẤU TRÚC SỐ LƯỢNG CÂU HỎI (Bắt buộc tuân thủ):**
-  - Nhiều lựa chọn (Dạng I): Biết ${config.type1.biet}, Hiểu ${config.type1.hieu}, VD ${config.type1.van_dung}, VDC ${config.type1.van_dung_cao}
-  - Đúng - Sai (Dạng II): Biết ${config.type2.biet}, Hiểu ${config.type2.hieu}, VD ${config.type2.van_dung}, VDC ${config.type2.van_dung_cao}
-  - Trả lời ngắn (Dạng III): Biết ${config.type3.biet}, Hiểu ${config.type3.hieu}, VD ${config.type3.van_dung}, VDC ${config.type3.van_dung_cao}
-  - Tự luận: Biết ${config.essay.biet}, Hiểu ${config.essay.hieu}, VD ${config.essay.van_dung}, VDC ${config.essay.van_dung_cao}
+  **⚠️⚠️⚠️ CẤU TRÚC SỐ LƯỢNG CÂU HỎI — BẢNG BẮT BUỘC (KHÔNG ĐƯỢC SAI DÙ 1 CÂU) ⚠️⚠️⚠️**
+  **3 mức: Biết, Hiểu, VD (VD = Vận dụng + Vận dụng cao gộp lại)**
+
+  | Dạng câu hỏi         | Biết | Hiểu | VD  | TỔNG |
+  |---------------------|------|------|-----|------|
+  | Dạng I (4 lựa chọn)  | ${type1Total.biet}    | ${type1Total.hieu}    | ${type1Total.vd}   | ${type1Total.biet + type1Total.hieu + type1Total.vd}    |
+  | Dạng II (Đúng-Sai) (ý) | ${type2Total.biet}    | ${type2Total.hieu}    | ${type2Total.vd}   | ${type2Total.biet + type2Total.hieu + type2Total.vd}    |
+  | Dạng III (Trả lời ngắn) | ${type3Total.biet}    | ${type3Total.hieu}    | ${type3Total.vd}   | ${type3Total.biet + type3Total.hieu + type3Total.vd}    |
+  ${hasEssay ? `| Tự luận (IV)       | ${essayTotal.biet}    | ${essayTotal.hieu}    | ${essayTotal.vd}   | ${essayTotal.biet + essayTotal.hieu + essayTotal.vd}    |` : '| Tự luận            | 0    | 0    | 0   | 0 — TUYỆT ĐỐI KHÔNG TẠO CỘT TỰ LUẬN |'}
+
+  **RÀNG BUỘC NGHIÊM NGẶT:** Tổng số câu/ý ở mỗi ô trong bảng trên phải KHỚP CHÍNH XÁC trong ma trận output. Nếu sai dù 1 câu → ma trận KHÔNG HỢP LỆ.
   
   ${scoringInstructions}
 
-  **===== ĐỊNH DẠNG BẢNG BẮT BUỘC (Rất quan trọng - phải tuân thủ 100%) =====**
+  **===== ĐỊNH DẠNG BẢNG BẮT BUỘC (Theo mẫu chuẩn CV 7991) =====**
 
   Tiêu đề bảng (in đậm, căn giữa, ở trên bảng):
-  **MA TRẬN ĐỀ KIỂM TRA ... - ${data.subject.toUpperCase()} ${data.grade.toUpperCase()}**
+  **MA TRẬN ĐỀ KIỂM TRA ${examTypeLabel} ${semesterNum} - LỚP ${data.grade} - MÔN ${data.subject.toUpperCase()} – NĂM HỌC 20... - 20...**
 
   **QUY TẮC NĂM HỌC (BẮT BUỘC):** Thông tin năm học phải ĐỂ TRỐNG dạng: "NĂM HỌC 20... - 20...". TUYỆT ĐỐI KHÔNG điền sẵn bất kỳ năm cụ thể nào.
 
-  **HEADER BẢNG (4 tầng merge):**
-  Thực tế header cần 4 dòng:
-  - Dòng header 1: TT(rowspan=4) | Chương/chủ đề(rowspan=4) | Nội dung/đơn vị kiến thức(rowspan=4) | Mức độ đánh giá(colspan=${hasEssay ? 16 : 12}) | Tổng số câu(colspan=4, rowspan=2) | Tỉ lệ % điểm(rowspan=4)
-  - Dòng header 2: TNKQ(colspan=${hasEssay ? 16 : 12})
-  - Dòng header 3: Nhiều lựa chọn(colspan=4) | Đúng - Sai(colspan=4) | Trả lời ngắn(colspan=4) ${hasEssay ? '| Tự luận(colspan=4)' : ''} | Biết | Hiểu | VD | VDC
-  - Dòng header 4: Biết | Hiểu | VD | VDC | Biết | Hiểu | VD | VDC | Biết | Hiểu | VD | VDC ${hasEssay ? '| Biết | Hiểu | VD | VDC' : ''}
+  **CẤU TRÚC CỘT QUAN TRỌNG — CHỈ 3 MỨC ĐỘ: Biết | Hiểu | VD**
+  Mỗi dạng câu hỏi CHỈ CÓ 3 cột mức độ: Biết, Hiểu, VD (Vận dụng).
+  KHÔNG tạo cột VDC (Vận dụng cao) riêng. VD bao gồm cả vận dụng và vận dụng cao.
 
-  ${hasEssay ? 'Nếu CÓ tự luận: thêm cột "Tự luận" (colspan=4) sau "Trả lời ngắn".' : 'KHÔNG CÓ tự luận => KHÔNG tạo cột Tự luận.'}
+  **HEADER BẢNG (2 dòng):**
+  - Dòng header 1: TT(rowspan=2) | Chương(rowspan=2) | ĐVKT(rowspan=2) | Mức độ đánh giá(colspan=tổng cột dạng) | Tổng(rowspan=2) | Tỉ lệ % điểm(rowspan=2)
+  - Dòng header 2: 
+    + TNKQ nhiều lựa chọn (I): Biết | Hiểu | VD
+    + "Đúng – sai" (II): Biết | Hiểu | VD
+    + Trả lời ngắn (III): Biết | Hiểu | VD
+    ${hasEssay ? '+ Tự luận (IV): Biết | Hiểu | VD' : ''}
+    + Biết | Hiểu | VD (3 cột tổng)
 
-  **NỘI DUNG BẢNG - MỖI BÀI HỌC CÓ 2 DÒNG (sub-row):**
-  Với mỗi bài học (Nội dung/ĐVKT), tạo CHÍNH XÁC **2 dòng** (2 <tr>):
+  ${hasEssay ? '' : 'KHÔNG CÓ tự luận => KHÔNG tạo cột Tự luận.'}
 
-  **Dòng 1 (Số lượng câu hỏi):**
-  - Ô "Nội dung" ghi: Tên bài + (X tiết) — dùng rowspan=2
-  - Các ô Biết/Hiểu/VD/VDC của từng dạng: Ghi SỐ LƯỢNG câu hỏi (ví dụ: 2, 1, 0, ...)
-  - Ô "Tổng số câu" Biết/Hiểu/VD/VDC: rowspan=2, tính tổng theo hàng ngang
-  - Ô "Tỉ lệ % điểm": rowspan=2, ví dụ "15,0%", "25,0%"
-
-  **Dòng 2 (Tên điểm / Mã câu):**
-  - Với các ô thuộc cột "Biết" và "Hiểu": Ghi chữ "TD" (Tư duy).
-  - Với các ô thuộc cột "VD" (Vận dụng) và "VDC" (Vận dụng cao): TUYỆT ĐỐI ghi chữ "GQVĐ" (Giải quyết vấn đề), KHÔNG ghi "TD".
-  - Nếu KHÔNG có câu hỏi ở ô đó (0 câu), để TRỐNG.
-  
-  **Merge cells STT & Chương/chủ đề:** 
-  - Nếu 1 chương có nhiều bài => cột TT dùng rowspan = (số bài × 2), cột Chương/chủ đề cũng rowspan = (số bài × 2).
+  **NỘI DUNG BẢNG — MỖI BÀI HỌC:**
+  Với mỗi bài học:
+  - Ô "Đơn vị kiến thức" ghi: Tên bài
+  - Các ô Biết/Hiểu/VD của từng dạng: Ghi MÃ CÂU (ví dụ: I.1, I.2, II.1a II.1b, III.1, IV.1a)
+  - DẠNG I: mã "I.1", "I.2", "I.3"...
+  - DẠNG II: mã "II.1a II.1b" (ở cột Biết), "II.1c" (ở cột Hiểu), "II.1d" (ở cột VD). Mỗi câu Đ/S có 4 ý a,b,c,d chia vào các mức.
+  - DẠNG III: mã "III.1", "III.2"...
+  - TỰ LUẬN: mã "IV.1a", "IV.1b", "IV.2a IV.2b"...
+  - Ô Tổng: tính TỔNG SỐ CÂU/ý theo hàng (3 cột: Biết, Hiểu, VD)
 
   **FOOTER BẢNG (3 dòng cuối):**
-  1. **Tổng số câu**: Tổng cộng số câu hỏi theo từng cột Biết/Hiểu/VD/VDC của từng dạng + tổng toàn bảng cuối.
-  2. **Tổng số điểm**: Tổng điểm theo từng cột + tổng cuối = 10.
-  3. **Tỉ lệ % điểm của ma trận**: cho mỗi nhóm dạng, cuối cùng 100%.
+  1. **Tổng số câu (Lệnh hỏi):** Tổng cộng theo từng cột Biết/Hiểu/VD + tổng của từng dạng + tổng cuối.
+  2. **Tổng số điểm:** Tổng điểm theo từng cột + tổng cuối = 10.
+  3. **Tỉ lệ %:** ${hasEssay ? '30 | 20 | 20 | 30 | 40 | 30 | 30' : 'Tỉ lệ % theo dạng + 100%'}
 
   **QUY TẮC ĐIỂM SỐ VÀNG (BẮT BUỘC):**
   1. Mọi điểm số PHẢI là bội số của 0.25.
@@ -427,10 +472,11 @@ export const generateStep1Matrix = async (
 
   **YÊU CẦU OUTPUT:**
   1. Xuất ra Full HTML Document (<!DOCTYPE html>...). 
-  2. Tiêu đề bảng (h2, căn giữa, in đậm): "MA TRẬN ĐỀ KIỂM TRA ... - ${data.subject.toUpperCase()} ${data.grade.toUpperCase()}"
+  2. Tiêu đề bảng (h2, căn giữa, in đậm): "MA TRẬN ĐỀ KIỂM TRA ${examTypeLabel} ${semesterNum} - LỚP ${data.grade} - MÔN ${data.subject.toUpperCase()}"
   3. Phân bổ câu hỏi theo tỷ lệ số tiết: bài nhiều tiết hơn → nhiều câu hơn.
-  4. **QUAN TRỌNG VỚI DẠNG II (Đúng/Sai):** Nếu 1 câu hỏi có nhiều ý chia ở các mức khác nhau, ghi rõ (C13a,b ở Biết, C13c,d ở Hiểu).
-  5. Đảm bảo tổng số câu của mỗi dạng khớp chính xác cấu hình.
+  4. **QUAN TRỌNG VỚI DẠNG II (Đúng/Sai):** Mỗi câu có 4 ý (a,b,c,d). Các ý phân bổ vào các mức: ví dụ II.1a II.1b ở Biết, II.1c ở Hiểu, II.1d ở VD.
+  5. Đảm bảo tổng số câu/ý của mỗi dạng khớp chính xác cấu hình.
+  6. **Ghi chú cuối bảng:** "Ghi chú: Các con số trong bảng thể hiện số lượng lệnh hỏi. Mỗi câu hỏi tại phần I và phần III là một lệnh hỏi; mỗi ý hỏi tại Phần II là một lệnh hỏi."
 
   **Style CSS (Include in <style>):**
   body { font-family: "Times New Roman", serif; font-size: 13pt; line-height: 1.3; margin: 20px; }
@@ -440,6 +486,16 @@ export const generateStep1Matrix = async (
   th { font-weight: bold; }
   .left-align { text-align: left; padding-left: 8px; }
   .bold { font-weight: bold; }
+
+  **CHÚ THÍCH NĂNG LỰC (Cuối bảng):**
+  ${footnotes}
+
+  **⚠️ KIỂM TRA CUỐI CÙNG TRƯỚC KHI TRẢ OUTPUT (BẮT BUỘC):**
+  1. Đếm tổng số mã câu Dạng I (I.1, I.2...) ở cột Biết, Hiểu, VD → phải khớp: Biết=${type1Total.biet}, Hiểu=${type1Total.hieu}, VD=${type1Total.vd}
+  2. Đếm tổng số ý Dạng II (II.1a, II.1b...) ở cột Biết, Hiểu, VD → phải khớp: Biết=${type2Total.biet}, Hiểu=${type2Total.hieu}, VD=${type2Total.vd}
+  3. Đếm tổng số mã câu Dạng III (III.1, III.2...) ở cột Biết, Hiểu, VD → phải khớp: Biết=${type3Total.biet}, Hiểu=${type3Total.hieu}, VD=${type3Total.vd}
+  ${hasEssay ? `4. Đếm tổng số mã câu Tự luận (IV.1a...) ở cột Biết, Hiểu, VD → phải khớp: Biết=${essayTotal.biet}, Hiểu=${essayTotal.hieu}, VD=${essayTotal.vd}` : ''}
+  Nếu bất kỳ số nào KHAI BÁO TRONG BẢNG TRÊN không khớp → SỬA LẠI ma trận cho đúng trước khi trả kết quả.
   `;
 
   return callWithFallback(async (ai, model) => {
@@ -448,12 +504,15 @@ export const generateStep1Matrix = async (
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.2,
+        temperature: 0.1,
       },
     });
     return response.text || "Lỗi tạo ma trận.";
   });
 };
+
+
+
 
 export const generateStep2Specs = async (
   matrixContent: string,
@@ -468,24 +527,62 @@ export const generateStep2Specs = async (
     }
   }));
 
-  const prompt = `
-  Dựa trên **Ma trận đề kiểm tra** (HTML) đã tạo, hãy tạo **BẢNG ĐẶC TẢ ĐỀ KIỂM TRA** (Full HTML Document).
-  Phân tích HTML ma trận để lấy số lượng câu hỏi, mã câu, cấu trúc cột chính xác.
+  const isGiuaKy = data.examType.includes('Giữa');
+  const examTypeLabel = i  - Dòng header 1: TT(rowspan=2) | Chương(rowspan=2) | Nội dung/đơn vị kiến thức(rowspan=2) | **Cấp độ tư duy**(rowspan=2) | **Yêu cầu cần đạt**(rowspan=2) | Số lượng câu hỏi ở các mức độ(colspan=...)
+  - Dòng header 2 (chia nhỏ cột "Số lượng câu hỏi"):
+    + Trắc nghiệm: Nhiều lựa chọn | Đúng-Sai | Trả lời ngắn
+    + Tự luận: (nếu có)
 
-  **MA TRẬN ĐẦU VÀO:**
-  ${matrixContent}
+  CẤU TRÚC CỘT PHẢI **KHỚP** với Ma trận. Nếu Ma trận không có Tự luận → Đặc tả cũng không có.
 
-  **DỮ LIỆU YÊU CẦU CẦN ĐẠT:**
-  ${objectivesMap.join('\\n')}
+  **NỘI DUNG BẢNG (Quan trọng nhất):**
+  Với mỗi bài học/nội dung kiến thức, tạo CÁC DÒNG theo mức độ:
 
-  **===== ĐỊNH DẠNG BẢNG ĐẶC TẢ BẮT BUỘC (Tuân thủ 100%) =====**
+  - Ô "TT" và "Chương/chủ đề": Merge theo chương (rowspan)
+  - Ô "Nội dung/ĐVKT": Tên bài
+  - Ô "Cấp độ tư duy": Ghi **NB** (Nhận biết), **TH** (Thông hiểu), hoặc **VD** (Vận dụng) — mỗi mức là 1 dòng riêng
+  - Ô "Yêu cầu cần đạt": Nội dung CHI TIẾT yêu cầu cần đạt ở mức độ tương ứng. Text-align: left.
+  - Các ô mã câu: Ghi mã câu tương ứng (I.1, I.2, II.1a II.1b, III.1, IV.1a...) — PHẢI KHỚP 100% với Ma trận
 
-  Tiêu đề bảng (in đậm, căn giữa, ở trên bảng):
-   **ĐẶC TẢ ĐỀ KIỂM TRA ... - ${data.subject.toUpperCase()} ${data.grade.toUpperCase()}**
+  **QUAN TRỌNG — FORMAT TỪNG HÀNG:**
+  Mỗi bài học có 3 dòng (NB, TH, VD):
+  | Nội dung (rowspan=3) | NB | Yêu cầu cần đạt mức NB | I.1 I.2 | | | III.1 | ... |
+  | | TH | Yêu cầu cần đạt mức TH | | II.1c | | ... |
+  | | VD | Yêu cầu cần đạt mức VD | I.11 | | II.1d | III.2 | ... |
 
-   **QUY TẮC NĂM HỌC (BẮT BUỘC):** Thông tin năm học phải ĐỂ TRỐNG dạng: "NĂM HỌC 20... - 20...". TUYỆT ĐỐI KHÔNG điền sẵn bất kỳ năm cụ thể nào.
+  **QUAN TRỌNG:**
+  - Cột "Yêu cầu cần đạt" phải đủ rộng, text-align: left, chứa nội dung chi tiết
+  - Số câu hỏi và mã câu PHẢI khớp 100% với BẢNG SỐ LƯỢNG GỐC ở trên (ưu tiên hơn Ma trận nếu có sai lệch)
+  - Nếu Ma trận không có cột Tự luận → Đặc tả cũng KHÔNG có
 
-  **HEADER BẢNG (4 dòng, giống hệt ma trận nhưng thêm cột "Yêu cầu cần đạt"):**
+  **⚠️ KIỂM TRA CUỐI CÙNG:** Đếm tổng số mã câu trong đặc tả cho mỗi dạng và mức độ. Phải khớp CHÍNH XÁC: Dạng I: B=${type1Total.biet}/H=${type1Total.hieu}/VD=${type1Total.vd}, Dạng II: B=${type2Total.biet}/H=${type2Total.hieu}/VD=${type2Total.vd} (ý), Dạng III: B=${type3Total.biet}/H=${type3Total.hieu}/VD=${type3Total.vd}${totalEssay > 0 ? `, Tự luận: B=${essayTotal.biet}/H=${essayTotal.hieu}/VD=${essayTotal.vd}` : ''}. Nếu sai → sửa lại trước khi trả output.
+
+  **QUY TẮC CHÚ THÍCH (FOOTNOTES) - BẮT BUỘC:**
+  Cuối bảng thêm:
+  ${footnotes}
+
+  **Style CSS:**
+  body { font-family: "Times New Roman", serif; font-size: 13pt; margin: 20px; }
+  h2 { text-align: center; font-weight: bold; text-transform: uppercase; margin-bottom: 15px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+  th, td { border: 1px solid black; padding: 4px 6px; text-align: center; vertical-align: middle; }
+  th { font-weight: bold; }
+  .left-align, .text-left { text-align: left; padding: 6px 8px; vertical-align: top; }
+  .bold { font-weight: bold; }
+  `;
+
+  return callWithFallback(async (ai, model) => {
+    const response = await ai.models.generateContent({
+      model,
+      contents: prompt,
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+        temperature: 0.1,
+      },
+    });
+    return response.text || "Lỗi tạo đặc tả.";
+  });
+};��n đạt"):**
   - Dòng header 1: TT(rowspan=4) | Chương/chủ đề(rowspan=4) | Nội dung/đơn vị kiến thức(rowspan=4) | **Yêu cầu cần đạt**(rowspan=4) | Mức độ đánh giá(colspan=...) | Tổng số câu(colspan=3, rowspan=2) | Tỉ lệ % điểm(rowspan=4)
   - Dòng header 2: TNKQ(colspan=...)
   - Dòng header 3: Nhiều lựa chọn(colspan=3) | Đúng - Sai(colspan=3) | Trả lời ngắn(colspan=3) [+ Tự luận(colspan=3) nếu có] | Biết | Hiểu | VD

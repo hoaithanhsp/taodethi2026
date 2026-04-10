@@ -76,3 +76,43 @@ export interface ExtractedQuestion {
   answer?: string; // Đáp án đúng
   subItems?: string[]; // Các ý a,b,c,d cho type2
 }
+
+// ============================================
+// NGÂN HÀNG CÂU HỎI — Types
+// ============================================
+
+export interface BankQuestion {
+  id: string;
+  content: string;
+  type: 'type1' | 'type2' | 'type3' | 'essay';
+  options?: string[];
+  answer: string;
+  subject: string;
+  topic: string;
+  grade: string;
+  level: 'NB' | 'TH' | 'VD' | 'VDC';
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AIExtractedQuestion {
+  content: string;
+  options?: string[];
+  answer: string;
+  detectedSubject?: string;
+  detectedTopic?: string;
+  detectedLevel?: 'NB' | 'TH' | 'VD' | 'VDC';
+  detectedType?: 'type1' | 'type2' | 'type3' | 'essay';
+}
+
+export interface ParsedImportQuestion {
+  content: string;
+  type: 'type1' | 'type2' | 'type3' | 'essay';
+  options?: string[];
+  answer: string;
+  selected: boolean;
+  detectedSubject?: string;
+  detectedTopic?: string;
+  detectedLevel?: 'NB' | 'TH' | 'VD' | 'VDC';
+}
