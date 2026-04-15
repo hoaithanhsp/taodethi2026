@@ -8,7 +8,8 @@ import MarkdownView from './components/MarkdownView';
 import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel } from './services/geminiService';
 import { parseDocxWithMath } from './services/docxMathParser';
 import { AVAILABLE_MODELS } from './constants';
-import { ArrowRight, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen } from 'lucide-react';
+import { validateAccount, Account } from './data/accounts';
+import { ArrowRight, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, Lock, User, Gift, Phone, Shield } from 'lucide-react';
 
 const App: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<AppStep>(AppStep.INPUT);
@@ -41,11 +42,21 @@ const App: React.FC = () => {
     localStorage.setItem('examcraft_dark_mode', String(darkMode));
   }, [darkMode]);
 
-  // Xóa dữ liệu auth/trial cũ — app giờ miễn phí hoàn toàn
-  useEffect(() => {
-    localStorage.removeItem('examcraft_auth');
-    localStorage.removeItem('examcraft_trial_used');
-  }, []);
+  // -- Auth State --
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return localStorage.getItem('examcraft_auth') === 'true';
+  });
+  const [trialUsed, setTrialUsed] = useState<boolean>(() => {
+    return localStorage.getItem('examcraft_trial_used') === 'true';
+  });
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loggedInUser, setLoggedInUser] = useState<Account | null>(() => {
+    const saved = localStorage.getItem('examcraft_user');
+    return saved ? JSON.parse(saved) : null;
+  });
 
   // -- Selected Model State --
   const [selectedModel, setSelectedModelState] = useState(getSelectedModel() || AVAILABLE_MODELS[0].id);
@@ -94,7 +105,46 @@ const App: React.FC = () => {
   const [showApiKeyModal, setShowApiKeyModal] = useState<boolean>(!getApiKey());
   const [tempApiKey, setTempApiKey] = useState<string>('');
 
+  // --- Auth Handlers ---
+  const handleLogin = () => {
+    const account = validateAccount(loginUsername, loginPassword);
+    if (account) {
+      setIsAuthenticated(true);
+      setLoggedInUser(account);
+      setShowLoginModal(false);
+      setLoginError('');
+      setLoginUsername('');
+      setLoginPassword('');
+      localStorage.setItem('examcraft_auth', 'true');
+      localStorage.setItem('examcraft_user', JSON.stringify(account));
+    } else {
+      setLoginError('Sai tên đăng nhập hoặc mật khẩu!');
+    }
+  };
 
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setLoggedInUser(null);
+    localStorage.removeItem('examcraft_auth');
+    localStorage.removeItem('examcraft_user');
+  };
+
+  /**
+   * Kiểm tra quyền sử dụng: đã đăng nhập HOẶC chưa hết lượt thử
+   * Trả về true nếu được phép, false nếu cần đăng nhập
+   */
+  const checkAuthOrTrial = (): boolean => {
+    if (isAuthenticated) return true;
+    if (!trialUsed) {
+      // Đánh dấu đã dùng lượt thử
+      setTrialUsed(true);
+      localStorage.setItem('examcraft_trial_used', 'true');
+      return true;
+    }
+    // Hết lượt → hiện popup đăng nhập
+    setShowLoginModal(true);
+    return false;
+  };
 
   // --- API Key Handlers ---
   const handleSaveApiKey = () => {
@@ -409,7 +459,7 @@ const App: React.FC = () => {
   // -- Generation Handlers --
 
   const handleGenerateMatrix = async () => {
-
+    if (!checkAuthOrTrial()) return;
 
     if (selectedLessonIds.size === 0) {
       alert("Vui lòng chọn ít nhất 1 bài học/chủ đề!");
@@ -430,6 +480,7 @@ const App: React.FC = () => {
   };
 
   const handleGenerateSpecs = async () => {
+    if (!checkAuthOrTrial()) return;
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
       const specs = await generateStep2Specs(genState.matrix, inputData, selectedLessonIds);
@@ -442,7 +493,7 @@ const App: React.FC = () => {
   };
 
   const handleGenerateExam = async () => {
-
+    if (!checkAuthOrTrial()) return;
 
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
@@ -1196,6 +1247,120 @@ const App: React.FC = () => {
   return (
     <div className="h-screen w-full flex flex-col bg-app-gradient font-sans text-black overflow-hidden">
 
+      {/* Login Modal */}
+      {showLoginModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[60] flex items-center justify-center p-4" onClick={() => setShowLoginModal(false)}>
+          <div className="modal-elevated max-w-md w-full p-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #0d9488 0%, #0f766e 50%, #115e59 100%)' }} className="p-6 text-white relative overflow-hidden">
+              <div style={{ position: 'absolute', top: '-20px', right: '-20px', width: '120px', height: '120px', background: 'rgba(255,255,255,0.08)', borderRadius: '50%' }} />
+              <div style={{ position: 'absolute', bottom: '-30px', left: '-10px', width: '80px', height: '80px', background: 'rgba(255,255,255,0.05)', borderRadius: '50%' }} />
+              <div className="flex items-center gap-3 mb-3 relative">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(10px)' }}>
+                  <Lock className="w-6 h-6" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold">Đăng nhập để tiếp tục</h2>
+                  <p className="text-sm text-teal-100">Bạn đã hết lượt dùng thử miễn phí</p>
+                </div>
+              </div>
+              <button onClick={() => setShowLoginModal(false)} className="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-white/10 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Login Form */}
+            <div className="p-6 space-y-4">
+              {loginError && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  {loginError}
+                </div>
+              )}
+
+              <div>
+                <label className="text-sm font-semibold text-teal-700 mb-1.5 block flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5" /> Tên đăng nhập
+                </label>
+                <input
+                  type="text"
+                  value={loginUsername}
+                  onChange={(e) => { setLoginUsername(e.target.value); setLoginError(''); }}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                  placeholder="Nhập tên đăng nhập..."
+                  className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none text-sm"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="text-sm font-semibold text-teal-700 mb-1.5 block flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5" /> Mật khẩu
+                </label>
+                <input
+                  type="password"
+                  value={loginPassword}
+                  onChange={(e) => { setLoginPassword(e.target.value); setLoginError(''); }}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                  placeholder="Nhập mật khẩu..."
+                  className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none text-sm"
+                />
+              </div>
+
+              <button
+                onClick={handleLogin}
+                disabled={!loginUsername.trim() || !loginPassword.trim()}
+                className="w-full py-3 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2 text-sm"
+                style={{
+                  background: (!loginUsername.trim() || !loginPassword.trim()) ? '#94a3b8' : 'linear-gradient(135deg, #0d9488 0%, #0f766e 100%)',
+                  cursor: (!loginUsername.trim() || !loginPassword.trim()) ? 'not-allowed' : 'pointer',
+                  boxShadow: (!loginUsername.trim() || !loginPassword.trim()) ? 'none' : '0 4px 14px rgba(13, 148, 136, 0.4)',
+                }}
+              >
+                <LogIn className="w-4 h-4" />
+                Đăng nhập
+              </button>
+            </div>
+
+            {/* Contact Info */}
+            <div style={{ background: 'linear-gradient(135deg, #f0fdfa 0%, #ecfdf5 50%, #f0f9ff 100%)' }} className="p-5 border-t border-teal-100">
+              <div className="space-y-3">
+                <div className="flex items-start gap-3 p-3 bg-white rounded-xl border border-teal-100 shadow-sm">
+                  <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+                    <Phone className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-teal-800">Liên hệ Zalo để mua tài khoản</p>
+                    <a href="https://zalo.me/0348296773" target="_blank" rel="noopener noreferrer" className="text-lg font-bold text-blue-600 hover:underline">0348296773</a>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3 p-3 bg-white rounded-xl border border-teal-100 shadow-sm">
+                  <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+                    <Shield className="w-5 h-5 text-emerald-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-teal-800">Phí: <span className="text-emerald-600">99.000đ</span> — Sử dụng không giới hạn thời gian</p>
+                    <p className="text-xs text-slate-500">Ủng hộ tác giả để duy trì và phát triển ứng dụng ❤️</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3 p-3 bg-white rounded-xl border border-amber-100 shadow-sm" style={{ background: 'linear-gradient(135deg, #fffbeb, #fef3c7)' }}>
+                  <div className="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center shrink-0">
+                    <Gift className="w-5 h-5 text-amber-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-amber-800">🎁 Tặng kèm App Tạo Đề Thi Toàn Năng!</p>
+                    <a href="https://taodethitoannang.vercel.app" target="_blank" rel="noopener noreferrer" className="text-xs text-amber-700 hover:underline font-medium flex items-center gap-1">
+                      <ExternalLink className="w-3 h-3" /> taodethitoannang.vercel.app
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Settings Modal */}
       {showApiKeyModal && (
@@ -1288,6 +1453,21 @@ const App: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* Auth Status Badge */}
+            {isAuthenticated && loggedInUser ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full font-medium flex items-center gap-1">
+                  <Shield className="w-3 h-3" /> {loggedInUser.name}
+                </span>
+                <button onClick={handleLogout} className="text-xs text-slate-400 hover:text-red-500 transition-colors px-1.5 py-1 rounded" title="Đăng xuất">Đăng xuất</button>
+              </div>
+            ) : (
+              <span className="text-xs bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full font-medium flex items-center gap-1">
+                {trialUsed ? '⚠️ Hết lượt thử' : '🎁 Còn 1 lượt thử miễn phí'}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2" style={{ marginLeft: '8px' }}>
 
 
             {/* Dark Mode Toggle */}
