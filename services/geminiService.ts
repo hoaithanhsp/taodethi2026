@@ -2,7 +2,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { SYSTEM_INSTRUCTION, MODEL_NAME, FALLBACK_MODELS, GRADE_NO_ESSAY, getSubjectFootnotes } from '../constants';
 import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate } from '../types';
-import { fetchTemplateFileBase64, buildMatrixPromptForCustomTemplate, buildSpecsPromptForCustomTemplate } from './matrixTemplates';
+import { fetchTemplateHtml, buildMatrixPromptForCustomTemplate, buildSpecsPromptForCustomTemplate } from './matrixTemplates';
 
 // --- API Key Management (localStorage-based) ---
 const API_KEY_STORAGE_KEY = 'examcraft_api_key';
@@ -500,28 +500,22 @@ export const generateStep1Matrix = async (
   Nếu bất kỳ số nào KHAI BÁO TRONG BẢNG TRÊN không khớp → SỬA LẠI ma trận cho đúng trước khi trả kết quả.
   `;
 
-  // --- TEMPLATE 2 or 3: Use custom prompt + template file ---
+  // --- TEMPLATE 2 or 3: Use custom prompt + template file (parsed as HTML) ---
   if (template !== 'template1') {
     const customPrompt = buildMatrixPromptForCustomTemplate(
       template, data, selectedChapters, totalSelectedPeriods, config
     );
-    const templateFile = await fetchTemplateFileBase64(template);
+    const templateHtml = await fetchTemplateHtml(template);
+
+    // Embed the parsed template HTML directly in the prompt text
+    const fullPrompt = templateHtml
+      ? customPrompt + `\n\n**===== NỘI DUNG FILE MẪU (HTML đã parse từ .docx) =====**\n${templateHtml}`
+      : customPrompt;
 
     return callWithFallback(async (ai, model) => {
-      const parts: any[] = [];
-      if (templateFile) {
-        parts.push({
-          inlineData: {
-            mimeType: templateFile.mimeType,
-            data: templateFile.base64,
-          }
-        });
-      }
-      parts.push({ text: customPrompt });
-
       const response = await ai.models.generateContent({
         model,
-        contents: [{ role: 'user', parts }],
+        contents: fullPrompt,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
           temperature: 0.1,
@@ -646,28 +640,22 @@ export const generateStep2Specs = async (
   .bold { font-weight: bold; }
   `;
 
-  // --- TEMPLATE 2 or 3: Use custom prompt + template file ---
+  // --- TEMPLATE 2 or 3: Use custom prompt + template file (parsed as HTML) ---
   if (template !== 'template1') {
     const customPrompt = buildSpecsPromptForCustomTemplate(
       template, matrixContent, data, selectedLessonIds, config
     );
-    const templateFile = await fetchTemplateFileBase64(template);
+    const templateHtml = await fetchTemplateHtml(template);
+
+    // Embed the parsed template HTML directly in the prompt text
+    const fullPrompt = templateHtml
+      ? customPrompt + `\n\n**===== NỘI DUNG FILE MẪU (HTML đã parse từ .docx) =====**\n${templateHtml}`
+      : customPrompt;
 
     return callWithFallback(async (ai, model) => {
-      const parts: any[] = [];
-      if (templateFile) {
-        parts.push({
-          inlineData: {
-            mimeType: templateFile.mimeType,
-            data: templateFile.base64,
-          }
-        });
-      }
-      parts.push({ text: customPrompt });
-
       const response = await ai.models.generateContent({
         model,
-        contents: [{ role: 'user', parts }],
+        contents: fullPrompt,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
           temperature: 0.1,

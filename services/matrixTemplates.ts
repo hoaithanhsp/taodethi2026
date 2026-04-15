@@ -10,35 +10,35 @@ const TEMPLATE_FILES: Record<string, string> = {
     template3: '/templates/02_ma_tran_dac_ta.docx',
 };
 
+// Cache to avoid re-parsing on every call
+const templateHtmlCache: Record<string, string> = {};
+
 /**
- * Fetch file mẫu từ public/templates/ và trả về base64
+ * Fetch file mẫu .docx từ public/templates/, parse bằng mammoth → trả về HTML string.
+ * Gemini API không hỗ trợ .docx inline, nên phải convert sang HTML text trước.
  */
-export const fetchTemplateFileBase64 = async (template: MatrixTemplate): Promise<{
-    base64: string;
-    mimeType: string;
-} | null> => {
+export const fetchTemplateHtml = async (template: MatrixTemplate): Promise<string | null> => {
+    // Return cached if available
+    if (templateHtmlCache[template]) return templateHtmlCache[template];
+
     const filePath = TEMPLATE_FILES[template];
     if (!filePath) return null;
 
     try {
         const response = await fetch(filePath);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const blob = await response.blob();
+        const arrayBuffer = await response.arrayBuffer();
 
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const base64 = (reader.result as string).split(',')[1];
-                resolve({
-                    base64,
-                    mimeType: blob.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                });
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-        });
+        // Dynamic import mammoth to parse .docx → HTML
+        const mammoth = await import('mammoth');
+        const result = await mammoth.convertToHtml({ arrayBuffer });
+        const html = result.value;
+
+        console.log(`[MatrixTemplates] Parsed template ${template}: ${html.length} chars HTML`);
+        templateHtmlCache[template] = html;
+        return html;
     } catch (err) {
-        console.error(`[MatrixTemplates] Failed to fetch template file for ${template}:`, err);
+        console.error(`[MatrixTemplates] Failed to parse template file for ${template}:`, err);
         return null;
     }
 };
@@ -109,10 +109,10 @@ export const buildMatrixPromptForCustomTemplate = (
     return `
   Hãy tạo **MA TRẬN ĐỀ KIỂM TRA** (HTML Table) cho môn **${data.subject}**, khối **Lớp ${data.grade}**.
 
-  **⚠️ QUAN TRỌNG: SINH THEO MẪU ĐÍNH KÈM ⚠️**
-  Tôi đã đính kèm một file Word (.docx) chứa **${templateName}**.
+  **⚠️ QUAN TRỌNG: SINH THEO MẪU HTML BÊN DƯỚI ⚠️**
+  Cuối prompt có phần "NỘI DUNG FILE MẪU" chứa HTML của **${templateName}**.
   BẠN PHẢI:
-  1. ĐỌC KỸ file Word đính kèm để hiểu cấu trúc bảng ma trận: header, cách chia cột, cách merge cell, cách ghi mã câu, cách tính điểm, format footer.
+  1. ĐỌc KĨ nội dung HTML mẫu để hiểu cấu trúc bảng ma trận: header, cách chia cột, cách merge cell, cách ghi mã câu, cách tính điểm, format footer.
   2. SINH MA TRẬN MỚI **THEO ĐÚNG CẤU TRÚC BẢN MẪU** (giữ nguyên format bảng, cách chia cột, cách ghi header, cách ghi mã câu, cách tính điểm).
   3. CHỈ THAY ĐỔI nội dung (tên chương, bài học, phân bổ câu hỏi) dựa trên DỮ LIỆU ĐẦU VÀO bên dưới.
   4. GIỮ NGUYÊN style CSS, kiểu merge cell, kiểu header y hệt file mẫu.
@@ -140,7 +140,7 @@ export const buildMatrixPromptForCustomTemplate = (
   4. Phân bổ câu hỏi theo tỷ lệ số tiết.
   5. Tổng số câu/ý phải khớp chính xác cấu hình.
   6. Điểm số là bội số 0.25, tổng = 10.
-  7. CẤU TRÚC BẢNG HTML phải giống file mẫu đính kèm (header, merge cells, footer).
+  7. CẤU TRÚC BẢNG HTML phải giống HTML mẫu ở cuối prompt (header, merge cells, footer).
 
   **CHÚ THÍCH NĂNG LỰC (Cuối bảng):**
   ${footnotes}
@@ -190,10 +190,10 @@ export const buildSpecsPromptForCustomTemplate = (
     return `
   Dựa trên **Ma trận đề kiểm tra** (HTML) đã tạo, hãy tạo **BẢNG ĐẶC TẢ ĐỀ KIỂM TRA** (Full HTML Document).
 
-  **⚠️ QUAN TRỌNG: SINH THEO MẪU ĐÍNH KÈM ⚠️**
-  Tôi đã đính kèm một file Word (.docx) chứa **${templateName}**.
+  **⚠️ QUAN TRỌNG: SINH THEO MẪU HTML BÊN DƯỚI ⚠️**
+  Cuối prompt có phần "NỘI DUNG FILE MẪU" chứa HTML của **${templateName}**.
   BẠN PHẢI:
-  1. ĐỌC KỸ file Word đính kèm để hiểu cấu trúc bảng ĐẶC TẢ (nếu có bảng đặc tả trong file).
+  1. ĐỌc KĨ nội dung HTML mẫu để hiểu cấu trúc bảng ĐẶC TẢ (nếu có bảng đặc tả trong file).
   2. SINH BẢNG ĐẶC TẢ MỚI **THEO ĐÚNG CẤU TRÚC BẢN MẪU** (giữ nguyên format, cách chia cột, header, merge cells).
   3. CHỈ THAY ĐỔI nội dung (tên chương, bài, yêu cầu cần đạt, phân bổ câu hỏi) dựa trên DỮ LIỆU ĐẦU VÀO.
   4. Nếu file mẫu không có bảng đặc tả riêng, hãy tạo bảng đặc tả phù hợp với cấu trúc ma trận trong file mẫu.
@@ -218,7 +218,7 @@ export const buildSpecsPromptForCustomTemplate = (
   3. **QUY TẮC NĂM HỌC:** Thông tin năm học phải ĐỂ TRỐNG: "NĂM HỌC 20... - 20...".
   4. Cột "Yêu cầu cần đạt" phải có nội dung chi tiết, text-align: left.
   5. Số câu hỏi và mã câu PHẢI khớp 100% với BẢNG SỐ LƯỢNG GỐC.
-  6. CẤU TRÚC BẢNG HTML phải giống file mẫu đính kèm.
+  6. CẤU TRÚC BẢNG HTML phải giống HTML mẫu ở cuối prompt.
 
   **CHÚ THÍCH NĂNG LỰC:**
   ${footnotes}
