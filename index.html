@@ -323,6 +323,211 @@
         display: none !important;
       }
     }
+
+    /* === HOME LANDING — 3 MODE CARDS === */
+    .mode-card {
+      position: relative;
+      border-radius: 24px;
+      padding: 36px 28px;
+      cursor: pointer;
+      overflow: hidden;
+      transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      border: 2px solid transparent;
+    }
+    .mode-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+      border-radius: 24px;
+    }
+    .mode-card:hover {
+      transform: translateY(-8px) scale(1.02);
+    }
+    .mode-card:hover::before {
+      opacity: 1;
+    }
+    .mode-card:active {
+      transform: translateY(-2px) scale(0.99);
+    }
+
+    /* Card 1: Teal — CV 7991 */
+    .mode-card-teal {
+      background: linear-gradient(145deg, #f0fdfa 0%, #ccfbf1 40%, #99f6e4 100%);
+      border-color: rgba(13, 148, 136, 0.25);
+      box-shadow:
+        0 4px 16px -4px rgba(13, 148, 136, 0.15),
+        0 12px 32px -8px rgba(13, 148, 136, 0.1);
+    }
+    .mode-card-teal:hover {
+      border-color: rgba(13, 148, 136, 0.5);
+      box-shadow:
+        0 8px 32px -4px rgba(13, 148, 136, 0.3),
+        0 20px 48px -12px rgba(13, 148, 136, 0.2),
+        0 0 0 1px rgba(13, 148, 136, 0.1);
+    }
+    .mode-card-teal::before {
+      background: linear-gradient(145deg, rgba(13, 148, 136, 0.04), rgba(45, 212, 191, 0.08));
+    }
+    .mode-card-teal .mode-card-icon {
+      background: linear-gradient(135deg, #0d9488 0%, #14b8a6 100%);
+      box-shadow: 0 6px 20px -4px rgba(13, 148, 136, 0.5);
+    }
+    .mode-card-teal .mode-card-btn {
+      background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%);
+      box-shadow: 0 4px 16px -3px rgba(13, 148, 136, 0.5);
+    }
+    .mode-card-teal .mode-card-btn:hover {
+      box-shadow: 0 6px 24px -3px rgba(13, 148, 136, 0.6);
+    }
+
+    /* Card 2: Blue — Tạo đề tương tự */
+    .mode-card-blue {
+      background: linear-gradient(145deg, #eff6ff 0%, #dbeafe 40%, #bfdbfe 100%);
+      border-color: rgba(59, 130, 246, 0.25);
+      box-shadow:
+        0 4px 16px -4px rgba(59, 130, 246, 0.15),
+        0 12px 32px -8px rgba(59, 130, 246, 0.1);
+    }
+    .mode-card-blue:hover {
+      border-color: rgba(59, 130, 246, 0.5);
+      box-shadow:
+        0 8px 32px -4px rgba(59, 130, 246, 0.3),
+        0 20px 48px -12px rgba(59, 130, 246, 0.2),
+        0 0 0 1px rgba(59, 130, 246, 0.1);
+    }
+    .mode-card-blue::before {
+      background: linear-gradient(145deg, rgba(59, 130, 246, 0.04), rgba(96, 165, 250, 0.08));
+    }
+    .mode-card-blue .mode-card-icon {
+      background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
+      box-shadow: 0 6px 20px -4px rgba(59, 130, 246, 0.5);
+    }
+    .mode-card-blue .mode-card-btn {
+      background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+      box-shadow: 0 4px 16px -3px rgba(59, 130, 246, 0.5);
+    }
+    .mode-card-blue .mode-card-btn:hover {
+      box-shadow: 0 6px 24px -3px rgba(59, 130, 246, 0.6);
+    }
+
+    /* Card 3: Purple — Sinh 3 đề biến thể */
+    .mode-card-purple {
+      background: linear-gradient(145deg, #faf5ff 0%, #ede9fe 40%, #ddd6fe 100%);
+      border-color: rgba(139, 92, 246, 0.25);
+      box-shadow:
+        0 4px 16px -4px rgba(139, 92, 246, 0.15),
+        0 12px 32px -8px rgba(139, 92, 246, 0.1);
+    }
+    .mode-card-purple:hover {
+      border-color: rgba(139, 92, 246, 0.5);
+      box-shadow:
+        0 8px 32px -4px rgba(139, 92, 246, 0.3),
+        0 20px 48px -12px rgba(139, 92, 246, 0.2),
+        0 0 0 1px rgba(139, 92, 246, 0.1);
+    }
+    .mode-card-purple::before {
+      background: linear-gradient(145deg, rgba(139, 92, 246, 0.04), rgba(167, 139, 250, 0.08));
+    }
+    .mode-card-purple .mode-card-icon {
+      background: linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%);
+      box-shadow: 0 6px 20px -4px rgba(139, 92, 246, 0.5);
+    }
+    .mode-card-purple .mode-card-btn {
+      background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+      box-shadow: 0 4px 16px -3px rgba(139, 92, 246, 0.5);
+    }
+    .mode-card-purple .mode-card-btn:hover {
+      box-shadow: 0 6px 24px -3px rgba(139, 92, 246, 0.6);
+    }
+
+    .mode-card-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      margin-bottom: 20px;
+    }
+    .mode-card-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      border-radius: 14px;
+      color: white;
+      font-weight: 700;
+      font-size: 0.9rem;
+      transition: all 0.3s ease;
+      border: none;
+      cursor: pointer;
+    }
+    .mode-card-btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .mode-card-feature {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+      font-size: 0.85rem;
+      color: #475569;
+    }
+    .mode-card-feature .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* Floating particles animation */
+    @keyframes float-particle {
+      0%, 100% { transform: translateY(0) rotate(0deg); opacity: 0.3; }
+      50% { transform: translateY(-20px) rotate(180deg); opacity: 0.8; }
+    }
+    .mode-card .particle {
+      position: absolute;
+      border-radius: 50%;
+      opacity: 0;
+      animation: float-particle 4s ease-in-out infinite;
+    }
+    .mode-card:hover .particle {
+      opacity: 0.4;
+    }
+
+    /* Staggered animation for cards */
+    @keyframes slideInUp {
+      from { opacity: 0; transform: translateY(40px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .card-stagger-1 { animation: slideInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.05s forwards; opacity: 0; }
+    .card-stagger-2 { animation: slideInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.15s forwards; opacity: 0; }
+    .card-stagger-3 { animation: slideInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.25s forwards; opacity: 0; }
+
+    /* Back to home breadcrumb */
+    .back-home-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #64748b;
+      background: rgba(241, 245, 249, 0.8);
+      border: 1px solid #e2e8f0;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .back-home-btn:hover {
+      background: #f8fafc;
+      color: #0d9488;
+      border-color: #99f6e4;
+    }
   </style>
   <script type="importmap">
 {

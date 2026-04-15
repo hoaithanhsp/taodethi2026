@@ -120,7 +120,7 @@ export interface ParsedImportQuestion {
 // ============================================
 // APP MODE — Chế độ ứng dụng
 // ============================================
-export type AppMode = 'cv7991' | 'similar' | 'variants';
+export type AppMode = 'home' | 'cv7991' | 'similar' | 'variants';
 
 // ============================================
 // TẠO ĐỀ TƯƠNG TỰ — Types

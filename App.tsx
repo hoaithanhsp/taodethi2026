@@ -11,7 +11,7 @@ import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfo
 import { parseDocxWithMath } from './services/docxMathParser';
 import { AVAILABLE_MODELS } from './constants';
 import { validateAccount, Account } from './data/accounts';
-import { ArrowRight, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, Lock, User, Gift, Phone, Shield, Copy, Shuffle } from 'lucide-react';
+import { ArrowRight, ArrowLeft, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, Lock, User, Gift, Phone, Shield, Copy, Shuffle, Sparkles, Layers, Zap } from 'lucide-react';
 
 const App: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<AppStep>(AppStep.INPUT);
@@ -19,7 +19,7 @@ const App: React.FC = () => {
 
   // -- App Mode State --
   const [appMode, setAppMode] = useState<AppMode>(() => {
-    return (localStorage.getItem('examcraft_app_mode') as AppMode) || 'cv7991';
+    return (localStorage.getItem('examcraft_app_mode') as AppMode) || 'home';
   });
 
   useEffect(() => {
@@ -1504,34 +1504,23 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* ===== MODE SELECTOR ===== */}
-      <div className="shrink-0 border-b border-teal-100 bg-white/90 backdrop-blur-sm">
-        <div className="max-w-[1600px] mx-auto px-4">
-          <nav className="flex items-center gap-1 py-1.5 overflow-x-auto">
-            {[
-              { id: 'cv7991' as AppMode, label: 'Tạo đề theo CV 7991', icon: <FileText className="w-4 h-4" />, desc: 'Pipeline 4 bước' },
-              { id: 'similar' as AppMode, label: 'Tạo đề tương tự', icon: <Copy className="w-4 h-4" />, desc: 'Từ đề mẫu' },
-              { id: 'variants' as AppMode, label: 'Sinh 3 đề biến thể', icon: <Shuffle className="w-4 h-4" />, desc: '3 đề từ 1 gốc' },
-            ].map((mode) => (
-              <button
-                key={mode.id}
-                onClick={() => setAppMode(mode.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
-                  appMode === mode.id
-                    ? 'bg-teal-600 text-white shadow-md shadow-teal-600/20'
-                    : 'text-slate-600 hover:bg-teal-50 hover:text-teal-700'
-                }`}
-              >
-                {mode.icon}
-                <span>{mode.label}</span>
-                <span className={`mode-desc-badge text-[10px] px-1.5 py-0.5 rounded-full ${
-                  appMode === mode.id ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
-                }`}>{mode.desc}</span>
-              </button>
-            ))}
-          </nav>
+      {/* ===== BACK TO HOME BUTTON (only when inside a mode) ===== */}
+      {appMode !== 'home' && (
+        <div className="shrink-0 border-b border-teal-100 bg-white/90 backdrop-blur-sm">
+          <div className="max-w-[1600px] mx-auto px-4 py-1.5 flex items-center gap-3">
+            <button onClick={() => setAppMode('home')} className="back-home-btn">
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Trang chủ
+            </button>
+            <span className="text-xs text-slate-400">|</span>
+            <span className="text-sm font-semibold text-slate-700">
+              {appMode === 'cv7991' && '🔧 Tạo đề theo CV 7991'}
+              {appMode === 'similar' && '📋 Tạo đề tương tự'}
+              {appMode === 'variants' && '🔀 Sinh 3 đề biến thể'}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Progress — chỉ hiển thị cho mode CV 7991 */}
       {appMode === 'cv7991' && (
@@ -1542,6 +1531,105 @@ const App: React.FC = () => {
 
       {/* Main Content */}
       <main className="flex-1 relative w-full overflow-hidden">
+
+        {/* ===== HOME LANDING — 3 MODE CARDS ===== */}
+        {appMode === 'home' && (
+          <div className="absolute inset-0 overflow-y-auto">
+            <div className="min-h-full flex flex-col items-center justify-center px-4 py-10 sm:py-16">
+              {/* Hero Title */}
+              <div className="text-center mb-10 animate-fade-in-up">
+                <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-teal-50 border border-teal-200 rounded-full text-sm font-medium text-teal-700 mb-4">
+                  <Sparkles className="w-4 h-4" />
+                  Powered by Google Gemini AI
+                </div>
+                <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight mb-3">
+                  Chọn chế độ <span className="bg-gradient-to-r from-teal-600 via-blue-600 to-purple-600 bg-clip-text text-transparent">tạo đề thi</span>
+                </h1>
+                <p className="text-base sm:text-lg text-slate-500 max-w-xl mx-auto">
+                  3 công cụ AI mạnh mẽ giúp soạn đề chỉ trong vài phút
+                </p>
+              </div>
+
+              {/* 3 Mode Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl w-full">
+
+                {/* Card 1: CV 7991 — TEAL */}
+                <div className="mode-card mode-card-teal card-stagger-1" onClick={() => setAppMode('cv7991')}>
+                  <div className="particle" style={{ width: 8, height: 8, background: '#14b8a6', top: '15%', right: '20%', animationDelay: '0s' }} />
+                  <div className="particle" style={{ width: 6, height: 6, background: '#0d9488', bottom: '25%', left: '15%', animationDelay: '1.5s' }} />
+                  <div className="mode-card-icon">
+                    <FileText className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-xl font-extrabold text-teal-900 mb-2">Tạo đề theo CV 7991</h3>
+                  <p className="text-sm text-teal-700/70 mb-5 leading-relaxed">
+                    Pipeline 4 bước chuẩn: Nhập liệu → Ma trận → Đặc tả → Đề thi hoàn chỉnh
+                  </p>
+                  <div className="space-y-1.5 mb-6">
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#0d9488' }} /><span>Upload PPCT tự động nhận diện</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#0d9488' }} /><span>4 dạng câu hỏi chuẩn CV 7991</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#0d9488' }} /><span>Lối tắt nhanh nếu có sẵn Ma trận</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#0d9488' }} /><span>Xuất Word / HTML</span></div>
+                  </div>
+                  <button className="mode-card-btn" onClick={(e) => { e.stopPropagation(); setAppMode('cv7991'); }}>
+                    <Zap className="w-4 h-4" />
+                    Bắt đầu
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Card 2: Tạo đề tương tự — BLUE */}
+                <div className="mode-card mode-card-blue card-stagger-2" onClick={() => setAppMode('similar')}>
+                  <div className="particle" style={{ width: 8, height: 8, background: '#3b82f6', top: '20%', left: '25%', animationDelay: '0.5s' }} />
+                  <div className="particle" style={{ width: 6, height: 6, background: '#2563eb', bottom: '15%', right: '20%', animationDelay: '2s' }} />
+                  <div className="mode-card-icon">
+                    <Copy className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-xl font-extrabold text-blue-900 mb-2">Tạo đề tương tự</h3>
+                  <p className="text-sm text-blue-700/70 mb-5 leading-relaxed">
+                    Upload 1 đề mẫu → AI phân tích cấu trúc & sinh đề mới giữ nguyên format
+                  </p>
+                  <div className="space-y-1.5 mb-6">
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#2563eb' }} /><span>Phân tích ma trận tự động</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#2563eb' }} /><span>Giữ cấu trúc, thay số liệu</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#2563eb' }} /><span>Lời giải chi tiết kèm theo</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#2563eb' }} /><span>Hỗ trợ PDF & ảnh chụp</span></div>
+                  </div>
+                  <button className="mode-card-btn" onClick={(e) => { e.stopPropagation(); setAppMode('similar'); }}>
+                    <Layers className="w-4 h-4" />
+                    Bắt đầu
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Card 3: Sinh 3 đề biến thể — PURPLE */}
+                <div className="mode-card mode-card-purple card-stagger-3" onClick={() => setAppMode('variants')}>
+                  <div className="particle" style={{ width: 8, height: 8, background: '#8b5cf6', top: '10%', right: '15%', animationDelay: '1s' }} />
+                  <div className="particle" style={{ width: 6, height: 6, background: '#7c3aed', bottom: '20%', left: '10%', animationDelay: '2.5s' }} />
+                  <div className="mode-card-icon">
+                    <Shuffle className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-xl font-extrabold text-purple-900 mb-2">Sinh 3 đề biến thể</h3>
+                  <p className="text-sm text-purple-700/70 mb-5 leading-relaxed">
+                    Upload 1 đề gốc → AI tự động sinh 3 đề khác nhau kèm đáp án chi tiết
+                  </p>
+                  <div className="space-y-1.5 mb-6">
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#7c3aed' }} /><span>3 đề biến thể từ 1 gốc</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#7c3aed' }} /><span>Streaming thời gian thực</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#7c3aed' }} /><span>Đáp án chi tiết cho câu khó</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#7c3aed' }} /><span>Xuất 1 file Word gộp 3 đề</span></div>
+                  </div>
+                  <button className="mode-card-btn" onClick={(e) => { e.stopPropagation(); setAppMode('variants'); }}>
+                    <Sparkles className="w-4 h-4" />
+                    Bắt đầu
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ===== MODE: CV 7991 (Pipeline gốc) ===== */}
         {appMode === 'cv7991' && (
           <>
