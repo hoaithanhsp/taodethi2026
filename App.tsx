@@ -4,12 +4,11 @@ import { AppStep, InputData, GenerationState, Lesson, Chapter, QuestionConfig, E
 import StepIndicator from './components/StepIndicator';
 import Button from './components/Button';
 import MarkdownView from './components/MarkdownView';
-import { LoginModal, getAuthState, clearAuth, markTrialUsed, isTrialUsed, AuthState } from './components/LoginModal';
-import { Account } from './data/accounts';
+
 import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel } from './services/geminiService';
 import { parseDocxWithMath } from './services/docxMathParser';
 import { AVAILABLE_MODELS } from './constants';
-import { ArrowRight, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, LogOut } from 'lucide-react';
+import { ArrowRight, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen } from 'lucide-react';
 
 const App: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<AppStep>(AppStep.INPUT);
@@ -41,6 +40,12 @@ const App: React.FC = () => {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
     localStorage.setItem('examcraft_dark_mode', String(darkMode));
   }, [darkMode]);
+
+  // Xóa dữ liệu auth/trial cũ — app giờ miễn phí hoàn toàn
+  useEffect(() => {
+    localStorage.removeItem('examcraft_auth');
+    localStorage.removeItem('examcraft_trial_used');
+  }, []);
 
   // -- Selected Model State --
   const [selectedModel, setSelectedModelState] = useState(getSelectedModel() || AVAILABLE_MODELS[0].id);
@@ -89,11 +94,7 @@ const App: React.FC = () => {
   const [showApiKeyModal, setShowApiKeyModal] = useState<boolean>(!getApiKey());
   const [tempApiKey, setTempApiKey] = useState<string>('');
 
-  // -- Authentication State --
-  const [authState, setAuthState] = useState<AuthState>(() => getAuthState());
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  // Đếm số lần tạo đề thành công trong phiên (để quản lý trial)
-  const examGenerationCountRef = useRef<number>(0);
+
 
   // --- API Key Handlers ---
   const handleSaveApiKey = () => {
@@ -294,11 +295,7 @@ const App: React.FC = () => {
       return;
     }
 
-    // === KIỂM TRA ĐĂNG NHẬP / LƯỢT DÙNG THỬ ===
-    if (!authState.isAuthenticated && isTrialUsed()) {
-      setIsLoginModalOpen(true);
-      return;
-    }
+
 
     setIsComboProcessing(true);
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
@@ -412,16 +409,7 @@ const App: React.FC = () => {
   // -- Generation Handlers --
 
   const handleGenerateMatrix = async () => {
-    // === KIỂM TRA ĐĂNG NHẬP / LƯỢT DÙNG THỬ ===
-    if (!authState.isAuthenticated) {
-      // Chưa đăng nhập → kiểm tra đã hết lượt dùng thử chưa
-      if (isTrialUsed()) {
-        // Đã dùng thử → yêu cầu đăng nhập
-        setIsLoginModalOpen(true);
-        return;
-      }
-      // Chưa dùng thử → cho phép dùng 1 lượt (sẽ mark sau khi hoàn thành)
-    }
+
 
     if (selectedLessonIds.size === 0) {
       alert("Vui lòng chọn ít nhất 1 bài học/chủ đề!");
@@ -454,11 +442,7 @@ const App: React.FC = () => {
   };
 
   const handleGenerateExam = async () => {
-    // === KIỂM TRA ĐĂNG NHẬP / LƯỢT DÙNG THỬ ===
-    if (!authState.isAuthenticated && isTrialUsed()) {
-      setIsLoginModalOpen(true);
-      return;
-    }
+
 
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
@@ -510,12 +494,7 @@ const App: React.FC = () => {
       setCurrentStep(AppStep.EXAM);
       setCompletedSteps(Math.max(completedSteps, 3));
 
-      // === ĐÁNH DẤU ĐÃ DÙNG THỬ (nếu chưa đăng nhập) ===
-      if (!authState.isAuthenticated) {
-        markTrialUsed();
-        setAuthState(prev => ({ ...prev, trialUsed: true }));
-      }
-      examGenerationCountRef.current += 1;
+
     } catch (err: any) {
       setGenState(prev => ({ ...prev, isLoading: false, error: err.message }));
     }
@@ -1216,15 +1195,7 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen w-full flex flex-col bg-app-gradient font-sans text-black overflow-hidden">
-      {/* Login Modal */}
-      <LoginModal
-        isOpen={isLoginModalOpen}
-        onClose={() => setIsLoginModalOpen(false)}
-        onLoginSuccess={(user: Account) => {
-          setAuthState({ isAuthenticated: true, user, trialUsed: true });
-          setIsLoginModalOpen(false);
-        }}
-      />
+
 
       {/* Settings Modal */}
       {showApiKeyModal && (
@@ -1317,36 +1288,7 @@ const App: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Trạng thái đăng nhập */}
-            {authState.isAuthenticated && authState.user ? (
-              <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-full">
-                <span className="w-2 h-2 bg-emerald-500 rounded-full" style={{ animation: 'pulse 2s infinite' }}></span>
-                <span className="text-xs font-bold text-emerald-700">{authState.user.name}</span>
-                <button
-                  onClick={() => { clearAuth(); setAuthState({ isAuthenticated: false, user: null, trialUsed: true }); }}
-                  className="text-red-400 hover:text-red-600 ml-1 transition-colors"
-                  title="Đăng xuất"
-                  style={{ display: 'flex', alignItems: 'center' }}
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setIsLoginModalOpen(true)}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all"
-                style={{
-                  background: 'linear-gradient(135deg, #0d9488, #10b981)',
-                  color: '#fff',
-                  boxShadow: '0 2px 8px rgba(13,148,136,0.25)',
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                Đăng nhập
-              </button>
-            )}
+
 
             {/* Dark Mode Toggle */}
             <button
