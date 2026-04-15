@@ -1,7 +1,8 @@
 ﻿
 import { GoogleGenAI } from "@google/genai";
 import { SYSTEM_INSTRUCTION, MODEL_NAME, FALLBACK_MODELS, GRADE_NO_ESSAY, getSubjectFootnotes } from '../constants';
-import { InputData, QuestionConfig, ExtractedQuestion } from '../types';
+import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate } from '../types';
+import { fetchTemplateFileBase64, buildMatrixPromptForCustomTemplate, buildSpecsPromptForCustomTemplate } from './matrixTemplates';
 
 // --- API Key Management (localStorage-based) ---
 const API_KEY_STORAGE_KEY = 'examcraft_api_key';
@@ -170,7 +171,7 @@ export const convertMatrixTextToHtml = async (
   images?: { base64: string; mimeType: string }[]
 ): Promise<string> => {
   const hasImages = images && images.length > 0;
-  
+
   const prompt = `
     Bạn là một chuyên gia chuyển đổi dữ liệu.
     Nội dung dưới đây là **MA TRẬN ĐỀ THI** được trích xuất từ file Word (.docx).
@@ -192,7 +193,7 @@ export const convertMatrixTextToHtml = async (
   `;
 
   const parts: any[] = [];
-  
+
   // Add images first (if any)
   if (hasImages) {
     const imagesToSend = images!.slice(0, 10);
@@ -205,7 +206,7 @@ export const convertMatrixTextToHtml = async (
       });
     }
   }
-  
+
   // Add text prompt
   parts.push({ text: prompt });
 
@@ -298,7 +299,7 @@ export const extractInfoFromDocument = async (file: File, selectedSubject?: stri
     const arrayBuffer = await file.arrayBuffer();
     const parsed = await parseDocxWithMath(arrayBuffer);
     console.log(`[ExtractInfo] DOCX parsed: ${parsed.text.length} chars, ${parsed.images.length} images, method=${parsed.method}`);
-    
+
     // Send images inline (if any)
     if (parsed.images.length > 0) {
       const imagesToSend = parsed.images.slice(0, 10);
@@ -306,7 +307,7 @@ export const extractInfoFromDocument = async (file: File, selectedSubject?: stri
         parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
       }
     }
-    
+
     // Send text prompt with DOCX content appended
     parts.push({ text: prompt + `\n\n**NỘI DUNG FILE DOCX:**\n${parsed.text.substring(0, 25000)}` });
   } else {
@@ -343,7 +344,8 @@ export const extractInfoFromDocument = async (file: File, selectedSubject?: stri
 
 export const generateStep1Matrix = async (
   data: InputData,
-  selectedLessonIds: Set<string>
+  selectedLessonIds: Set<string>,
+  template: MatrixTemplate = 'template1'
 ): Promise<string> => {
 
   const selectedChapters: any[] = [];
@@ -498,6 +500,39 @@ export const generateStep1Matrix = async (
   Nếu bất kỳ số nào KHAI BÁO TRONG BẢNG TRÊN không khớp → SỬA LẠI ma trận cho đúng trước khi trả kết quả.
   `;
 
+  // --- TEMPLATE 2 or 3: Use custom prompt + template file ---
+  if (template !== 'template1') {
+    const customPrompt = buildMatrixPromptForCustomTemplate(
+      template, data, selectedChapters, totalSelectedPeriods, config
+    );
+    const templateFile = await fetchTemplateFileBase64(template);
+
+    return callWithFallback(async (ai, model) => {
+      const parts: any[] = [];
+      if (templateFile) {
+        parts.push({
+          inlineData: {
+            mimeType: templateFile.mimeType,
+            data: templateFile.base64,
+          }
+        });
+      }
+      parts.push({ text: customPrompt });
+
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts }],
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION,
+          temperature: 0.1,
+        },
+      });
+      const text = response.text || "Lỗi tạo ma trận.";
+      return text.replace(/```html/g, '').replace(/```/g, '');
+    });
+  }
+
+  // --- TEMPLATE 1: Original prompt (default) ---
   return callWithFallback(async (ai, model) => {
     const response = await ai.models.generateContent({
       model,
@@ -517,7 +552,8 @@ export const generateStep1Matrix = async (
 export const generateStep2Specs = async (
   matrixContent: string,
   data: InputData,
-  selectedLessonIds: Set<string>
+  selectedLessonIds: Set<string>,
+  template: MatrixTemplate = 'template1'
 ): Promise<string> => {
 
   const objectivesMap: string[] = [];
@@ -610,6 +646,39 @@ export const generateStep2Specs = async (
   .bold { font-weight: bold; }
   `;
 
+  // --- TEMPLATE 2 or 3: Use custom prompt + template file ---
+  if (template !== 'template1') {
+    const customPrompt = buildSpecsPromptForCustomTemplate(
+      template, matrixContent, data, selectedLessonIds, config
+    );
+    const templateFile = await fetchTemplateFileBase64(template);
+
+    return callWithFallback(async (ai, model) => {
+      const parts: any[] = [];
+      if (templateFile) {
+        parts.push({
+          inlineData: {
+            mimeType: templateFile.mimeType,
+            data: templateFile.base64,
+          }
+        });
+      }
+      parts.push({ text: customPrompt });
+
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts }],
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION,
+          temperature: 0.1,
+        },
+      });
+      const text = response.text || "Lỗi tạo đặc tả.";
+      return text.replace(/```html/g, '').replace(/```/g, '');
+    });
+  }
+
+  // --- TEMPLATE 1: Original prompt (default) ---
   return callWithFallback(async (ai, model) => {
     const response = await ai.models.generateContent({
       model,
@@ -991,13 +1060,13 @@ export const generateStep3Exam = async (
   return callWithFallback(async (ai, model) => {
     // Build content parts
     const parts: any[] = [];
-    
+
     // Add reference images first (if any) — Gemini can "see" these
     if (referenceImages && referenceImages.length > 0) {
       // Limit to max 15 images to avoid token overflow
       const imagesToSend = referenceImages.slice(0, 15);
       console.log(`[ExamCraft] Sending ${imagesToSend.length} reference images to Gemini`);
-      
+
       for (const img of imagesToSend) {
         parts.push({
           inlineData: {
@@ -1007,7 +1076,7 @@ export const generateStep3Exam = async (
         });
       }
     }
-    
+
     // Add text prompt
     parts.push({ text: prompt });
 

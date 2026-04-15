@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion } from './types';
+import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion, MatrixTemplate } from './types';
 import StepIndicator from './components/StepIndicator';
 import Button from './components/Button';
 import MarkdownView from './components/MarkdownView';
@@ -10,6 +10,7 @@ import VariantsExamPage from './components/VariantsExamPage';
 import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel } from './services/geminiService';
 import { parseDocxWithMath } from './services/docxMathParser';
 import { AVAILABLE_MODELS } from './constants';
+import { MATRIX_TEMPLATES } from './services/matrixTemplates';
 import { validateAccount, Account } from './data/accounts';
 import { ArrowRight, ArrowLeft, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, Lock, User, Gift, Phone, Shield, Copy, Shuffle, Sparkles, Layers, Zap } from 'lucide-react';
 
@@ -87,6 +88,7 @@ const App: React.FC = () => {
   const [isAnalyzingFile, setIsAnalyzingFile] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [isCustomSubject, setIsCustomSubject] = useState(false);
+  const [matrixTemplate, setMatrixTemplate] = useState<MatrixTemplate>('template1');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const matrixUploadRef = useRef<HTMLInputElement>(null); // Ref for Step 2 upload
   const matrixDirectUploadRef = useRef<HTMLInputElement>(null); // Ref for Step 1 direct upload
@@ -288,7 +290,7 @@ const App: React.FC = () => {
           const arrayBuffer = await file.arrayBuffer();
           const parsed = await parseDocxWithMath(arrayBuffer);
           console.log(`[MatrixUpload] DOCX parsed: ${parsed.text.length} chars, ${parsed.images.length} images, method=${parsed.method}`);
-          
+
           // Send extracted text + images to AI for conversion to HTML table
           content = await convertMatrixTextToHtml(parsed.text, parsed.images);
         } catch (docxErr: any) {
@@ -479,7 +481,7 @@ const App: React.FC = () => {
 
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
-      const matrix = await generateStep1Matrix(inputData, selectedLessonIds);
+      const matrix = await generateStep1Matrix(inputData, selectedLessonIds, matrixTemplate);
       // Sync essay config: nếu matrix sinh ra không có tự luận, reset essay = 0
       syncEssayConfigFromMatrix(matrix);
       setGenState(prev => ({ ...prev, matrix, isLoading: false }));
@@ -494,7 +496,7 @@ const App: React.FC = () => {
     if (!checkAuthOrTrial()) return;
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
-      const specs = await generateStep2Specs(genState.matrix, inputData, selectedLessonIds);
+      const specs = await generateStep2Specs(genState.matrix, inputData, selectedLessonIds, matrixTemplate);
       setGenState(prev => ({ ...prev, specs, isLoading: false }));
       setCurrentStep(AppStep.SPECS);
       setCompletedSteps(Math.max(completedSteps, 2));
@@ -513,7 +515,7 @@ const App: React.FC = () => {
       let finalQuestionConfig = { ...inputData.questionConfig };
       const matrixHasEssay = detectEssayInHtml(genState.matrix);
       const specsHasEssay = detectEssayInHtml(genState.specs);
-      
+
       if (!matrixHasEssay && !specsHasEssay) {
         console.log('[ExamCraft] DOUBLE-CHECK: Ma trận + Đặc tả đều KHÔNG có tự luận → force essay = 0');
         finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
@@ -572,7 +574,7 @@ const App: React.FC = () => {
     try {
       const arrayBuffer = await file.arrayBuffer();
       const result = await parseDocxWithMath(arrayBuffer);
-      
+
       setReferenceDoc({
         text: result.text,
         images: result.images,
@@ -580,7 +582,7 @@ const App: React.FC = () => {
         method: result.method,
         wmfCount: result.wmfCount,
       });
-      
+
       console.log(`[Reference] Parsed: ${result.text.length} chars, ${result.images.length} images, method=${result.method}, wmf=${result.wmfCount}`);
 
       // Auto-trigger AI extraction if specs are available
@@ -743,15 +745,13 @@ const App: React.FC = () => {
               <input type="file" ref={comboMatrixUploadRef} onChange={handleComboMatrixSelect} className="hidden" accept=".html,.txt,.pdf,.docx,.doc" />
               <button
                 onClick={() => comboMatrixUploadRef.current?.click()}
-                className={`flex items-center gap-3 p-3.5 rounded-xl border-2 border-dashed transition-all text-left ${
-                  comboMatrixFile
+                className={`flex items-center gap-3 p-3.5 rounded-xl border-2 border-dashed transition-all text-left ${comboMatrixFile
                     ? 'border-emerald-400 bg-emerald-50'
                     : 'border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/30'
-                }`}
+                  }`}
               >
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
-                  comboMatrixFile ? 'bg-emerald-100' : 'bg-slate-100'
-                }`}>
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${comboMatrixFile ? 'bg-emerald-100' : 'bg-slate-100'
+                  }`}>
                   {comboMatrixFile ? <Check className="w-5 h-5 text-emerald-600" /> : <FileUp className="w-5 h-5 text-slate-400" />}
                 </div>
                 <div className="min-w-0 flex-1">
@@ -766,15 +766,13 @@ const App: React.FC = () => {
               <input type="file" ref={comboSpecsUploadRef} onChange={handleComboSpecsSelect} className="hidden" accept=".html,.txt,.pdf,.docx,.doc" />
               <button
                 onClick={() => comboSpecsUploadRef.current?.click()}
-                className={`flex items-center gap-3 p-3.5 rounded-xl border-2 border-dashed transition-all text-left ${
-                  comboSpecsFile
+                className={`flex items-center gap-3 p-3.5 rounded-xl border-2 border-dashed transition-all text-left ${comboSpecsFile
                     ? 'border-emerald-400 bg-emerald-50'
                     : 'border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/30'
-                }`}
+                  }`}
               >
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
-                  comboSpecsFile ? 'bg-emerald-100' : 'bg-slate-100'
-                }`}>
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${comboSpecsFile ? 'bg-emerald-100' : 'bg-slate-100'
+                  }`}>
                   {comboSpecsFile ? <Check className="w-5 h-5 text-emerald-600" /> : <FileUp className="w-5 h-5 text-slate-400" />}
                 </div>
                 <div className="min-w-0 flex-1">
@@ -919,6 +917,44 @@ const App: React.FC = () => {
             )}
           </label>
           <p className="text-xs text-slate-500 mt-2 italic">📌 Hỗ trợ file <strong>.pdf</strong> và <strong>.docx</strong> (Word). Công thức toán MathType sẽ được tự động trích xuất.</p>
+        </div>
+      </div>
+
+      {/* === MATRIX TEMPLATE SELECTOR === */}
+      <div className="card-elevated p-6 sm:p-8 animate-fade-in-up" style={{ animationDelay: '0.05s' }}>
+        <h2 className="text-xl font-bold text-teal-800 mb-4 flex items-center gap-2.5">
+          <span className="badge-section text-white w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold">✦</span>
+          Chọn mẫu Ma trận – Đặc tả
+        </h2>
+        <p className="text-sm text-slate-500 mb-4">Chọn mẫu format bảng Ma trận & Đặc tả mà AI sẽ sinh ra.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {MATRIX_TEMPLATES.map((tmpl) => (
+            <button
+              key={tmpl.id}
+              onClick={() => setMatrixTemplate(tmpl.id)}
+              className={`relative flex flex-col items-start p-4 rounded-xl border-2 transition-all text-left group ${matrixTemplate === tmpl.id
+                  ? 'border-teal-500 bg-teal-50 shadow-md shadow-teal-100'
+                  : 'border-slate-200 hover:border-teal-300 hover:bg-teal-50/30'
+                }`}
+            >
+              {/* Radio indicator */}
+              <div className="absolute top-3 right-3">
+                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${matrixTemplate === tmpl.id ? 'border-teal-500 bg-teal-500' : 'border-slate-300'
+                  }`}>
+                  {matrixTemplate === tmpl.id && (
+                    <div className="w-2 h-2 rounded-full bg-white" />
+                  )}
+                </div>
+              </div>
+              {/* Content */}
+              <span className="text-2xl mb-2">{tmpl.icon}</span>
+              <span className="text-sm font-bold text-teal-800 pr-6">{tmpl.name}</span>
+              <span className="text-xs text-slate-500 mt-1 leading-relaxed">{tmpl.description}</span>
+              {tmpl.badge && (
+                <span className="mt-2 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">{tmpl.badge}</span>
+              )}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -1136,8 +1172,8 @@ const App: React.FC = () => {
                     {referenceDoc.method === 'hybrid'
                       ? `Hybrid: ${referenceDoc.wmfCount} công thức MathType + ${referenceDoc.images.length} hình`
                       : referenceDoc.method === 'xml'
-                      ? `XML: ${referenceDoc.text.length} ký tự (OMML → LaTeX)`
-                      : `Mammoth: ${referenceDoc.images.length} hình ảnh`
+                        ? `XML: ${referenceDoc.text.length} ký tự (OMML → LaTeX)`
+                        : `Mammoth: ${referenceDoc.images.length} hình ảnh`
                     }
                     {' · '}{Math.round(referenceDoc.text.length / 1000)}K ký tự
                   </p>
@@ -1248,6 +1284,7 @@ const App: React.FC = () => {
       setCompletedSteps(0);
       setSelectedLessonIds(new Set());
       setExpandedChapterIds(new Set());
+      setMatrixTemplate('template1');
       setReferenceDoc(null);
       setExtractedQuestions([]);
       setComboMatrixFile(null);
@@ -1418,21 +1455,19 @@ const App: React.FC = () => {
                     <button
                       key={m.id}
                       onClick={() => { setSelectedModelState(m.id); setSelectedModel(m.id); }}
-                      className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all text-left ${
-                        selectedModel === m.id
+                      className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all text-left ${selectedModel === m.id
                           ? 'border-teal-500 bg-teal-50 shadow-sm'
                           : 'border-slate-200 hover:border-teal-300 hover:bg-teal-50/30'
-                      }`}
+                        }`}
                     >
                       <div>
                         <div className="font-semibold text-sm text-teal-800">{m.name}</div>
                         <div className="text-xs text-slate-500">{m.desc}</div>
                       </div>
-                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                        m.badge === 'Mặc định' ? 'bg-teal-100 text-teal-700' :
-                        m.badge === 'Pro' ? 'bg-amber-100 text-amber-700' :
-                        'bg-blue-100 text-blue-700'
-                      }`}>{m.badge}</span>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${m.badge === 'Mặc định' ? 'bg-teal-100 text-teal-700' :
+                          m.badge === 'Pro' ? 'bg-amber-100 text-amber-700' :
+                            'bg-blue-100 text-blue-700'
+                        }`}>{m.badge}</span>
                     </button>
                   ))}
                 </div>
@@ -1638,7 +1673,7 @@ const App: React.FC = () => {
               <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-red-100 border border-red-200 text-red-700 px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2 max-w-xl animate-fade-in-up">
                 <AlertCircle className="w-5 h-5 shrink-0" />
                 <span className="text-sm flex-1">{genState.error}</span>
-                <button onClick={() => setGenState(prev => ({...prev, error: null}))} className="shrink-0 hover:bg-red-200 rounded p-0.5 transition-colors">
+                <button onClick={() => setGenState(prev => ({ ...prev, error: null }))} className="shrink-0 hover:bg-red-200 rounded p-0.5 transition-colors">
                   <X className="w-4 h-4" />
                 </button>
               </div>

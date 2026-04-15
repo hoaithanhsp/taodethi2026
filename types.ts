@@ -44,9 +44,9 @@ export interface InputData {
   examType: string;
   topics: string; // Legacy field, kept for fallback
   additionalNotes: string;
-  
+
   // New structured data
-  chapters: Chapter[]; 
+  chapters: Chapter[];
   questionConfig: QuestionConfig;
 }
 
@@ -116,6 +116,11 @@ export interface ParsedImportQuestion {
   detectedTopic?: string;
   detectedLevel?: 'NB' | 'TH' | 'VD' | 'VDC';
 }
+
+// ============================================
+// MA TRẬN ĐẶC TẢ — Mẫu template
+// ============================================
+export type MatrixTemplate = 'template1' | 'template2' | 'template3';
 
 // ============================================
 // APP MODE — Chế độ ứng dụng
