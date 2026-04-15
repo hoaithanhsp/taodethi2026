@@ -746,8 +746,8 @@ const App: React.FC = () => {
               <button
                 onClick={() => comboMatrixUploadRef.current?.click()}
                 className={`flex items-center gap-3 p-3.5 rounded-xl border-2 border-dashed transition-all text-left ${comboMatrixFile
-                    ? 'border-emerald-400 bg-emerald-50'
-                    : 'border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/30'
+                  ? 'border-emerald-400 bg-emerald-50'
+                  : 'border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/30'
                   }`}
               >
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${comboMatrixFile ? 'bg-emerald-100' : 'bg-slate-100'
@@ -767,8 +767,8 @@ const App: React.FC = () => {
               <button
                 onClick={() => comboSpecsUploadRef.current?.click()}
                 className={`flex items-center gap-3 p-3.5 rounded-xl border-2 border-dashed transition-all text-left ${comboSpecsFile
-                    ? 'border-emerald-400 bg-emerald-50'
-                    : 'border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/30'
+                  ? 'border-emerald-400 bg-emerald-50'
+                  : 'border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/30'
                   }`}
               >
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${comboSpecsFile ? 'bg-emerald-100' : 'bg-slate-100'
@@ -933,8 +933,8 @@ const App: React.FC = () => {
               key={tmpl.id}
               onClick={() => setMatrixTemplate(tmpl.id)}
               className={`relative flex flex-col items-start p-4 rounded-xl border-2 transition-all text-left group ${matrixTemplate === tmpl.id
-                  ? 'border-teal-500 bg-teal-50 shadow-md shadow-teal-100'
-                  : 'border-slate-200 hover:border-teal-300 hover:bg-teal-50/30'
+                ? 'border-teal-500 bg-teal-50 shadow-md shadow-teal-100'
+                : 'border-slate-200 hover:border-teal-300 hover:bg-teal-50/30'
                 }`}
             >
               {/* Radio indicator */}
@@ -1456,8 +1456,8 @@ const App: React.FC = () => {
                       key={m.id}
                       onClick={() => { setSelectedModelState(m.id); setSelectedModel(m.id); }}
                       className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-all text-left ${selectedModel === m.id
-                          ? 'border-teal-500 bg-teal-50 shadow-sm'
-                          : 'border-slate-200 hover:border-teal-300 hover:bg-teal-50/30'
+                        ? 'border-teal-500 bg-teal-50 shadow-sm'
+                        : 'border-slate-200 hover:border-teal-300 hover:bg-teal-50/30'
                         }`}
                     >
                       <div>
@@ -1465,8 +1465,8 @@ const App: React.FC = () => {
                         <div className="text-xs text-slate-500">{m.desc}</div>
                       </div>
                       <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${m.badge === 'Mặc định' ? 'bg-teal-100 text-teal-700' :
-                          m.badge === 'Pro' ? 'bg-amber-100 text-amber-700' :
-                            'bg-blue-100 text-blue-700'
+                        m.badge === 'Pro' ? 'bg-amber-100 text-amber-700' :
+                          'bg-blue-100 text-blue-700'
                         }`}>{m.badge}</span>
                     </button>
                   ))}
@@ -1508,9 +1508,21 @@ const App: React.FC = () => {
                 <button onClick={handleLogout} className="text-xs text-slate-400 hover:text-red-500 transition-colors px-1.5 py-1 rounded" title="Đăng xuất">Đăng xuất</button>
               </div>
             ) : (
-              <span className="text-xs bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full font-medium flex items-center gap-1">
-                {trialUsed ? '⚠️ Hết lượt thử' : '🎁 Còn 1 lượt thử miễn phí'}
-              </span>
+              <button
+                onClick={() => setShowLoginModal(true)}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-medium transition-all cursor-pointer"
+                style={{
+                  background: trialUsed
+                    ? 'linear-gradient(135deg, #fef3c7, #fde68a)'
+                    : 'linear-gradient(135deg, #d1fae5, #a7f3d0)',
+                  color: trialUsed ? '#92400e' : '#065f46',
+                  border: trialUsed ? '1px solid #fcd34d' : '1px solid #6ee7b7',
+                }}
+                title="Nhấn để đăng nhập"
+              >
+                <LogIn className="w-3 h-3" />
+                {trialUsed ? 'Hết lượt thử · Đăng nhập' : '🎁 1 lượt thử miễn phí · Đăng nhập'}
+              </button>
             )}
           </div>
           <div className="flex items-center gap-2" style={{ marginLeft: '8px' }}>
@@ -1661,6 +1673,37 @@ const App: React.FC = () => {
                 </div>
 
               </div>
+
+              {/* Login Section on Home Page */}
+              {!isAuthenticated && (
+                <div className="mt-10 max-w-md w-full animate-fade-in-up" style={{ animationDelay: '0.4s' }}>
+                  <div className="card-elevated p-6 text-center">
+                    <div className="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-4" style={{ background: 'linear-gradient(135deg, #0d9488 0%, #0f766e 100%)' }}>
+                      <LogIn className="w-7 h-7 text-white" />
+                    </div>
+                    <h3 className="text-lg font-bold text-teal-800 mb-1">Đăng nhập tài khoản</h3>
+                    <p className="text-sm text-slate-500 mb-4">
+                      {trialUsed
+                        ? 'Bạn đã hết lượt dùng thử. Đăng nhập để sử dụng không giới hạn.'
+                        : 'Đăng nhập ngay hoặc dùng thử 1 lần miễn phí.'}
+                    </p>
+                    <button
+                      onClick={() => setShowLoginModal(true)}
+                      className="w-full py-3 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2 text-sm hover:shadow-lg"
+                      style={{
+                        background: 'linear-gradient(135deg, #0d9488 0%, #0f766e 100%)',
+                        boxShadow: '0 4px 14px rgba(13, 148, 136, 0.3)',
+                      }}
+                    >
+                      <LogIn className="w-4 h-4" />
+                      Đăng nhập
+                    </button>
+                    <p className="text-xs text-slate-400 mt-3">
+                      Liên hệ Zalo <a href="https://zalo.me/0348296773" target="_blank" rel="noopener noreferrer" className="text-blue-500 font-semibold hover:underline">0348296773</a> để mua tài khoản
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
