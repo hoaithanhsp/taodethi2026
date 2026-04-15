@@ -1,0 +1,180 @@
+import { GoogleGenAI, Type } from "@google/genai";
+import { SimilarExamResult, SimilarExamOptions } from "../types";
+import { getApiKey } from "./geminiService";
+import { FALLBACK_MODELS } from "../constants";
+
+const SIMILAR_SYSTEM_INSTRUCTION = `Bạn là trợ lý tạo đề thi THPT chuyên nghiệp. Nhiệm vụ của bạn là phân tích đề thi mẫu và sinh ra 1 đề thi tương tự.
+
+═══════════════════════════════════════
+CHỨC NĂNG CHÍNH
+═══════════════════════════════════════
+
+Khi nhận được file PDF/Ảnh đề thi mẫu, bạn sẽ:
+
+1. **PHÂN TÍCH ĐỀ MẪU**:
+   - Xác định số lượng câu hỏi.
+   - Phân loại dạng toán của từng câu.
+   - Xác định mức độ khó (Nhận biết/Thông hiểu/Vận dụng/Vận dụng cao).
+   - Ghi nhận cấu trúc câu hỏi, bối cảnh, thông số.
+
+2. **SINH 1 ĐỀ MỚI (2 BƯỚC)**:
+   - **Bước 1 (Đề thi)**: Sinh nội dung câu hỏi hoàn chỉnh, không kèm lời giải. Giữ nguyên cấu trúc, chỉ thay số liệu/bối cảnh.
+   - **Bước 2 (Lời giải)**: Sinh lời giải chi tiết cho đề thi vừa tạo ở Bước 1.
+
+═══════════════════════════════════════
+QUY TẮC SINH ĐỀ
+═══════════════════════════════════════
+
+### Nguyên tắc bất biến:
+✓ Giữ nguyên loại câu hỏi (trắc nghiệm/tự luận).
+✓ Giữ nguyên số điểm từng câu.
+✓ Giữ nguyên thứ tự chủ đề.
+✓ Giữ nguyên độ phức tạp tính toán.
+
+### Nguyên tắc thay đổi:
+✓ Thay số liệu: Đảm bảo đáp án là số đẹp, hợp lý.
+✓ Thay bối cảnh: Dùng tình huống thực tế khác nhưng logic tương đương.
+✓ Thay thông số hình học: Đảm bảo hình vẽ vẫn hợp lệ.
+✓ Thay tên riêng: Người, địa điểm, vật thể.
+
+═══════════════════════════════════════
+ĐỊNH DẠNG XUẤT RA
+═══════════════════════════════════════
+
+Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
+{
+  "analysis": "Nội dung phân tích chi tiết đề mẫu (Markdown string)",
+  "examContent": "Nội dung ĐỀ THI (Bước 1) - Chỉ chứa câu hỏi. Định dạng Markdown.",
+  "detailedSolution": "Nội dung LỜI GIẢI (Bước 2) - Chứa bảng đáp án và lời giải chi tiết. Định dạng Markdown."
+}
+
+## BƯỚC 1: ĐỀ THI (field 'examContent')
+Trình bày rõ ràng, phân chia các phần:
+**Câu 1:** ...
+**Câu 2:** ...
+
+## BƯỚC 2: HƯỚNG DẪN GIẢI CHI TIẾT (field 'detailedSolution')
+
+#### I. BẢNG ĐÁP ÁN NHANH (BẮT BUỘC CÓ)
+**1. Trắc nghiệm nhiều phương án:**
+Câu 1: A | Câu 2: B | Câu 3: C | ...
+
+**2. Trắc nghiệm Đúng/Sai:**
+Câu ...: a) Đ; b) S; c) Đ; d) S
+
+**3. Trả lời ngắn:**
+Câu ...: Đáp số là ...
+
+#### II. LỜI GIẢI CHI TIẾT (BẮT BUỘC GIẢI TẤT CẢ CÁC CÂU)
+
+## Quy tắc Markdown:
+- Công thức: Inline: $x^2 + y^2 = r^2$ | Display: $$ \\\\int_{a}^{b} f(x)dx $$
+- Hình vẽ TikZ: Xuất dạng mã TikZ trong block \`\`\`latex ... \`\`\`
+`;
+
+
+export const generateSimilarExam = async (
+  base64Data: string,
+  mimeType: string,
+  options?: SimilarExamOptions,
+  preferredModel?: string
+): Promise<SimilarExamResult> => {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    throw new Error("Vui lòng nhập API Key trong phần Cài đặt");
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+  let lastError: any = null;
+
+  // Build custom instructions based on options
+  let customInstructions = "";
+  if (options) {
+    if (options.diagramMode === 'detailed') {
+      customInstructions += `\n\n### YÊU CẦU NÂNG CAO VỀ HÌNH VẼ (High Detail):
+- Ưu tiên sử dụng thư viện TikZ chuyên sâu.
+- Với hình không gian: Vẽ chính xác tỉ lệ, nét đứt/liền chuẩn xác.
+- Với đồ thị: Hiển thị đầy đủ tiệm cận, bảng biến thiên, điểm cực trị.`;
+    } else {
+      customInstructions += `\n\n### YÊU CẦU VỀ HÌNH VẼ (Standard):
+- Sử dụng TikZ cơ bản, tối ưu tốc độ.`;
+    }
+
+    if (options.solutionMode === 'concise') {
+      customInstructions += `\n\n### YÊU CẦU VỀ LỜI GIẢI (Concise Mode):
+- TRẢ LỜI NGẮN GỌN. Tập trung vào đáp số và 1-2 bước biến đổi chốt.`;
+    } else if (options.solutionMode === 'very_detailed') {
+      customInstructions += `\n\n### YÊU CẦU VỀ LỜI GIẢI (Deep Dive Mode):
+- GIẢI CỰC KỲ CHI TIẾT. Mỗi bài gồm: Phân tích đề → Chiến lược → Lời giải → Sai lầm thường gặp.`;
+    } else {
+      customInstructions += `\n\n### YÊU CẦU VỀ LỜI GIẢI (Standard Mode):
+- Lời giải chi tiết, đầy đủ các bước, trình bày sư phạm, dễ hiểu.`;
+    }
+  }
+
+  const finalSystemInstruction = SIMILAR_SYSTEM_INSTRUCTION + customInstructions;
+
+  // Model priority
+  let candidateModels = [...FALLBACK_MODELS];
+  if (preferredModel && FALLBACK_MODELS.includes(preferredModel)) {
+    candidateModels = [preferredModel, ...FALLBACK_MODELS.filter(m => m !== preferredModel)];
+  }
+
+  for (const modelName of candidateModels) {
+    try {
+      console.log(`[SimilarExam] Trying model: ${modelName}`);
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: {
+          role: 'user',
+          parts: [
+            {
+              inlineData: {
+                mimeType: mimeType,
+                data: base64Data
+              }
+            },
+            {
+              text: "Hãy phân tích đề thi này và tạo ra 1 đề thi tương tự kèm lời giải chi tiết theo hướng dẫn hệ thống."
+            }
+          ]
+        },
+        config: {
+          systemInstruction: finalSystemInstruction,
+          temperature: 0.5,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              analysis: {
+                type: Type.STRING,
+                description: "Phân tích chi tiết cấu trúc, ma trận đề thi mẫu."
+              },
+              examContent: {
+                type: Type.STRING,
+                description: "Nội dung ĐỀ THI (Bước 1) - Chỉ chứa câu hỏi."
+              },
+              detailedSolution: {
+                type: Type.STRING,
+                description: "Nội dung LỜI GIẢI (Bước 2) - Chứa bảng đáp án và lời giải chi tiết."
+              }
+            },
+            required: ["analysis", "examContent", "detailedSolution"]
+          }
+        }
+      });
+
+      const text = response.text;
+      if (!text) throw new Error("No response from AI");
+
+      const result = JSON.parse(text) as SimilarExamResult;
+      return result;
+
+    } catch (error) {
+      console.warn(`[SimilarExam] Model ${modelName} failed:`, error);
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("Tất cả model đều thất bại.");
+};

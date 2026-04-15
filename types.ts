@@ -116,3 +116,49 @@ export interface ParsedImportQuestion {
   detectedTopic?: string;
   detectedLevel?: 'NB' | 'TH' | 'VD' | 'VDC';
 }
+
+// ============================================
+// APP MODE — Chế độ ứng dụng
+// ============================================
+export type AppMode = 'cv7991' | 'similar' | 'variants';
+
+// ============================================
+// TẠO ĐỀ TƯƠNG TỰ — Types
+// ============================================
+export interface SimilarExamFileData {
+  base64: string;
+  mimeType: string;
+  name: string;
+}
+
+export interface SimilarExamResult {
+  analysis: string;
+  examContent: string;
+  detailedSolution: string;
+}
+
+export type DiagramMode = 'standard' | 'detailed';
+export type SolutionMode = 'concise' | 'detailed' | 'very_detailed';
+
+export interface SimilarExamOptions {
+  diagramMode: DiagramMode;
+  solutionMode: SolutionMode;
+}
+
+// ============================================
+// SINH 3 ĐỀ BIẾN THỂ — Types
+// ============================================
+export interface VariantFileData {
+  name: string;
+  type: string;
+  data: string; // Base64 string
+}
+
+export enum VariantState {
+  IDLE = 0,
+  PROCESSING_STEP_1 = 1,
+  PROCESSING_STEP_2 = 2,
+  PROCESSING_STEP_3 = 3,
+  COMPLETE = 4,
+  ERROR = 5,
+}

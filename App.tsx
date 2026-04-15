@@ -1,19 +1,30 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { AppStep, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion } from './types';
+import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion } from './types';
 import StepIndicator from './components/StepIndicator';
 import Button from './components/Button';
 import MarkdownView from './components/MarkdownView';
+import SimilarExamPage from './components/SimilarExamPage';
+import VariantsExamPage from './components/VariantsExamPage';
 
 import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel } from './services/geminiService';
 import { parseDocxWithMath } from './services/docxMathParser';
 import { AVAILABLE_MODELS } from './constants';
 import { validateAccount, Account } from './data/accounts';
-import { ArrowRight, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, Lock, User, Gift, Phone, Shield } from 'lucide-react';
+import { ArrowRight, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, Lock, User, Gift, Phone, Shield, Copy, Shuffle } from 'lucide-react';
 
 const App: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<AppStep>(AppStep.INPUT);
   const [completedSteps, setCompletedSteps] = useState<number>(0);
+
+  // -- App Mode State --
+  const [appMode, setAppMode] = useState<AppMode>(() => {
+    return (localStorage.getItem('examcraft_app_mode') as AppMode) || 'cv7991';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('examcraft_app_mode', appMode);
+  }, [appMode]);
 
   // -- Data State --
   const [inputData, setInputData] = useState<InputData>({
@@ -1493,66 +1504,116 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Progress */}
-      <div className="shrink-0">
-        <StepIndicator currentStep={currentStep} setStep={setCurrentStep} completedSteps={completedSteps} />
+      {/* ===== MODE SELECTOR ===== */}
+      <div className="shrink-0 border-b border-teal-100 bg-white/90 backdrop-blur-sm">
+        <div className="max-w-[1600px] mx-auto px-4">
+          <nav className="flex items-center gap-1 py-1.5 overflow-x-auto">
+            {[
+              { id: 'cv7991' as AppMode, label: 'Tạo đề theo CV 7991', icon: <FileText className="w-4 h-4" />, desc: 'Pipeline 4 bước' },
+              { id: 'similar' as AppMode, label: 'Tạo đề tương tự', icon: <Copy className="w-4 h-4" />, desc: 'Từ đề mẫu' },
+              { id: 'variants' as AppMode, label: 'Sinh 3 đề biến thể', icon: <Shuffle className="w-4 h-4" />, desc: '3 đề từ 1 gốc' },
+            ].map((mode) => (
+              <button
+                key={mode.id}
+                onClick={() => setAppMode(mode.id)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+                  appMode === mode.id
+                    ? 'bg-teal-600 text-white shadow-md shadow-teal-600/20'
+                    : 'text-slate-600 hover:bg-teal-50 hover:text-teal-700'
+                }`}
+              >
+                {mode.icon}
+                <span>{mode.label}</span>
+                <span className={`mode-desc-badge text-[10px] px-1.5 py-0.5 rounded-full ${
+                  appMode === mode.id ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+                }`}>{mode.desc}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
       </div>
+
+      {/* Progress — chỉ hiển thị cho mode CV 7991 */}
+      {appMode === 'cv7991' && (
+        <div className="shrink-0">
+          <StepIndicator currentStep={currentStep} setStep={setCurrentStep} completedSteps={completedSteps} />
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="flex-1 relative w-full overflow-hidden">
-        {/* Error Toast */}
-        {genState.error && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-red-100 border border-red-200 text-red-700 px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2 max-w-xl animate-fade-in-up">
-            <AlertCircle className="w-5 h-5 shrink-0" />
-            <span className="text-sm flex-1">{genState.error}</span>
-            <button onClick={() => setGenState(prev => ({...prev, error: null}))} className="shrink-0 hover:bg-red-200 rounded p-0.5 transition-colors">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+        {/* ===== MODE: CV 7991 (Pipeline gốc) ===== */}
+        {appMode === 'cv7991' && (
+          <>
+            {/* Error Toast */}
+            {genState.error && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-red-100 border border-red-200 text-red-700 px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2 max-w-xl animate-fade-in-up">
+                <AlertCircle className="w-5 h-5 shrink-0" />
+                <span className="text-sm flex-1">{genState.error}</span>
+                <button onClick={() => setGenState(prev => ({...prev, error: null}))} className="shrink-0 hover:bg-red-200 rounded p-0.5 transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {currentStep === AppStep.INPUT && (
+              <div className="absolute inset-0 overflow-y-auto p-4 sm:p-6">
+                {renderInputStep()}
+              </div>
+            )}
+
+            {currentStep === AppStep.MATRIX && (
+              <div className="absolute inset-0">
+                {renderContentStep(
+                  "Ma trận đề thi",
+                  genState.matrix,
+                  handleGenerateSpecs,
+                  "Tiếp theo: Bảng đặc tả",
+                  false,
+                  (val) => setGenState(prev => ({ ...prev, matrix: val }))
+                )}
+              </div>
+            )}
+
+            {currentStep === AppStep.SPECS && (
+              <div className="absolute inset-0">
+                {renderContentStep(
+                  "Bảng đặc tả",
+                  genState.specs,
+                  handleGenerateExam,
+                  "Tiếp theo: Đề thi",
+                  false,
+                  (val) => setGenState(prev => ({ ...prev, specs: val }))
+                )}
+              </div>
+            )}
+
+            {currentStep === AppStep.EXAM && (
+              <div className="absolute inset-0">
+                {renderContentStep(
+                  "Đề thi hoàn chỉnh",
+                  genState.exam,
+                  () => { },
+                  "Hoàn tất",
+                  true,
+                  (val) => setGenState(prev => ({ ...prev, exam: val }))
+                )}
+              </div>
+            )}
+          </>
         )}
 
-        {currentStep === AppStep.INPUT && (
+        {/* ===== MODE: TẠO ĐỀ TƯƠNG TỰ ===== */}
+        {appMode === 'similar' && (
           <div className="absolute inset-0 overflow-y-auto p-4 sm:p-6">
-            {renderInputStep()}
+            <SimilarExamPage checkAuth={checkAuthOrTrial} />
           </div>
         )}
 
-        {currentStep === AppStep.MATRIX && (
-          <div className="absolute inset-0">
-            {renderContentStep(
-              "Ma trận đề thi",
-              genState.matrix,
-              handleGenerateSpecs,
-              "Tiếp theo: Bảng đặc tả",
-              false,
-              (val) => setGenState(prev => ({ ...prev, matrix: val }))
-            )}
-          </div>
-        )}
-
-        {currentStep === AppStep.SPECS && (
-          <div className="absolute inset-0">
-            {renderContentStep(
-              "Bảng đặc tả",
-              genState.specs,
-              handleGenerateExam,
-              "Tiếp theo: Đề thi",
-              false,
-              (val) => setGenState(prev => ({ ...prev, specs: val }))
-            )}
-          </div>
-        )}
-
-        {currentStep === AppStep.EXAM && (
-          <div className="absolute inset-0">
-            {renderContentStep(
-              "Đề thi hoàn chỉnh",
-              genState.exam,
-              () => { },
-              "Hoàn tất",
-              true,
-              (val) => setGenState(prev => ({ ...prev, exam: val }))
-            )}
+        {/* ===== MODE: SINH 3 ĐỀ BIẾN THỂ ===== */}
+        {appMode === 'variants' && (
+          <div className="absolute inset-0 overflow-y-auto p-4 sm:p-6">
+            <VariantsExamPage checkAuth={checkAuthOrTrial} />
           </div>
         )}
       </main>
