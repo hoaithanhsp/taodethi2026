@@ -1472,7 +1472,7 @@ const App: React.FC = () => {
                     <Gift className="w-5 h-5 text-amber-600" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-amber-800">🎁 Tặng kèm App Tạo Đề Thi Toàn Năng!</p>
+                    <p className="text-sm font-bold text-amber-800">🎁 THAM KHẢO THÊM APP TẠO ĐỀ THI TOÀN NĂNG!</p>
                     <a href="https://taodethitoannang.vercel.app" target="_blank" rel="noopener noreferrer" className="text-xs text-amber-700 hover:underline font-medium flex items-center gap-1">
                       <ExternalLink className="w-3 h-3" /> taodethitoannang.vercel.app
                     </a>
