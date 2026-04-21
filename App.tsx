@@ -245,10 +245,21 @@ const App: React.FC = () => {
   const detectEssayInHtml = (html: string): boolean => {
     const lowerHtml = html.toLowerCase();
     // Check for explicit essay column headers in the matrix/specs table
+    // Mở rộng từ khóa để nhận diện chính xác hơn khi user upload file Ma trận/Đặc tả
     return (
       lowerHtml.includes('tự luận') ||
       lowerHtml.includes('tu luan') ||
-      lowerHtml.includes('essay')
+      lowerHtml.includes('essay') ||
+      lowerHtml.includes('phần iv') ||
+      lowerHtml.includes('phan iv') ||
+      lowerHtml.includes('phần 4') ||
+      /phần\s+iv/i.test(html) ||
+      />\s*iv\s*</i.test(html) ||
+      /part\s+iv/i.test(html) ||
+      lowerHtml.includes('câu tự luận') ||
+      lowerHtml.includes('dạng iv') ||
+      lowerHtml.includes('(iv)') ||
+      lowerHtml.includes('mục iv')
     );
   };
 
@@ -265,7 +276,25 @@ const App: React.FC = () => {
         }
       }));
     } else {
-      console.log('[ExamCraft] Ma trận CÓ tự luận → giữ nguyên essay config');
+      console.log('[ExamCraft] Ma trận CÓ tự luận → kiểm tra và set essay config nếu đang = 0');
+      // Khi dùng Lối tắt, người dùng không qua bước nhập questionConfig
+      // nên essay config có thể vẫn = {0,0,0,0} mặc dù ma trận CÓ tự luận
+      // → Tự động set giá trị mặc định hợp lý
+      setInputData(prev => {
+        const currentEssay = prev.questionConfig.essay;
+        const totalEssay = currentEssay.biet + currentEssay.hieu + currentEssay.van_dung + currentEssay.van_dung_cao;
+        if (totalEssay === 0) {
+          console.log('[ExamCraft] Essay config đang = 0 nhưng Ma trận CÓ tự luận → auto-set default essay config');
+          return {
+            ...prev,
+            questionConfig: {
+              ...prev.questionConfig,
+              essay: { biet: 0, hieu: 1, van_dung: 1, van_dung_cao: 0 },
+            }
+          };
+        }
+        return prev;
+      });
     }
   };
 
@@ -510,8 +539,8 @@ const App: React.FC = () => {
 
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
-      // Double-check: nếu cả ma trận VÀ đặc tả đều không nhắc "tự luận",
-      // thì force essay = 0 bất kể questionConfig hiện tại
+      // Double-check: CHỈ force essay = 0 khi CẢ ma trận VÀ đặc tả đều không nhắc "tự luận"
+      // Nếu ít nhất 1 trong 2 có tự luận → giữ essay config
       let finalQuestionConfig = { ...inputData.questionConfig };
       const matrixHasEssay = detectEssayInHtml(genState.matrix);
       const specsHasEssay = detectEssayInHtml(genState.specs);
@@ -519,9 +548,16 @@ const App: React.FC = () => {
       if (!matrixHasEssay && !specsHasEssay) {
         console.log('[ExamCraft] DOUBLE-CHECK: Ma trận + Đặc tả đều KHÔNG có tự luận → force essay = 0');
         finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
-      } else if (!matrixHasEssay) {
-        console.log('[ExamCraft] DOUBLE-CHECK: Ma trận KHÔNG có tự luận → force essay = 0');
-        finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
+      } else {
+        // Ít nhất 1 trong 2 có tự luận → giữ essay config
+        // Nếu essay config đang = 0 nhưng phát hiện có tự luận → auto-set
+        const totalEssay = finalQuestionConfig.essay.biet + finalQuestionConfig.essay.hieu + finalQuestionConfig.essay.van_dung + finalQuestionConfig.essay.van_dung_cao;
+        if (totalEssay === 0) {
+          console.log('[ExamCraft] DOUBLE-CHECK: Phát hiện tự luận trong Ma trận/Đặc tả nhưng essay config = 0 → auto-set default');
+          finalQuestionConfig.essay = { biet: 0, hieu: 1, van_dung: 1, van_dung_cao: 0 };
+        } else {
+          console.log(`[ExamCraft] DOUBLE-CHECK: Có tự luận (matrix=${matrixHasEssay}, specs=${specsHasEssay}) → giữ essay config`);
+        }
       }
 
       // Auto-extract questions from reference doc if not done yet
