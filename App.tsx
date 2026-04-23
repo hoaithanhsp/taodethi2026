@@ -1462,7 +1462,7 @@ const App: React.FC = () => {
                     <Shield className="w-5 h-5 text-emerald-600" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-teal-800">Phí: <span className="text-emerald-600">99.000đ</span> — Sử dụng không giới hạn thời gian</p>
+                    <p className="text-sm font-bold text-teal-800">Phí: <span className="text-emerald-600">199.000đ</span> — Sử dụng không giới hạn thời gian</p>
                     <p className="text-xs text-slate-500">Ủng hộ tác giả để duy trì và phát triển ứng dụng ❤️</p>
                   </div>
                 </div>
@@ -1472,7 +1472,7 @@ const App: React.FC = () => {
                     <Gift className="w-5 h-5 text-amber-600" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-amber-800">🎁 THAM KHẢO THÊM APP TẠO ĐỀ THI TOÀN NĂNG!</p>
+                    <p className="text-sm font-bold text-amber-800">🎁 TẶNG KÈM APP TẠO ĐỀ THI TOÀN NĂNG!</p>
                     <a href="https://taodethitoannang.vercel.app" target="_blank" rel="noopener noreferrer" className="text-xs text-amber-700 hover:underline font-medium flex items-center gap-1">
                       <ExternalLink className="w-3 h-3" /> taodethitoannang.vercel.app
                     </a>
