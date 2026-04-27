@@ -10,18 +10,22 @@ const md = new MarkdownIt({
 });
 
 /**
- * Render LaTeX math expressions ($...$, $$...$$) to KaTeX HTML
- * so they display as formatted math in Word documents.
+ * Render LaTeX math expressions ($...$, $$...$$) to MathML
+ * so they display as native math objects in Word documents.
+ * 
+ * NOTE: KaTeX `output: 'mathml'` generates standard MathML that
+ * Microsoft Word can render natively via its equation editor.
  */
-function renderLatexToHtml(text: string): string {
+function renderLatexToMathML(text: string): string {
   // First handle display math $$...$$
   let result = text.replace(/\$\$([\s\S]*?)\$\$/g, (_match, latex) => {
     try {
-      return katex.renderToString(latex.trim(), {
+      const mathml = katex.renderToString(latex.trim(), {
         throwOnError: false,
         displayMode: true,
-        output: 'html',
+        output: 'mathml',
       });
+      return `<div style="text-align:center;margin:8pt 0;">${mathml}</div>`;
     } catch {
       return `<i>${latex}</i>`;
     }
@@ -33,7 +37,7 @@ function renderLatexToHtml(text: string): string {
       return katex.renderToString(latex.trim(), {
         throwOnError: false,
         displayMode: false,
-        output: 'html',
+        output: 'mathml',
       });
     } catch {
       return `<i>${latex}</i>`;
@@ -44,13 +48,13 @@ function renderLatexToHtml(text: string): string {
 }
 
 export const exportToDoc = async (markdownContent: string, fileName: string) => {
-  // 1. Pre-process: render LaTeX in markdown before md.render
-  const processedMarkdown = renderLatexToHtml(markdownContent);
+  // 1. Pre-process: render LaTeX in markdown as MathML before md.render
+  const processedMarkdown = renderLatexToMathML(markdownContent);
 
   // 2. Render markdown to HTML
   const htmlBody = md.render(processedMarkdown);
 
-  // 3. Build full HTML with professional styling for Word
+  // 3. Build full HTML with professional styling for Word + MathML support
   const css = `
     <style>
       body { 
@@ -84,27 +88,27 @@ export const exportToDoc = async (markdownContent: string, fileName: string) => 
       strong { font-weight: bold; }
       em, i { font-style: italic; }
       
-      /* KaTeX in Word: keep inline, ensure readability */
-      .katex { 
-        font-family: 'Times New Roman', 'KaTeX_Main', serif; 
+      /* MathML styling */
+      math { 
+        font-family: 'Cambria Math', 'Times New Roman', serif;
         font-size: 13pt;
-      }
-      .katex-display { 
-        text-align: center; 
-        margin: 8pt 0; 
-      }
-      .katex .mord, .katex .mbin, .katex .mrel,
-      .katex .mop, .katex .mpunct, .katex .mopen, .katex .mclose {
-        font-family: 'Times New Roman', 'KaTeX_Main', serif;
       }
     </style>
   `;
 
   const fullHtml = `
     <!DOCTYPE html>
-    <html lang="vi">
+    <html xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"
+          xmlns:o="urn:schemas-microsoft-com:office:office"
+          xmlns:w="urn:schemas-microsoft-com:office:word"
+          lang="vi">
       <head>
         <meta charset="utf-8">
+        <xml>
+          <o:OfficeDocumentSettings>
+            <o:AllowPNG/>
+          </o:OfficeDocumentSettings>
+        </xml>
         ${css}
       </head>
       <body>
