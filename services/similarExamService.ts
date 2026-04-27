@@ -64,10 +64,18 @@ QUY TẮC CÔNG THỨC TOÁN HỌC (BẮT BUỘC)
 - Giới hạn: $\\lim_{x \\to 0} f(x)$
 - Tổng: $\\sum_{i=1}^{n} a_i$
 - Lũy thừa: $x^2$, chỉ số: $a_n$
-- Lượng giác: $\\sin x$, $\\cos x$, $\\tan x$
+- Lượng giác: $\\sin x$, $\\cos x$, $\\tan x$, $\\cot x$
 - Logarit: $\\log_a x$, $\\ln x$
 - Vector: $\\vec{a}$, tập hợp: $\\mathbb{R}$
 - Dấu: $\\leq$, $\\geq$, $\\neq$, $\\infty$, $\\pm$, $\\cdot$
+
+### ⛔ LỖI NGHIÊM TRỌNG CẦN TRÁNH:
+- KHÔNG ĐƯỢC dùng \\text{sin}, \\text{cos}, \\text{tan}, \\text{cot}, \\text{log}, \\text{ln}
+  → PHẢI dùng \\sin, \\cos, \\tan, \\cot, \\log, \\ln (lệnh LaTeX chuẩn)
+- KHÔNG ĐƯỢC viết: $\\text{sin}x$ ❌ → PHẢI viết: $\\sin x$ ✅
+- KHÔNG ĐƯỢC viết: $\\text{cos}x$ ❌ → PHẢI viết: $\\cos x$ ✅
+- KHÔNG ĐƯỢC viết: $\\text{log}x$ ❌ → PHẢI viết: $\\log x$ ✅
+- KHÔNG ĐƯỢC dùng \\text{} để bọc tên hàm toán học. \\text{} chỉ dùng cho chữ tiếng Việt bình thường.
 
 ═══════════════════════════════════════
 ĐỊNH DẠNG XUẤT RA
