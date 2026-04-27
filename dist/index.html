@@ -316,6 +316,32 @@
       max-width: 100%;
       border-radius: 8px;
     }
+    /* Ordered list numbering */
+    .markdown-content ol {
+      list-style-type: decimal;
+    }
+    .markdown-content ol ol {
+      list-style-type: lower-alpha;
+    }
+    .markdown-content ul {
+      list-style-type: disc;
+    }
+    /* KaTeX display math */
+    .markdown-content .katex-display {
+      margin: 0.75em 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 4px 0;
+    }
+    .markdown-content .katex {
+      font-size: 1.1em;
+    }
+    /* Better question separation */
+    .markdown-content > p > strong:first-child {
+      display: inline-block;
+      margin-top: 0.5em;
+      color: #0f766e;
+    }
 
     /* === RESPONSIVE MODE SELECTOR (Fix #6) === */
     @media (max-width: 640px) {
@@ -541,8 +567,8 @@
   }
 }
 </script>
-  <script type="module" crossorigin src="/assets/index-kvdxWqlN.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-CPJsIJyf.css">
+  <script type="module" crossorigin src="/assets/index-C99ODAoR.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CcBxpqF9.css">
 </head>
 
 <body class="bg-white text-black h-screen">

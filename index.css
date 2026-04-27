@@ -5,6 +5,17 @@
   box-sizing: border-box;
 }
 
+/* === CRITICAL: KaTeX box-model fix === */
+/* Global * { box-sizing: border-box } phá layout KaTeX (phân số, căn, tích phân) */
+.katex,
+.katex * {
+  box-sizing: content-box !important;
+}
+.katex .base {
+  margin: 0;
+  padding: 0;
+}
+
 /* === Dark Mode CSS Variables === */
 :root {
   --bg-primary: #ffffff;

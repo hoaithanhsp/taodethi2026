@@ -3,6 +3,7 @@ import { Copy, RotateCcw, FileSpreadsheet, CheckCircle, Download, FileText, Slid
 import FileUploadZone from './FileUploadZone';
 import MarkdownRenderer from './MarkdownRenderer';
 import { generateSimilarExam } from '../services/similarExamService';
+import { exportToDoc } from '../services/exportUtils';
 import { SimilarExamResult, SimilarExamFileData, DiagramMode, SolutionMode } from '../types';
 import { getSelectedModel } from '../services/geminiService';
 
@@ -60,23 +61,15 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
     setErrorDetail('');
   };
 
-  const handleExportWord = () => {
+  const handleExportWord = async () => {
     const content = activeTab === 'analysis' ? result?.analysis :
       activeTab === 'examContent' ? result?.examContent : result?.detailedSolution;
     if (!content) return;
 
-    // Simple HTML export (same pattern as main app)
-    const header = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'><style>body{font-family:'Times New Roman',serif;font-size:13pt;line-height:1.5}table{border-collapse:collapse;width:100%}td,th{border:1px solid black;padding:5px}</style></head><body>`;
-    const footer = "</body></html>";
-    const blob = new Blob(['\ufeff', header + `<div style="white-space:pre-wrap">${content}</div>` + footer], { type: 'application/msword' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `De_tuong_tu_${fileData?.name || 'export'}.doc`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const tabLabel = activeTab === 'analysis' ? 'PhanTich' :
+      activeTab === 'examContent' ? 'DeThi' : 'LoiGiai';
+    const baseName = fileData?.name?.replace(/\.[^/.]+$/, '') || 'export';
+    await exportToDoc(content, `${tabLabel}_${baseName}`);
   };
 
   const handleCopy = () => {
@@ -247,11 +240,10 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-sm font-medium ${
-                  activeTab === tab.id
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-sm font-medium ${activeTab === tab.id
                     ? 'badge-section text-white shadow-md'
                     : 'text-slate-600 hover:bg-teal-50'
-                }`}
+                  }`}
               >
                 <tab.icon className="w-4 h-4" />
                 {tab.label}

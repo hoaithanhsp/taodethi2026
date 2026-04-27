@@ -38,6 +38,38 @@ QUY TẮC SINH ĐỀ
 ✓ Thay tên riêng: Người, địa điểm, vật thể.
 
 ═══════════════════════════════════════
+QUY TẮC CÔNG THỨC TOÁN HỌC (BẮT BUỘC)
+═══════════════════════════════════════
+
+⚠️ ĐÂY LÀ QUY TẮC QUAN TRỌNG NHẤT:
+- BẮT BUỘC bọc TẤT CẢ công thức toán trong $...$ (inline) hoặc $$...$$ (display/riêng dòng).
+- KHÔNG BAO GIỜ viết công thức toán dưới dạng text thuần (plain text).
+
+### Ví dụ ĐÚNG ✅:
+- "Cho hàm số $f(x) = 3x^2 + 2x$, tìm $f'(x)$"
+- "Tính $\\int_0^1 (2x+1) dx$"
+- "Phương trình $x^2 - 5x + 6 = 0$ có hai nghiệm $x_1 = 2$, $x_2 = 3$"
+- "Tập nghiệm của bất phương trình $\\frac{x-1}{x+2} \\geq 0$ là $(-\\infty; -2) \\cup [1; +\\infty)$"
+- Display math riêng dòng: $$V = \\pi \\int_a^b [f(x)]^2 dx$$
+
+### Ví dụ SAI ❌:
+- "Cho hàm số f(x) = 3x^2 + 2x" (thiếu $...$)
+- "Tính tích phân từ 0 đến 1 của (2x+1)dx" (không dùng LaTeX)
+- "extsinx + Cx3" (công thức bị vỡ)
+
+### Các lệnh LaTeX phổ biến:
+- Phân số: $\\frac{a}{b}$
+- Căn bậc hai: $\\sqrt{x}$, $\\sqrt[3]{x}$
+- Tích phân: $\\int_a^b f(x)dx$
+- Giới hạn: $\\lim_{x \\to 0} f(x)$
+- Tổng: $\\sum_{i=1}^{n} a_i$
+- Lũy thừa: $x^2$, chỉ số: $a_n$
+- Lượng giác: $\\sin x$, $\\cos x$, $\\tan x$
+- Logarit: $\\log_a x$, $\\ln x$
+- Vector: $\\vec{a}$, tập hợp: $\\mathbb{R}$
+- Dấu: $\\leq$, $\\geq$, $\\neq$, $\\infty$, $\\pm$, $\\cdot$
+
+═══════════════════════════════════════
 ĐỊNH DẠNG XUẤT RA
 ═══════════════════════════════════════
 
