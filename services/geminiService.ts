@@ -7,13 +7,102 @@ import { fetchTemplateHtml, buildMatrixPromptForCustomTemplate, buildSpecsPrompt
 // --- API Key Management (localStorage-based) ---
 const API_KEY_STORAGE_KEY = 'examcraft_api_key';
 const MODEL_STORAGE_KEY = 'examcraft_selected_model';
+const MODEL_ALIASES: Record<string, string> = {
+  'gemini-3-flash-preview': 'gemini-3.5-flash',
+  'gemini-3-pro-preview': 'gemini-3.1-pro-preview',
+};
+
+export const GOOGLE_AI_API_KEY_PATTERN = /^(?:AIzaSy|AQ)\S{8,}$/;
+
+export type GeminiApiErrorType =
+  | 'INVALID_API_KEY'
+  | 'QUOTA_EXCEEDED'
+  | 'MODEL_OVERLOADED'
+  | 'UNKNOWN';
+
+export const isValidGoogleAiApiKey = (key: string): boolean => {
+  return GOOGLE_AI_API_KEY_PATTERN.test(key.trim());
+};
+
+const normalizeGeminiModel = (model: string | null): string | null => {
+  if (!model) return null;
+  return MODEL_ALIASES[model] || model;
+};
+
+export const getGeminiModelsToTry = (preferredModel?: string | null): string[] => {
+  const primaryModel = normalizeGeminiModel(preferredModel || getSelectedModel()) || MODEL_NAME;
+  return Array.from(new Set([primaryModel, ...FALLBACK_MODELS]));
+};
+
+const getErrorText = (error: any): string => {
+  const message = error?.message || error?.toString?.() || '';
+  let serialized = '';
+  try {
+    serialized = JSON.stringify(error) || '';
+  } catch {
+    serialized = '';
+  }
+  return `${message} ${serialized}`.toLowerCase();
+};
+
+export const parseApiError = (error: any): GeminiApiErrorType => {
+  const text = getErrorText(error);
+  const status = String(error?.status || error?.code || '').toLowerCase();
+
+  if (
+    status === '401' ||
+    status === '403' ||
+    text.includes('api_key_invalid') ||
+    text.includes('api key not valid') ||
+    text.includes('invalid api key') ||
+    text.includes('permission_denied')
+  ) {
+    return 'INVALID_API_KEY';
+  }
+
+  if (
+    status === '429' ||
+    text.includes('resource_exhausted') ||
+    text.includes('quota') ||
+    text.includes('rate limit') ||
+    text.includes('too many requests')
+  ) {
+    return 'QUOTA_EXCEEDED';
+  }
+
+  if (
+    status === '503' ||
+    text.includes('unavailable') ||
+    text.includes('service unavailable') ||
+    text.includes('high demand') ||
+    text.includes('overloaded')
+  ) {
+    return 'MODEL_OVERLOADED';
+  }
+
+  return 'UNKNOWN';
+};
+
+export const getFriendlyGeminiErrorMessage = (error: any): string => {
+  const errorType = parseApiError(error);
+  if (errorType === 'INVALID_API_KEY') {
+    return 'API Key không hợp lệ hoặc chưa có quyền truy cập Gemini. Vui lòng kiểm tra lại key trong phần Cài đặt.';
+  }
+  if (errorType === 'QUOTA_EXCEEDED') {
+    return 'Hết hạn mức sử dụng hoặc đang bị giới hạn tốc độ. Vui lòng thử lại sau, giảm dung lượng file, hoặc đổi API Key.';
+  }
+  if (errorType === 'MODEL_OVERLOADED') {
+    return 'Model Gemini đang tạm quá tải. Ứng dụng đã thử các model dự phòng; vui lòng đợi 1-2 phút rồi thử lại hoặc chọn model nhẹ hơn.';
+  }
+  return `Lỗi API Gemini: ${error?.message || 'Không xác định'}`;
+};
 
 export const getApiKey = (): string | null => {
   return localStorage.getItem(API_KEY_STORAGE_KEY);
 };
 
 export const setApiKey = (key: string): void => {
-  localStorage.setItem(API_KEY_STORAGE_KEY, key);
+  localStorage.setItem(API_KEY_STORAGE_KEY, key.trim());
 };
 
 export const removeApiKey = (): void => {
@@ -21,11 +110,16 @@ export const removeApiKey = (): void => {
 };
 
 export const getSelectedModel = (): string | null => {
-  return localStorage.getItem(MODEL_STORAGE_KEY);
+  const storedModel = localStorage.getItem(MODEL_STORAGE_KEY);
+  const normalizedModel = normalizeGeminiModel(storedModel);
+  if (storedModel && normalizedModel !== storedModel) {
+    localStorage.setItem(MODEL_STORAGE_KEY, normalizedModel!);
+  }
+  return normalizedModel;
 };
 
 export const setSelectedModel = (model: string): void => {
-  localStorage.setItem(MODEL_STORAGE_KEY, model);
+  localStorage.setItem(MODEL_STORAGE_KEY, normalizeGeminiModel(model) || model);
 };
 
 const getAI = (): GoogleGenAI => {
@@ -38,19 +132,8 @@ const getAI = (): GoogleGenAI => {
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const isRetryableError = (err: any): boolean => {
-  const msg = (err.message || '').toLowerCase();
-  const status = err.status || err.code || 0;
-  return (
-    status === 503 ||
-    status === 429 ||
-    msg.includes('503') ||
-    msg.includes('unavailable') ||
-    msg.includes('overloaded') ||
-    msg.includes('high demand') ||
-    msg.includes('quota') ||
-    msg.includes('429') ||
-    msg.includes('resource_exhausted')
-  );
+  const errorType = parseApiError(err);
+  return errorType === 'MODEL_OVERLOADED' || errorType === 'QUOTA_EXCEEDED';
 };
 
 const callWithRetry = async <T>(
@@ -84,9 +167,7 @@ const callWithFallback = async (
   promptFn: (ai: GoogleGenAI, model: string) => Promise<string>
 ): Promise<string> => {
   const ai = getAI();
-  const userModel = getSelectedModel();
-  const primaryModel = userModel || MODEL_NAME;
-  const modelsToTry = [primaryModel, ...FALLBACK_MODELS.filter(m => m !== primaryModel)];
+  const modelsToTry = getGeminiModelsToTry();
   let lastError: any = null;
 
   for (const model of modelsToTry) {
@@ -99,22 +180,19 @@ const callWithFallback = async (
       );
     } catch (err: any) {
       lastError = err;
-      console.warn(`[ExamCraft] Model ${model} failed:`, err.message || err);
-      if (err.message?.includes('quota') || err.message?.includes('429') || err.status === 429) {
+      const errorType = parseApiError(err);
+      console.warn(`[ExamCraft] Model ${model} failed (${errorType}):`, err.message || err);
+      if (errorType === 'INVALID_API_KEY') {
+        break;
+      }
+      if (errorType === 'QUOTA_EXCEEDED') {
         console.warn(`[ExamCraft] Quota exceeded for ${model}, trying next model...`);
       }
       continue;
     }
   }
 
-  // All models failed
-  if (lastError?.message?.includes('quota') || lastError?.message?.includes('429')) {
-    throw new Error("Tất cả model đều hết quota. Vui lòng lấy API key của Gmail khác để dán vào dùng tiếp, hoặc chờ đến hôm sau.");
-  }
-  if (isRetryableError(lastError)) {
-    throw new Error("Hệ thống Gemini đang quá tải. Vui lòng đợi 1-2 phút rồi thử lại.");
-  }
-  throw new Error(`Lỗi API Gemini: ${lastError?.message || 'Không xác định'}`);
+  throw new Error(getFriendlyGeminiErrorMessage(lastError));
 };
 
 // --- File utilities ---
@@ -754,49 +832,36 @@ export const extractQuestionsFromReference = async (
 
   parts.push({ text: prompt });
 
-  const ai = getAI();
-  const userModel = getSelectedModel();
-  const primaryModel = userModel || MODEL_NAME;
-  const modelsToTry = [primaryModel, ...FALLBACK_MODELS.filter(m => m !== primaryModel)];
+  const resultText = await callWithFallback(async (ai, model) => {
+    console.log(`[ExamCraft] Extracting questions with model: ${model}`);
+    const response = await ai.models.generateContent({
+      model,
+      contents: [{ role: 'user', parts }],
+      config: {
+        responseMimeType: 'application/json',
+        temperature: 0.1,
+      },
+    });
+    return response.text || '[]';
+  });
 
-  for (const model of modelsToTry) {
-    try {
-      console.log(`[ExamCraft] Extracting questions with model: ${model}`);
-      const response = await ai.models.generateContent({
-        model,
-        contents: [{ role: 'user', parts }],
-        config: {
-          responseMimeType: 'application/json',
-          temperature: 0.1,
-        },
-      });
-
-      const resultText = response.text || '[]';
-      try {
-        let jsonStr = resultText;
-        if (jsonStr.includes('```')) {
-          jsonStr = jsonStr.replace(/```json\s*/g, '').replace(/```\s*/g, '');
-        }
-        const start = jsonStr.indexOf('[');
-        const end = jsonStr.lastIndexOf(']');
-        if (start !== -1 && end !== -1 && end >= start) {
-          jsonStr = jsonStr.substring(start, end + 1);
-        }
-        const questions: ExtractedQuestion[] = JSON.parse(jsonStr);
-        console.log(`[ExamCraft] Extracted ${questions.length} questions from reference`);
-        return questions;
-      } catch (e) {
-        console.error('[ExamCraft] Failed to parse extracted questions:', resultText.substring(0, 500));
-        return [];
-      }
-    } catch (err: any) {
-      console.warn(`[ExamCraft] Model ${model} failed for extraction:`, err.message);
-      continue;
+  try {
+    let jsonStr = resultText;
+    if (jsonStr.includes('```')) {
+      jsonStr = jsonStr.replace(/```json\s*/g, '').replace(/```\s*/g, '');
     }
+    const start = jsonStr.indexOf('[');
+    const end = jsonStr.lastIndexOf(']');
+    if (start !== -1 && end !== -1 && end >= start) {
+      jsonStr = jsonStr.substring(start, end + 1);
+    }
+    const questions: ExtractedQuestion[] = JSON.parse(jsonStr);
+    console.log(`[ExamCraft] Extracted ${questions.length} questions from reference`);
+    return questions;
+  } catch (e) {
+    console.error('[ExamCraft] Failed to parse extracted questions:', resultText.substring(0, 500));
+    return [];
   }
-
-  console.error('[ExamCraft] All models failed for question extraction');
-  return [];
 };
 
 export const generateStep3Exam = async (

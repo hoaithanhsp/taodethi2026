@@ -2,7 +2,7 @@
 
 
 > **Phiên bản cập nhật :** Tháng 3/2026\
-> **Áp dụng cho:** gemini-3-flash-preview | gemini-2.5-flash | gemini-2.5-flash-lite | gemini-2.5-pro\
+> **Áp dụng cho:** gemini-3.5-flash | gemini-2.5-flash | gemini-2.5-flash-lite | gemini-2.5-pro\
 > **Mục tiêu :** Tối ưu chi phí với bản trả phí, chọn đúng model cho từng tác vụ
 
 ---
@@ -13,7 +13,7 @@
 
 | Model | Context Window | Output Tokens | Đặc Điểm Chính | Use Case Phù Hợp |
 | --- | --- | --- | --- | --- |
-| **gemini-3-flash-preview** | 1,000,000 | 65,536 | Frontier-class, reasoning mạnh, visual/spatial tốt | Tác vụ phức tạp, cần reasoning sâu |
+| **gemini-3.5-flash** | 1,000,000 | 65,536 | Frontier-class, reasoning mạnh, visual/spatial tốt | Tác vụ phức tạp, cần reasoning sâu |
 | **gemini-2.5-flash** | 1,000,000 | 65,536 | Multimodal, low-latency, high-volume | Real-time, API integration, chat |
 | **gemini-2.5-flash-lite** | 128,000 | ~8,192 | Nhanh nhất, rẻ nhất, lightweight | Chat đơn giản, summarization nhỏ |
 | **gemini-2.5-pro** | 1,000,000 (test 2M) | 65,536 | Multimodal, complex reasoning, agentic coding | Tác vụ phức tạp, coding, analysis |
@@ -24,7 +24,7 @@
 
 | Model | Input (≤200K) | Input (>200K) | Output (≤200K) | Output (>200K) | Batch Input | Batch Output |
 | --- | --- | --- | --- | --- | --- | --- |
-| **gemini-3-flash-preview** | $0.50 | $0.50 | $3.00 | $3.00 | $0.25 | $1.50 |
+| **gemini-3.5-flash** | $0.50 | $0.50 | $3.00 | $3.00 | $0.25 | $1.50 |
 | **gemini-2.5-flash** | $0.30 | $0.30 | $2.50 | $2.50 | $0.15 | $1.25 |
 | **gemini-2.5-flash-lite** | ~$0.15* | ~$0.15* | ~$1.00* | ~$1.00* | ~$0.075* | ~$0.50* |
 | **gemini-2.5-pro** | $1.25 | $2.50 | $10.00 | $15.00 | $0.625 | $5.00 |
@@ -35,7 +35,7 @@
 
 | Model | Cache Storage (≤200K) | Cache Storage (>200K) | Cache Usage |
 | --- | --- | --- | --- |
-| gemini-3-flash-preview | $0.05/hour | $0.05/hour | $0.025/1M tokens |
+| gemini-3.5-flash | $0.05/hour | $0.05/hour | $0.025/1M tokens |
 | gemini-2.5-flash | $0.03/hour | $0.03/hour | $0.015/1M tokens |
 | gemini-2.5-pro | $0.125/hour | $0.25/hour | $0.0625/1M tokens |
 
@@ -48,7 +48,7 @@ Model                     Input Cost    Output Cost    Total/Request
 ─────────────────────────────────────────────────────────────────────
 gemini-2.5-flash-lite     $0.00030      $0.00150       $0.00180  ✅ Rẻ nhất
 gemini-2.5-flash          $0.00060      $0.00375       $0.00435  ⚖️ Cân bằng
-gemini-3-flash-preview    $0.00100      $0.00450       $0.00550  🚀 Hiệu năng cao
+gemini-3.5-flash          $0.00100      $0.00450       $0.00550  🚀 Hiệu năng cao
 gemini-2.5-pro            $0.00250      $0.01500       $0.01750  💎 Chất lượng cao nhất
 ```
 
@@ -58,7 +58,7 @@ gemini-2.5-pro            $0.00250      $0.01500       $0.01750  💎 Chất lư
 | --- | --- | --- |
 | gemini-2.5-flash-lite | $1.80 | ~$54 |
 | gemini-2.5-flash | $4.35 | ~$131 |
-| gemini-3-flash-preview | $5.50 | ~$165 |
+| gemini-3.5-flash | $5.50 | ~$165 |
 | gemini-2.5-pro | $17.50 | ~$525 |
 
 ---
@@ -84,7 +84,7 @@ function selectModel(task, complexity, requireReasoning) {
     if (task === 'coding' || task === 'analysis') {
       return 'gemini-2.5-pro';  // Tốt nhất cho coding
     }
-    return 'gemini-3-flash-preview';  // Hiệu năng frontier-class
+    return 'gemini-3.5-flash';  // Hiệu năng frontier-class
   }
   
   // Mặc định
@@ -99,12 +99,12 @@ function selectModel(task, complexity, requireReasoning) {
 | **Chatbot đơn giản** | gemini-2.5-flash-lite | Nhanh, rẻ, đủ cho Q&A cơ bản | ~90% |
 | **Tóm tắt văn bản ngắn** | gemini-2.5-flash-lite | Context 128K đủ dùng | ~90% |
 | **Tạo SKKN cơ bản** | gemini-2.5-flash | Cân bằng chi phí/chất lượng | ~75% |
-| **Phân tích dữ liệu** | gemini-3-flash-preview | Reasoning tốt, giá hợp lý | ~68% |
+| **Phân tích dữ liệu** | gemini-3.5-flash | Reasoning tốt, giá hợp lý | ~68% |
 | **Coding/Agentic tasks** | gemini-2.5-pro | Agentic coding tốt nhất | 0% (best choice) |
 | **Complex reasoning** | gemini-2.5-pro | Suy luận đa bước phức tạp | 0% (best choice) |
 | **Multimodal (ảnh + text)** | gemini-2.5-flash | Xử lý nhanh, giá tốt | ~75% |
 | **Real-time API** | gemini-2.5-flash | Low latency | ~75% |
-| **Research/Deep analysis** | gemini-3-flash-preview | Frontier performance | ~68% |
+| **Research/Deep analysis** | gemini-3.5-flash | Frontier performance | ~68% |
 
 ---
 
@@ -192,7 +192,7 @@ const cache = await genAI.caching.create({
 // Tiết kiệm: $0.30 - $0.03 = $0.27 cho 100 request
 ```
 
-### 3. Tối Ưu gemini-3-flash-preview (Hiệu Năng Cao)
+### 3. Tối Ưu gemini-3.5-flash (Hiệu Năng Cao)
 
 **Khi nào dùng :**
 
@@ -208,7 +208,7 @@ const cache = await genAI.caching.create({
 
 ```javascript
 const flash3Config = {
-  model: 'gemini-3-flash-preview',
+  model: 'gemini-3.5-flash',
   generationConfig: {
     maxOutputTokens: 4096,      // Cho phép output dài hơn
     temperature: 0.3,           // Giảm để tăng tính chính xác
@@ -408,14 +408,14 @@ class CostTracker {
     this.dailyStats = {
       'gemini-2.5-flash-lite': { requests: 0, inputTokens: 0, outputTokens: 0 },
       'gemini-2.5-flash': { requests: 0, inputTokens: 0, outputTokens: 0 },
-      'gemini-3-flash-preview': { requests: 0, inputTokens: 0, outputTokens: 0 },
+      'gemini-3.5-flash': { requests: 0, inputTokens: 0, outputTokens: 0 },
       'gemini-2.5-pro': { requests: 0, inputTokens: 0, outputTokens: 0 },
     };
     
     this.pricing = {
       'gemini-2.5-flash-lite': { input: 0.00000015, output: 0.000001 },
       'gemini-2.5-flash': { input: 0.00000030, output: 0.00000250 },
-      'gemini-3-flash-preview': { input: 0.00000050, output: 0.00000300 },
+      'gemini-3.5-flash': { input: 0.00000050, output: 0.00000300 },
       'gemini-2.5-pro': { input: 0.00000125, output: 0.00001000 },
     };
   }
@@ -583,4 +583,4 @@ async function budgetAlert(currentSpend, budgetLimit) {
 
 **Phiên bản :** 2.0 (Cập nhật tháng 3/2026)\
 **Tác giả:** YouMind AI Assistant\
-**Model hỗ trợ:** gemini-3-flash-preview | gemini-2.5-flash | gemini-2.5-flash-lite | gemini-2.5-pro
+**Model hỗ trợ:** gemini-3.5-flash | gemini-2.5-flash | gemini-2.5-flash-lite | gemini-2.5-pro

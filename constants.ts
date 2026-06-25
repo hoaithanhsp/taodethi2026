@@ -116,19 +116,21 @@ export const DEFAULT_QUESTION_CONFIG: Record<string, QuestionConfig> = {
 // Grade 12 does NOT allow essay questions
 export const GRADE_NO_ESSAY = ['12'];
 
-export const MODEL_NAME = 'gemini-2.5-flash';
+export const MODEL_NAME = 'gemini-3.5-flash';
 
 export const FALLBACK_MODELS = [
-   'gemini-2.5-flash',
-   'gemini-3-flash-preview',
-   'gemini-2.5-flash-lite',
-   'gemini-2.5-pro',
+  'gemini-3.5-flash',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-pro',
 ];
 
 export const AVAILABLE_MODELS = [
-  { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', desc: 'Frontier-class, reasoning mạnh', badge: 'Mặc định' },
-  { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro', desc: 'Chất lượng cao nhất, chậm hơn', badge: 'Pro' },
+  { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', desc: 'Stable, frontier reasoning, low latency', badge: 'Mặc định' },
+  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: 'Reasoning mạnh, phù hợp tác vụ khó', badge: 'Pro' },
+  { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', desc: 'Nhanh, tiết kiệm, fallback nhẹ', badge: 'Lite' },
   { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Ổn định, low-latency', badge: 'Stable' },
-  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', desc: 'Nhanh nhất, rẻ nhất', badge: 'Lite' },
+  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', desc: 'Nhanh và rẻ cho tác vụ nhẹ', badge: 'Lite' },
   { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', desc: 'Complex reasoning, analysis sâu', badge: 'Premium' },
 ];

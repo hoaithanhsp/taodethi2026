@@ -6,7 +6,7 @@ import MarkdownRenderer from './MarkdownRenderer';
 import { createVariantSession, generateVariantStep1, generateVariantNextStep, cloneVariantSession, VARIANT_MODELS } from '../services/variantsExamService';
 import { exportToDoc } from '../services/exportUtils';
 import { VariantFileData, VariantState } from '../types';
-import { getApiKey } from '../services/geminiService';
+import { getApiKey, getFriendlyGeminiErrorMessage, parseApiError } from '../services/geminiService';
 
 interface VariantsExamPageProps {
   checkAuth: () => boolean;
@@ -42,8 +42,13 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
         currentModelIndexRef.current = i;
         return;
       } catch (err: any) {
-        console.warn(`[Variants] Step '${stepName}' failed with ${VARIANT_MODELS[i].id}:`, err);
+        const errorType = parseApiError(err);
+        console.warn(`[Variants] Step '${stepName}' failed with ${VARIANT_MODELS[i].id} (${errorType}):`, err);
         lastError = err;
+
+        if (errorType === 'INVALID_API_KEY') {
+          break;
+        }
 
         if (i < VARIANT_MODELS.length - 1) {
           resetOutput();
@@ -55,7 +60,7 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
         }
       }
     }
-    throw lastError;
+    throw new Error(getFriendlyGeminiErrorMessage(lastError));
   };
 
   const runProcess = async () => {
@@ -127,9 +132,11 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
     else if (err instanceof Error) message = err.message;
     else if (err && typeof err === 'object') message = JSON.stringify(err);
 
-    if (message.includes("429") || message.includes("Quota exceeded") || message.includes("RESOURCE_EXHAUSTED")) {
+    if (message.includes("MODEL_OVERLOADED") || message.includes("503") || message.includes("UNAVAILABLE") || message.toLowerCase().includes("overloaded") || message.toLowerCase().includes("high demand") || message.includes("quá tải")) {
+      message = "Model Gemini đang tạm quá tải. Ứng dụng đã thử các model dự phòng; vui lòng đợi 1-2 phút rồi thử lại.";
+    } else if (message.includes("429") || message.includes("Quota exceeded") || message.includes("RESOURCE_EXHAUSTED")) {
       message = "Hết hạn mức sử dụng (Quota Exceeded). Vui lòng thử lại sau hoặc đổi API Key.";
-    } else if (message.includes("API key not valid")) {
+    } else if (message.includes("API key not valid") || message.includes("INVALID_API_KEY")) {
       message = "API Key không hợp lệ. Vui lòng kiểm tra lại.";
     }
     setError(message);

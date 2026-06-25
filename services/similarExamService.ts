@@ -1,7 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { SimilarExamResult, SimilarExamOptions } from "../types";
-import { getApiKey } from "./geminiService";
-import { FALLBACK_MODELS } from "../constants";
+import { getApiKey, getFriendlyGeminiErrorMessage, getGeminiModelsToTry, parseApiError } from "./geminiService";
 
 const SIMILAR_SYSTEM_INSTRUCTION = `Bạn là trợ lý tạo đề thi THPT chuyên nghiệp. Nhiệm vụ của bạn là phân tích đề thi mẫu và sinh ra 1 đề thi tương tự.
 
@@ -154,11 +153,7 @@ export const generateSimilarExam = async (
 
   const finalSystemInstruction = SIMILAR_SYSTEM_INSTRUCTION + customInstructions;
 
-  // Model priority
-  let candidateModels = [...FALLBACK_MODELS];
-  if (preferredModel && FALLBACK_MODELS.includes(preferredModel)) {
-    candidateModels = [preferredModel, ...FALLBACK_MODELS.filter(m => m !== preferredModel)];
-  }
+  const candidateModels = getGeminiModelsToTry(preferredModel);
 
   for (const modelName of candidateModels) {
     try {
@@ -211,10 +206,14 @@ export const generateSimilarExam = async (
       return result;
 
     } catch (error) {
-      console.warn(`[SimilarExam] Model ${modelName} failed:`, error);
+      const errorType = parseApiError(error);
+      console.warn(`[SimilarExam] Model ${modelName} failed (${errorType}):`, error);
       lastError = error;
+      if (errorType === 'INVALID_API_KEY') {
+        break;
+      }
     }
   }
 
-  throw lastError || new Error("Tất cả model đều thất bại.");
+  throw new Error(getFriendlyGeminiErrorMessage(lastError));
 };

@@ -32,11 +32,14 @@ Quy trình làm việc chia làm 3 bước độc lập. Tại mỗi bước, b�
 `;
 
 export const VARIANT_MODELS = [
-  { id: "gemini-3-flash-preview", name: "Gemini 3.0 Flash Preview" },
-  { id: "gemini-3-pro-preview", name: "Gemini 3.0 Pro Preview" },
+  { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
+  { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
+  { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash-Lite" },
+  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+  { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" },
 ];
 
-export const createVariantSession = (apiKey: string, model: string = "gemini-3-flash-preview"): Chat => {
+export const createVariantSession = (apiKey: string, model: string = VARIANT_MODELS[0].id): Chat => {
   const ai = new GoogleGenAI({ apiKey });
   return ai.chats.create({
     model: model,

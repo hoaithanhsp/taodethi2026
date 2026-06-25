@@ -7,7 +7,7 @@ import MarkdownView from './components/MarkdownView';
 import SimilarExamPage from './components/SimilarExamPage';
 import VariantsExamPage from './components/VariantsExamPage';
 
-import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel } from './services/geminiService';
+import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, isValidGoogleAiApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel } from './services/geminiService';
 import { parseDocxWithMath } from './services/docxMathParser';
 // @ts-ignore
 import { asBlob } from 'html-docx-js-typescript';
@@ -117,6 +117,7 @@ const App: React.FC = () => {
 
   // -- API Key State --
   const [apiKey, setApiKeyState] = useState<string>(getApiKey() || '');
+  const [apiKeyError, setApiKeyError] = useState<string>('');
   const [showApiKeyModal, setShowApiKeyModal] = useState<boolean>(!getApiKey());
   const [tempApiKey, setTempApiKey] = useState<string>('');
 
@@ -165,10 +166,15 @@ const App: React.FC = () => {
   const handleSaveApiKey = () => {
     const key = tempApiKey.trim();
     if (!key) return;
+    if (!isValidGoogleAiApiKey(key)) {
+      setApiKeyError('API Key không hợp lệ. Vui lòng nhập key bắt đầu bằng AIzaSy... hoặc AQ...');
+      return;
+    }
     saveApiKey(key);
     setApiKeyState(key);
     setShowApiKeyModal(false);
     setTempApiKey('');
+    setApiKeyError('');
   };
 
   // --- Handlers ---
@@ -1504,12 +1510,18 @@ const App: React.FC = () => {
                 <input
                   type="password"
                   value={tempApiKey}
-                  onChange={(e) => setTempApiKey(e.target.value)}
+                  onChange={(e) => {
+                    setTempApiKey(e.target.value);
+                    if (apiKeyError) setApiKeyError('');
+                  }}
                   onKeyDown={(e) => e.key === 'Enter' && handleSaveApiKey()}
-                  placeholder="Dán API Key tại đây..."
+                  placeholder="Dán API Key AIzaSy... hoặc AQ..."
                   className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none font-mono text-sm"
                   autoFocus
                 />
+                {apiKeyError && (
+                  <p className="mt-2 text-sm text-red-600">{apiKeyError}</p>
+                )}
               </div>
               <a
                 href="https://aistudio.google.com/api-keys"
@@ -1611,7 +1623,7 @@ const App: React.FC = () => {
               {darkMode ? <Sun className="w-4 h-4 text-amber-500" /> : <Moon className="w-4 h-4 text-slate-600" />}
             </button>
             <button
-              onClick={() => { setTempApiKey(apiKey || ''); setShowApiKeyModal(true); }}
+              onClick={() => { setTempApiKey(apiKey || ''); setApiKeyError(''); setShowApiKeyModal(true); }}
               className="flex items-center gap-2 text-sm px-3 py-1.5 h-9 rounded-lg border border-slate-300 hover:bg-slate-50 transition-colors"
             >
               <Settings className="w-4 h-4 text-slate-600" />
