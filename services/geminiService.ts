@@ -1,12 +1,17 @@
-﻿
+
 import { GoogleGenAI } from "@google/genai";
-import { SYSTEM_INSTRUCTION, MODEL_NAME, FALLBACK_MODELS, GRADE_NO_ESSAY, getSubjectFootnotes } from '../constants';
+import { SYSTEM_INSTRUCTION, MODEL_NAME, PROVIDER_FALLBACK_MODELS, GRADE_NO_ESSAY, getSubjectFootnotes, AiProvider } from '../constants';
 import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate } from '../types';
 import { fetchTemplateHtml, buildMatrixPromptForCustomTemplate, buildSpecsPromptForCustomTemplate } from './matrixTemplates';
 
-// --- API Key Management (localStorage-based) ---
-const API_KEY_STORAGE_KEY = 'examcraft_api_key';
+// --- Dual AI Provider Management ---
+const GOOGLE_AI_PROVIDER_KEY = 'google_ai_provider';
+const GEMINI_API_KEY_STORAGE_KEY = 'gemini_api_key';
+const AGENT_PLATFORM_API_KEY_STORAGE_KEY = 'agent_platform_api_key';
+const LEGACY_API_KEY_STORAGE_KEY = 'examcraft_api_key';
+const LEGACY_USER_API_KEY_STORAGE_KEY = 'user_gemini_api_key';
 const MODEL_STORAGE_KEY = 'examcraft_selected_model';
+
 const MODEL_ALIASES: Record<string, string> = {
   'gemini-3-flash-preview': 'gemini-3.5-flash',
   'gemini-3-pro-preview': 'gemini-3.1-pro-preview',
@@ -20,8 +25,59 @@ export type GeminiApiErrorType =
   | 'MODEL_OVERLOADED'
   | 'UNKNOWN';
 
+export const getAiProvider = (): AiProvider => {
+  const provider = localStorage.getItem(GOOGLE_AI_PROVIDER_KEY);
+  if (provider === 'agent-platform') return 'agent-platform';
+  return 'gemini';
+};
+
+export const setAiProvider = (provider: AiProvider): void => {
+  localStorage.setItem(GOOGLE_AI_PROVIDER_KEY, provider);
+};
+
+export const getApiKey = (provider: AiProvider = getAiProvider()): string | null => {
+  if (provider === 'agent-platform') {
+    return localStorage.getItem(AGENT_PLATFORM_API_KEY_STORAGE_KEY);
+  }
+  return (
+    localStorage.getItem(GEMINI_API_KEY_STORAGE_KEY) ||
+    localStorage.getItem(LEGACY_USER_API_KEY_STORAGE_KEY) ||
+    localStorage.getItem(LEGACY_API_KEY_STORAGE_KEY) ||
+    null
+  );
+};
+
+export const setApiKey = (key: string, provider: AiProvider = getAiProvider()): void => {
+  const trimmed = key.trim();
+  if (provider === 'agent-platform') {
+    localStorage.setItem(AGENT_PLATFORM_API_KEY_STORAGE_KEY, trimmed);
+  } else {
+    localStorage.setItem(GEMINI_API_KEY_STORAGE_KEY, trimmed);
+    localStorage.setItem(LEGACY_API_KEY_STORAGE_KEY, trimmed);
+  }
+};
+
+export const removeApiKey = (provider: AiProvider = getAiProvider()): void => {
+  if (provider === 'agent-platform') {
+    localStorage.removeItem(AGENT_PLATFORM_API_KEY_STORAGE_KEY);
+  } else {
+    localStorage.removeItem(GEMINI_API_KEY_STORAGE_KEY);
+    localStorage.removeItem(LEGACY_USER_API_KEY_STORAGE_KEY);
+    localStorage.removeItem(LEGACY_API_KEY_STORAGE_KEY);
+  }
+};
+
+export const isValidApiKey = (key: string, provider: AiProvider = getAiProvider()): boolean => {
+  const trimmed = key.trim();
+  if (!trimmed) return false;
+  if (provider === 'gemini') {
+    return GOOGLE_AI_API_KEY_PATTERN.test(trimmed);
+  }
+  return trimmed.length > 0;
+};
+
 export const isValidGoogleAiApiKey = (key: string): boolean => {
-  return GOOGLE_AI_API_KEY_PATTERN.test(key.trim());
+  return isValidApiKey(key, 'gemini');
 };
 
 const normalizeGeminiModel = (model: string | null): string | null => {
@@ -29,9 +85,14 @@ const normalizeGeminiModel = (model: string | null): string | null => {
   return MODEL_ALIASES[model] || model;
 };
 
-export const getGeminiModelsToTry = (preferredModel?: string | null): string[] => {
-  const primaryModel = normalizeGeminiModel(preferredModel || getSelectedModel()) || MODEL_NAME;
-  return Array.from(new Set([primaryModel, ...FALLBACK_MODELS]));
+export const getGeminiModelsToTry = (
+  preferredModel?: string | null,
+  provider: AiProvider = getAiProvider()
+): string[] => {
+  const fallbackList = PROVIDER_FALLBACK_MODELS[provider] || PROVIDER_FALLBACK_MODELS['gemini'];
+  const defaultModel = provider === 'agent-platform' ? 'gemini-2.5-flash' : MODEL_NAME;
+  const primaryModel = normalizeGeminiModel(preferredModel || getSelectedModel()) || defaultModel;
+  return Array.from(new Set([primaryModel, ...fallbackList]));
 };
 
 const getErrorText = (error: any): string => {
@@ -86,27 +147,15 @@ export const parseApiError = (error: any): GeminiApiErrorType => {
 export const getFriendlyGeminiErrorMessage = (error: any): string => {
   const errorType = parseApiError(error);
   if (errorType === 'INVALID_API_KEY') {
-    return 'API Key không hợp lệ hoặc chưa có quyền truy cập Gemini. Vui lòng kiểm tra lại key trong phần Cài đặt.';
+    return 'API Key không hợp lệ hoặc chưa có quyền truy cập AI. Vui lòng kiểm tra lại key trong phần Cài đặt.';
   }
   if (errorType === 'QUOTA_EXCEEDED') {
     return 'Hết hạn mức sử dụng hoặc đang bị giới hạn tốc độ. Vui lòng thử lại sau, giảm dung lượng file, hoặc đổi API Key.';
   }
   if (errorType === 'MODEL_OVERLOADED') {
-    return 'Model Gemini đang tạm quá tải. Ứng dụng đã thử các model dự phòng; vui lòng đợi 1-2 phút rồi thử lại hoặc chọn model nhẹ hơn.';
+    return 'Model AI đang tạm quá tải. Ứng dụng đã thử các model dự phòng; vui lòng đợi 1-2 phút rồi thử lại hoặc chọn model nhẹ hơn.';
   }
-  return `Lỗi API Gemini: ${error?.message || 'Không xác định'}`;
-};
-
-export const getApiKey = (): string | null => {
-  return localStorage.getItem(API_KEY_STORAGE_KEY);
-};
-
-export const setApiKey = (key: string): void => {
-  localStorage.setItem(API_KEY_STORAGE_KEY, key.trim());
-};
-
-export const removeApiKey = (): void => {
-  localStorage.removeItem(API_KEY_STORAGE_KEY);
+  return `Lỗi API AI: ${error?.message || 'Không xác định'}`;
 };
 
 export const getSelectedModel = (): string | null => {
@@ -122,11 +171,20 @@ export const setSelectedModel = (model: string): void => {
   localStorage.setItem(MODEL_STORAGE_KEY, normalizeGeminiModel(model) || model);
 };
 
-const getAI = (): GoogleGenAI => {
-  const key = getApiKey();
-  if (!key) throw new Error("Chưa có API Key. Vui lòng nhập API Key trong phần Settings.");
+export function createGoogleAiClient(
+  apiKey?: string | null,
+  provider: AiProvider = getAiProvider()
+): GoogleGenAI {
+  const key = apiKey || getApiKey(provider);
+  if (!key) {
+    throw new Error(`Chưa có API Key cho ${provider === 'agent-platform' ? 'Agent Platform' : 'Google Gemini'}. Vui lòng nhập API Key trong phần Cài đặt.`);
+  }
+
+  if (provider === 'agent-platform') {
+    return new GoogleGenAI({ apiKey: key, vertexai: true });
+  }
   return new GoogleGenAI({ apiKey: key });
-};
+}
 
 // --- Retry helper for 503/overloaded errors ---
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -163,25 +221,31 @@ const callWithRetry = async <T>(
 };
 
 // --- Fallback wrapper: try models in order with retry ---
-const callWithFallback = async (
-  promptFn: (ai: GoogleGenAI, model: string) => Promise<string>
+export const callWithFallback = async (
+  promptFn: (ai: GoogleGenAI, model: string) => Promise<string>,
+  preferredModel?: string | null,
+  provider: AiProvider = getAiProvider()
 ): Promise<string> => {
-  const ai = getAI();
-  const modelsToTry = getGeminiModelsToTry();
+  const apiKey = getApiKey(provider);
+  if (!apiKey) {
+    throw new Error(`Chưa có API Key cho ${provider === 'agent-platform' ? 'Agent Platform' : 'Google Gemini'}. Vui lòng kiểm tra lại trong phần Cài đặt.`);
+  }
+  const ai = createGoogleAiClient(apiKey, provider);
+  const modelsToTry = getGeminiModelsToTry(preferredModel, provider);
   let lastError: any = null;
 
   for (const model of modelsToTry) {
     try {
-      console.log(`[ExamCraft] Trying model: ${model}`);
+      console.log(`[ExamCraft] (${provider}) Trying model: ${model}`);
       return await callWithRetry(
         () => promptFn(ai, model),
         2,
-        `[${model}]`
+        `[${provider}:${model}]`
       );
     } catch (err: any) {
       lastError = err;
       const errorType = parseApiError(err);
-      console.warn(`[ExamCraft] Model ${model} failed (${errorType}):`, err.message || err);
+      console.warn(`[ExamCraft] (${provider}) Model ${model} failed (${errorType}):`, err.message || err);
       if (errorType === 'INVALID_API_KEY') {
         break;
       }

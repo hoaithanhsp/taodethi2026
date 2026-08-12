@@ -7,11 +7,11 @@ import MarkdownView from './components/MarkdownView';
 import SimilarExamPage from './components/SimilarExamPage';
 import VariantsExamPage from './components/VariantsExamPage';
 
-import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, isValidGoogleAiApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel } from './services/geminiService';
+import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, isValidGoogleAiApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel, getAiProvider, setAiProvider } from './services/geminiService';
 import { parseDocxWithMath } from './services/docxMathParser';
 // @ts-ignore
 import { asBlob } from 'html-docx-js-typescript';
-import { AVAILABLE_MODELS } from './constants';
+import { GEMINI_MODELS, AGENT_PLATFORM_MODELS, AiProvider } from './constants';
 import { MATRIX_TEMPLATES } from './services/matrixTemplates';
 import { validateAccount, Account } from './data/accounts';
 import { ArrowRight, ArrowLeft, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, Lock, User, Gift, Phone, Shield, Copy, Shuffle, Sparkles, Layers, Zap } from 'lucide-react';
@@ -72,8 +72,9 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : null;
   });
 
-  // -- Selected Model State --
-  const [selectedModel, setSelectedModelState] = useState(getSelectedModel() || AVAILABLE_MODELS[0].id);
+  // -- Provider & Selected Model State --
+  const [provider, setProviderState] = useState<AiProvider>(getAiProvider());
+  const [selectedModel, setSelectedModelState] = useState(getSelectedModel() || GEMINI_MODELS[0].id);
 
   // -- UI State --
   const [selectedLessonIds, setSelectedLessonIds] = useState<Set<string>>(new Set());
@@ -116,10 +117,11 @@ const App: React.FC = () => {
   const [isExtractingQuestions, setIsExtractingQuestions] = useState(false);
 
   // -- API Key State --
-  const [apiKey, setApiKeyState] = useState<string>(getApiKey() || '');
+  const [apiKey, setApiKeyState] = useState<string>(getApiKey(getAiProvider()) || '');
   const [apiKeyError, setApiKeyError] = useState<string>('');
-  const [showApiKeyModal, setShowApiKeyModal] = useState<boolean>(!getApiKey());
-  const [tempApiKey, setTempApiKey] = useState<string>('');
+  const [showApiKeyModal, setShowApiKeyModal] = useState<boolean>(!getApiKey(getAiProvider()));
+  const [tempGeminiKey, setTempGeminiKey] = useState<string>(getApiKey('gemini') || '');
+  const [tempAgentPlatformKey, setTempAgentPlatformKey] = useState<string>(getApiKey('agent-platform') || '');
 
   // --- Auth Handlers ---
   const handleLogin = () => {
@@ -164,16 +166,26 @@ const App: React.FC = () => {
 
   // --- API Key Handlers ---
   const handleSaveApiKey = () => {
-    const key = tempApiKey.trim();
-    if (!key) return;
-    if (!isValidGoogleAiApiKey(key)) {
-      setApiKeyError('API Key không hợp lệ. Vui lòng nhập key bắt đầu bằng AIzaSy... hoặc AQ...');
+    const geminiKeyClean = tempGeminiKey.trim();
+    const agentPlatformKeyClean = tempAgentPlatformKey.trim();
+
+    const activeKey = provider === 'agent-platform' ? agentPlatformKeyClean : geminiKeyClean;
+    if (!activeKey) {
+      setApiKeyError(`Vui lòng nhập API Key cho ${provider === 'agent-platform' ? 'Agent Platform' : 'Google Gemini'}`);
       return;
     }
-    saveApiKey(key);
-    setApiKeyState(key);
+
+    if (provider === 'gemini' && !isValidGoogleAiApiKey(geminiKeyClean)) {
+      setApiKeyError('API Key Gemini không hợp lệ. Vui lòng nhập key bắt đầu bằng AIzaSy... hoặc AQ...');
+      return;
+    }
+
+    setAiProvider(provider);
+    if (geminiKeyClean) saveApiKey(geminiKeyClean, 'gemini');
+    if (agentPlatformKeyClean) saveApiKey(agentPlatformKeyClean, 'agent-platform');
+
+    setApiKeyState(activeKey);
     setShowApiKeyModal(false);
-    setTempApiKey('');
     setApiKeyError('');
   };
 
@@ -1499,45 +1511,100 @@ const App: React.FC = () => {
                 <Settings className="w-6 h-6 text-primary" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-teal-800">Cài đặt</h2>
-                <p className="text-sm text-teal-500">API Key & Model AI</p>
+                <h2 className="text-xl font-bold text-teal-800">Cài đặt AI System</h2>
+                <p className="text-sm text-teal-500">Cấu hình Nhà cung cấp & API Key</p>
               </div>
             </div>
             <div className="space-y-5">
-              {/* API Key Section */}
+              {/* Provider Selection */}
               <div>
-                <label className="text-sm font-semibold text-teal-700 mb-2 block">🔑 API Key</label>
-                <input
-                  type="password"
-                  value={tempApiKey}
-                  onChange={(e) => {
-                    setTempApiKey(e.target.value);
-                    if (apiKeyError) setApiKeyError('');
-                  }}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSaveApiKey()}
-                  placeholder="Dán API Key AIzaSy... hoặc AQ..."
-                  className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none font-mono text-sm"
-                  autoFocus
-                />
-                {apiKeyError && (
-                  <p className="mt-2 text-sm text-red-600">{apiKeyError}</p>
-                )}
+                <label className="text-sm font-semibold text-teal-700 mb-2 block">⚡ Nền tảng AI (Provider)</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProviderState('gemini');
+                      setApiKeyError('');
+                    }}
+                    className={`p-3 rounded-xl border-2 font-medium text-sm flex items-center justify-center gap-2 transition-all ${
+                      provider === 'gemini'
+                        ? 'border-teal-600 bg-teal-50 text-teal-800 font-bold shadow-sm'
+                        : 'border-slate-200 text-slate-600 hover:border-teal-300'
+                    }`}
+                  >
+                    <span>Google Gemini</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProviderState('agent-platform');
+                      setApiKeyError('');
+                    }}
+                    className={`p-3 rounded-xl border-2 font-medium text-sm flex items-center justify-center gap-2 transition-all ${
+                      provider === 'agent-platform'
+                        ? 'border-teal-600 bg-teal-50 text-teal-800 font-bold shadow-sm'
+                        : 'border-slate-200 text-slate-600 hover:border-teal-300'
+                    }`}
+                  >
+                    <span>Agent Platform</span>
+                  </button>
+                </div>
               </div>
-              <a
-                href="https://aistudio.google.com/api-keys"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 text-sm text-primary hover:underline font-medium"
-              >
-                <ExternalLink className="w-4 h-4" />
-                Lấy API Key miễn phí tại Google AI Studio
-              </a>
+
+              {/* API Key Section */}
+              {provider === 'gemini' ? (
+                <div>
+                  <label className="text-sm font-semibold text-teal-700 mb-2 block">🔑 API Key (Google Gemini)</label>
+                  <input
+                    type="password"
+                    value={tempGeminiKey}
+                    onChange={(e) => {
+                      setTempGeminiKey(e.target.value);
+                      if (apiKeyError) setApiKeyError('');
+                    }}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSaveApiKey()}
+                    placeholder="Dán Gemini API Key (AIzaSy... hoặc AQ...)"
+                    className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none font-mono text-sm"
+                    autoFocus
+                  />
+                  <a
+                    href="https://aistudio.google.com/api-keys"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-sm text-primary hover:underline font-medium mt-2"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Lấy API Key miễn phí tại Google AI Studio
+                  </a>
+                </div>
+              ) : (
+                <div>
+                  <label className="text-sm font-semibold text-teal-700 mb-2 block">🔑 API Key (Agent Platform)</label>
+                  <input
+                    type="password"
+                    value={tempAgentPlatformKey}
+                    onChange={(e) => {
+                      setTempAgentPlatformKey(e.target.value);
+                      if (apiKeyError) setApiKeyError('');
+                    }}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSaveApiKey()}
+                    placeholder="Dán Agent Platform API Key"
+                    className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none font-mono text-sm"
+                    autoFocus
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Sử dụng endpoint Vertex AI proxy trên Agent Platform</p>
+                </div>
+              )}
+
+              {apiKeyError && (
+                <p className="text-sm text-red-600 font-medium">{apiKeyError}</p>
+              )}
 
               {/* Model Selector */}
               <div>
                 <label className="text-sm font-semibold text-teal-700 mb-3 block">🤖 Chọn Model AI</label>
                 <div className="space-y-2">
-                  {AVAILABLE_MODELS.map(m => (
+                  {(provider === 'agent-platform' ? AGENT_PLATFORM_MODELS : GEMINI_MODELS).map(m => (
                     <button
                       key={m.id}
                       onClick={() => { setSelectedModelState(m.id); setSelectedModel(m.id); }}
@@ -1559,8 +1626,8 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              <Button onClick={handleSaveApiKey} disabled={!tempApiKey.trim()} className="w-full py-3" icon={<Key className="w-4 h-4" />}>
-                Lưu & Bắt đầu
+              <Button onClick={handleSaveApiKey} className="w-full py-3" icon={<Key className="w-4 h-4" />}>
+                Lưu & Áp dụng
               </Button>
               {apiKey && (
                 <button onClick={() => setShowApiKeyModal(false)} className="w-full text-center text-sm text-slate-500 hover:text-slate-800 py-2">
@@ -1623,12 +1690,22 @@ const App: React.FC = () => {
               {darkMode ? <Sun className="w-4 h-4 text-amber-500" /> : <Moon className="w-4 h-4 text-slate-600" />}
             </button>
             <button
-              onClick={() => { setTempApiKey(apiKey || ''); setApiKeyError(''); setShowApiKeyModal(true); }}
+              onClick={() => {
+                setProviderState(getAiProvider());
+                setTempGeminiKey(getApiKey('gemini') || '');
+                setTempAgentPlatformKey(getApiKey('agent-platform') || '');
+                setApiKeyError('');
+                setShowApiKeyModal(true);
+              }}
               className="flex items-center gap-2 text-sm px-3 py-1.5 h-9 rounded-lg border border-slate-300 hover:bg-slate-50 transition-colors"
             >
               <Settings className="w-4 h-4 text-slate-600" />
               {!apiKey && <span className="text-red-500 font-medium text-xs">Lấy API key để sử dụng app</span>}
-              {apiKey && <span className="text-teal-700 font-medium text-xs">Cài đặt</span>}
+              {apiKey && (
+                <span className="text-teal-700 font-medium text-xs">
+                  Cài đặt ({provider === 'agent-platform' ? 'Agent Platform' : 'Gemini'})
+                </span>
+              )}
             </button>
             <Button variant="secondary" onClick={handleReset} icon={<RotateCcw className="w-4 h-4" />} className="text-sm px-3 py-1.5 h-9">
               Tạo mới

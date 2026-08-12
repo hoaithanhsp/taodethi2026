@@ -1,6 +1,7 @@
 import { GoogleGenAI, Chat, Part, Content } from "@google/genai";
 import { VariantFileData } from "../types";
-import { getApiKey } from "./geminiService";
+import { getApiKey, createGoogleAiClient, getAiProvider } from "./geminiService";
+import { AiProvider } from "../constants";
 
 const VARIANTS_SYSTEM_INSTRUCTION = `
 # ExamGen Pro - SINH ĐỀ THI ĐA MÔN TỰ ĐỘNG
@@ -31,18 +32,35 @@ Quy trình làm việc chia làm 3 bước độc lập. Tại mỗi bước, b�
    - Thiết kế số liệu sao cho đáp án tự nhiên thỏa mãn điều kiện trên.
 `;
 
-export const VARIANT_MODELS = [
-  { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
-  { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
-  { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash-Lite" },
-  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-  { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" },
-];
+export const getVariantModels = (provider: AiProvider = getAiProvider()) => {
+  if (provider === 'agent-platform') {
+    return [
+      { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+      { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+      { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash" },
+    ];
+  }
+  return [
+    { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
+    { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
+    { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash-Lite" },
+    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+    { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" },
+  ];
+};
 
-export const createVariantSession = (apiKey: string, model: string = VARIANT_MODELS[0].id): Chat => {
-  const ai = new GoogleGenAI({ apiKey });
+export const VARIANT_MODELS = getVariantModels('gemini');
+
+export const createVariantSession = (
+  apiKey: string,
+  model?: string,
+  provider: AiProvider = getAiProvider()
+): Chat => {
+  const models = getVariantModels(provider);
+  const selectedModel = model || models[0].id;
+  const ai = createGoogleAiClient(apiKey, provider);
   return ai.chats.create({
-    model: model,
+    model: selectedModel,
     config: {
       systemInstruction: VARIANTS_SYSTEM_INSTRUCTION,
       maxOutputTokens: 8192,
@@ -50,7 +68,12 @@ export const createVariantSession = (apiKey: string, model: string = VARIANT_MOD
   });
 };
 
-export const cloneVariantSession = async (apiKey: string, oldChat: Chat, newModel: string): Promise<Chat> => {
+export const cloneVariantSession = async (
+  apiKey: string,
+  oldChat: Chat,
+  newModel: string,
+  provider: AiProvider = getAiProvider()
+): Promise<Chat> => {
   let history: Content[] = [];
   try {
     history = await oldChat.getHistory();
@@ -58,7 +81,7 @@ export const cloneVariantSession = async (apiKey: string, oldChat: Chat, newMode
     console.warn("[Variants] Could not retrieve history for cloning, starting fresh", e);
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = createGoogleAiClient(apiKey, provider);
   return ai.chats.create({
     model: newModel,
     history: history,

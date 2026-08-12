@@ -116,17 +116,11 @@ export const DEFAULT_QUESTION_CONFIG: Record<string, QuestionConfig> = {
 // Grade 12 does NOT allow essay questions
 export const GRADE_NO_ESSAY = ['12'];
 
+export type AiProvider = 'gemini' | 'agent-platform';
+
 export const MODEL_NAME = 'gemini-3.5-flash';
 
-export const FALLBACK_MODELS = [
-  'gemini-3.5-flash',
-  'gemini-3.1-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
-  'gemini-2.5-pro',
-];
-
-export const AVAILABLE_MODELS = [
+export const GEMINI_MODELS = [
   { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', desc: 'Stable, frontier reasoning, low latency', badge: 'Mặc định' },
   { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: 'Reasoning mạnh, phù hợp tác vụ khó', badge: 'Pro' },
   { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', desc: 'Nhanh, tiết kiệm, fallback nhẹ', badge: 'Lite' },
@@ -134,3 +128,29 @@ export const AVAILABLE_MODELS = [
   { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', desc: 'Nhanh và rẻ cho tác vụ nhẹ', badge: 'Lite' },
   { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', desc: 'Complex reasoning, analysis sâu', badge: 'Premium' },
 ];
+
+export const AGENT_PLATFORM_MODELS = [
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Tốc độ cao, xử lý ổn định trên Agent Platform', badge: 'Mặc định' },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', desc: 'Khả năng suy luận chuyên sâu', badge: 'Pro' },
+  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', desc: 'Phiên bản tiêu chuẩn Agent Platform', badge: 'Lite' },
+];
+
+export const PROVIDER_FALLBACK_MODELS: Record<AiProvider, string[]> = {
+  'gemini': [
+    'gemini-3.5-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-pro'
+  ],
+  'agent-platform': [
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
+    'gemini-1.5-flash'
+  ]
+};
+
+export const FALLBACK_MODELS = PROVIDER_FALLBACK_MODELS['gemini'];
+
+export const AVAILABLE_MODELS = GEMINI_MODELS;
+

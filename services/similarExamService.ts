@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { SimilarExamResult, SimilarExamOptions } from "../types";
-import { getApiKey, getFriendlyGeminiErrorMessage, getGeminiModelsToTry, parseApiError } from "./geminiService";
+import { getApiKey, getFriendlyGeminiErrorMessage, getGeminiModelsToTry, parseApiError, createGoogleAiClient, getAiProvider } from "./geminiService";
+import { AiProvider } from "../constants";
 
 const SIMILAR_SYSTEM_INSTRUCTION = `Bạn là trợ lý tạo đề thi THPT chuyên nghiệp. Nhiệm vụ của bạn là phân tích đề thi mẫu và sinh ra 1 đề thi tương tự.
 
@@ -116,14 +117,15 @@ export const generateSimilarExam = async (
   base64Data: string,
   mimeType: string,
   options?: SimilarExamOptions,
-  preferredModel?: string
+  preferredModel?: string,
+  provider: AiProvider = getAiProvider()
 ): Promise<SimilarExamResult> => {
-  const apiKey = getApiKey();
+  const apiKey = getApiKey(provider);
   if (!apiKey) {
-    throw new Error("Vui lòng nhập API Key trong phần Cài đặt");
+    throw new Error(`Vui lòng nhập API Key cho ${provider === 'agent-platform' ? 'Agent Platform' : 'Google Gemini'} trong phần Cài đặt`);
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = createGoogleAiClient(apiKey, provider);
   let lastError: any = null;
 
   // Build custom instructions based on options
@@ -153,11 +155,11 @@ export const generateSimilarExam = async (
 
   const finalSystemInstruction = SIMILAR_SYSTEM_INSTRUCTION + customInstructions;
 
-  const candidateModels = getGeminiModelsToTry(preferredModel);
+  const candidateModels = getGeminiModelsToTry(preferredModel, provider);
 
   for (const modelName of candidateModels) {
     try {
-      console.log(`[SimilarExam] Trying model: ${modelName}`);
+      console.log(`[SimilarExam] (${provider}) Trying model: ${modelName}`);
       const response = await ai.models.generateContent({
         model: modelName,
         contents: {
@@ -207,7 +209,7 @@ export const generateSimilarExam = async (
 
     } catch (error) {
       const errorType = parseApiError(error);
-      console.warn(`[SimilarExam] Model ${modelName} failed (${errorType}):`, error);
+      console.warn(`[SimilarExam] (${provider}) Model ${modelName} failed (${errorType}):`, error);
       lastError = error;
       if (errorType === 'INVALID_API_KEY') {
         break;

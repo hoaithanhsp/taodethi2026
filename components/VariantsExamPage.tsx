@@ -3,10 +3,10 @@ import { Download, Play, RefreshCw, AlertCircle, Loader2, FileCheck, ArrowRight 
 import { Chat } from "@google/genai";
 import FileUploadZone from './FileUploadZone';
 import MarkdownRenderer from './MarkdownRenderer';
-import { createVariantSession, generateVariantStep1, generateVariantNextStep, cloneVariantSession, VARIANT_MODELS } from '../services/variantsExamService';
+import { createVariantSession, generateVariantStep1, generateVariantNextStep, cloneVariantSession, getVariantModels } from '../services/variantsExamService';
 import { exportToDoc } from '../services/exportUtils';
 import { VariantFileData, VariantState } from '../types';
-import { getApiKey, getFriendlyGeminiErrorMessage, parseApiError } from '../services/geminiService';
+import { getApiKey, getFriendlyGeminiErrorMessage, parseApiError, getAiProvider } from '../services/geminiService';
 
 interface VariantsExamPageProps {
   checkAuth: () => boolean;
@@ -33,29 +33,31 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
     resetOutput: () => void
   ) => {
     let lastError: any = null;
-    const apiKey = getApiKey();
-    if (!apiKey) throw new Error("Vui lòng nhập API Key");
+    const provider = getAiProvider();
+    const models = getVariantModels(provider);
+    const apiKey = getApiKey(provider);
+    if (!apiKey) throw new Error(`Vui lòng nhập API Key cho ${provider === 'agent-platform' ? 'Agent Platform' : 'Google Gemini'} trong phần Cài đặt.`);
 
-    for (let i = currentModelIndexRef.current; i < VARIANT_MODELS.length; i++) {
+    for (let i = currentModelIndexRef.current; i < models.length; i++) {
       try {
         await executeFn(chatSessionRef.current!);
         currentModelIndexRef.current = i;
         return;
       } catch (err: any) {
         const errorType = parseApiError(err);
-        console.warn(`[Variants] Step '${stepName}' failed with ${VARIANT_MODELS[i].id} (${errorType}):`, err);
+        console.warn(`[Variants] (${provider}) Step '${stepName}' failed with ${models[i].id} (${errorType}):`, err);
         lastError = err;
 
         if (errorType === 'INVALID_API_KEY') {
           break;
         }
 
-        if (i < VARIANT_MODELS.length - 1) {
+        if (i < models.length - 1) {
           resetOutput();
-          const nextModel = VARIANT_MODELS[i + 1].id;
-          console.log(`[Variants] Switching to fallback: ${nextModel}`);
+          const nextModel = models[i + 1].id;
+          console.log(`[Variants] (${provider}) Switching to fallback: ${nextModel}`);
           if (chatSessionRef.current) {
-            chatSessionRef.current = await cloneVariantSession(apiKey, chatSessionRef.current, nextModel);
+            chatSessionRef.current = await cloneVariantSession(apiKey, chatSessionRef.current, nextModel, provider);
           }
         }
       }
@@ -67,9 +69,11 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
     if (!file) return;
     if (!checkAuth()) return;
 
-    const apiKey = getApiKey();
+    const provider = getAiProvider();
+    const models = getVariantModels(provider);
+    const apiKey = getApiKey(provider);
     if (!apiKey) {
-      setError("Vui lòng nhập API Key trong phần Cài đặt.");
+      setError(`Vui lòng nhập API Key cho ${provider === 'agent-platform' ? 'Agent Platform' : 'Google Gemini'} trong phần Cài đặt.`);
       return;
     }
 
@@ -78,7 +82,7 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
     setCol1(''); setCol2(''); setCol3('');
     setError(null);
 
-    chatSessionRef.current = createVariantSession(apiKey, VARIANT_MODELS[0].id);
+    chatSessionRef.current = createVariantSession(apiKey, models[0].id, provider);
 
     try {
       // Step 1
