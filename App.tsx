@@ -11,10 +11,17 @@ import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfo
 import { parseDocxWithMath } from './services/docxMathParser';
 // @ts-ignore
 import { asBlob } from 'html-docx-js-typescript';
+import MarkdownIt from 'markdown-it';
 import { GEMINI_MODELS, AGENT_PLATFORM_MODELS, AiProvider } from './constants';
 import { MATRIX_TEMPLATES } from './services/matrixTemplates';
 import { validateAccount, Account } from './data/accounts';
 import { ArrowRight, ArrowLeft, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, Lock, User, Gift, Phone, Shield, Copy, Shuffle, Sparkles, Layers, Zap } from 'lucide-react';
+
+const mdParser = new MarkdownIt({
+  html: true,
+  breaks: true, // Chuyển đổi ký tự xuống dòng thành thẻ <br>
+  linkify: true
+});
 
 const App: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<AppStep>(AppStep.INPUT);
@@ -264,6 +271,21 @@ const App: React.FC = () => {
   // Helper: detect if HTML content mentions essay/tự luận columns
   const detectEssayInHtml = (html: string): boolean => {
     const lowerHtml = html.toLowerCase();
+    // Nếu có khẳng định rõ ràng là không có tự luận hoặc tự luận = 0 câu thì coi như KHÔNG có
+    if (
+      lowerHtml.includes('không có tự luận') ||
+      lowerHtml.includes('không tự luận') ||
+      lowerHtml.includes('khong co tu luan') ||
+      lowerHtml.includes('tự luận: 0') ||
+      lowerHtml.includes('tự luận 0') ||
+      lowerHtml.includes('tự luận (0') ||
+      lowerHtml.includes('cột tự luận: 0') ||
+      lowerHtml.includes('tự luận | 0') ||
+      lowerHtml.includes('tự luận: 0.0') ||
+      lowerHtml.includes('tuyệt đối không tạo cột tự luận')
+    ) {
+      return false;
+    }
     // Check for explicit essay column headers in the matrix/specs table
     // Mở rộng từ khóa để nhận diện chính xác hơn khi user upload file Ma trận/Đặc tả
     return (
@@ -531,8 +553,20 @@ const App: React.FC = () => {
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
       const matrix = await generateStep1Matrix(inputData, selectedLessonIds, matrixTemplate);
-      // Sync essay config: nếu matrix sinh ra không có tự luận, reset essay = 0
-      syncEssayConfigFromMatrix(matrix);
+      // Tôn trọng cấu hình: nếu người dùng đã đặt tự luận = 0, không auto-set lên
+      const userConfigTotalEssay = inputData.questionConfig.essay.biet + inputData.questionConfig.essay.hieu + inputData.questionConfig.essay.van_dung + inputData.questionConfig.essay.van_dung_cao;
+      if (userConfigTotalEssay === 0) {
+        setInputData(prev => ({
+          ...prev,
+          questionConfig: {
+            ...prev.questionConfig,
+            essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
+          }
+        }));
+      } else {
+        // Sync essay config: nếu matrix sinh ra không có tự luận, reset essay = 0
+        syncEssayConfigFromMatrix(matrix);
+      }
       setGenState(prev => ({ ...prev, matrix, isLoading: false }));
       setCurrentStep(AppStep.MATRIX);
       setCompletedSteps(Math.max(completedSteps, 1));
@@ -559,25 +593,17 @@ const App: React.FC = () => {
 
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
-      // Double-check: CHỈ force essay = 0 khi CẢ ma trận VÀ đặc tả đều không nhắc "tự luận"
-      // Nếu ít nhất 1 trong 2 có tự luận → giữ essay config
-      let finalQuestionConfig = { ...inputData.questionConfig };
-      const matrixHasEssay = detectEssayInHtml(genState.matrix);
-      const specsHasEssay = detectEssayInHtml(genState.specs);
+      // TÔN TRỌNG CẤU HÌNH NGƯỜI DÙNG: Chỉ sinh tự luận nếu người dùng thực sự cài > 0
+      const finalQuestionConfig = { ...inputData.questionConfig };
+      
+      const userTotalEssay = 
+        finalQuestionConfig.essay.biet + 
+        finalQuestionConfig.essay.hieu + 
+        finalQuestionConfig.essay.van_dung + 
+        finalQuestionConfig.essay.van_dung_cao;
 
-      if (!matrixHasEssay && !specsHasEssay) {
-        console.log('[ExamCraft] DOUBLE-CHECK: Ma trận + Đặc tả đều KHÔNG có tự luận → force essay = 0');
+      if (userTotalEssay === 0) {
         finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
-      } else {
-        // Ít nhất 1 trong 2 có tự luận → giữ essay config
-        // Nếu essay config đang = 0 nhưng phát hiện có tự luận → auto-set
-        const totalEssay = finalQuestionConfig.essay.biet + finalQuestionConfig.essay.hieu + finalQuestionConfig.essay.van_dung + finalQuestionConfig.essay.van_dung_cao;
-        if (totalEssay === 0) {
-          console.log('[ExamCraft] DOUBLE-CHECK: Phát hiện tự luận trong Ma trận/Đặc tả nhưng essay config = 0 → auto-set default');
-          finalQuestionConfig.essay = { biet: 0, hieu: 1, van_dung: 1, van_dung_cao: 0 };
-        } else {
-          console.log(`[ExamCraft] DOUBLE-CHECK: Có tự luận (matrix=${matrixHasEssay}, specs=${specsHasEssay}) → giữ essay config`);
-        }
       }
 
       // Auto-extract questions from reference doc if not done yet
@@ -670,47 +696,70 @@ const App: React.FC = () => {
   };
 
   const handleDownloadWord = async (content: string, fileName: string) => {
-    // Create a proper DOCX using html-docx-js-typescript
-    const header = `
-      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-      <head>
-        <meta charset='utf-8'>
-        <title>${fileName}</title>
-        <style>
-          body { font-family: 'Times New Roman', serif; font-size: 13pt; line-height: 1.5; }
-          table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; page-break-inside: auto; }
-          tr { page-break-inside: avoid; page-break-after: auto; }
-          td, th { border: 1px solid black; padding: 5px; vertical-align: middle; }
-          th { background-color: #f0f0f0; font-weight: bold; }
-          .question-number { font-weight: bold; }
-          p { margin-top: 0.5em; margin-bottom: 0.5em; page-break-inside: avoid; }
-          .options { page-break-inside: avoid; }
-          h1, h2, h3, h4 { page-break-after: avoid; }
-          div { page-break-inside: avoid; }
-        </style>
-      </head><body>`;
-    const footer = "</body></html>";
-
-    // If content is already a full HTML doc, inject page-break CSS; otherwise wrap it
-    let sourceHTML: string;
-    if (content.includes('<!DOCTYPE html>')) {
-      // Inject page-break CSS into existing <style> or before </head>
-      sourceHTML = content.replace(
-        /<\/style>/i,
-        `
-          table { page-break-inside: auto; }
-          tr { page-break-inside: avoid; page-break-after: auto; }
-          p { page-break-inside: avoid; }
-          .options { page-break-inside: avoid; }
-          h1, h2, h3, h4 { page-break-after: avoid; }
-          div { page-break-inside: avoid; }
-        </style>`
-      );
-    } else {
-      sourceHTML = header + content + footer;
-    }
-
     try {
+      let sourceHTML = '';
+
+      // Nếu đã là Full HTML document (có thẻ html/body hoặc doctype)
+      if (content.includes('<!DOCTYPE html>') || (content.includes('<html') && content.includes('<body'))) {
+        sourceHTML = content.replace(
+          /<\/style>/i,
+          `
+            table { page-break-inside: auto; border-collapse: collapse; width: 100%; margin-bottom: 1rem; }
+            tr { page-break-inside: avoid; page-break-after: auto; }
+            td, th { border: 1px solid black; padding: 5px; vertical-align: middle; }
+            p { margin-top: 4pt; margin-bottom: 4pt; line-height: 1.4; page-break-inside: avoid; }
+            .options { margin-left: 15pt; page-break-inside: avoid; }
+            .option-item { margin-bottom: 3pt; }
+            .question-number { font-weight: bold; }
+            h1, h2, h3, h4 { page-break-after: avoid; }
+            div { page-break-inside: avoid; }
+
+            /* CSS BẢNG BIẾN THIÊN CHUẨN SGK CHO WORD */
+            .bbt-table { border-collapse: collapse; margin: 12pt auto; border: 1px solid #000; min-width: 420px; }
+            .bbt-table td { padding: 4pt 8pt; text-align: center; vertical-align: middle; border: none; }
+            .bbt-table .label-col { font-weight: bold; font-style: italic; border-right: 1px solid #000; width: 40pt; }
+            .bbt-table .row-border { border-bottom: 1px solid #000; }
+          </style>`
+        );
+      } else {
+        // Nếu là MARKDOWN: Bắt buộc render sang HTML trước bằng mdParser
+        const renderedBody = mdParser.render(content);
+        
+        sourceHTML = `
+          <!DOCTYPE html>
+          <html lang="vi">
+          <head>
+            <meta charset="utf-8">
+            <title>${fileName}</title>
+            <style>
+              body { font-family: 'Times New Roman', serif; font-size: 13pt; line-height: 1.5; color: #000; }
+              h1, h2, h3, h4 { font-weight: bold; margin-top: 10pt; margin-bottom: 6pt; page-break-after: avoid; }
+              p { margin-top: 4pt; margin-bottom: 4pt; text-align: justify; page-break-inside: avoid; }
+              ul, ol { margin-top: 2pt; margin-bottom: 6pt; padding-left: 20pt; }
+              li { margin-bottom: 3pt; }
+              table { border-collapse: collapse; width: 100%; margin: 8pt 0; page-break-inside: auto; }
+              tr { page-break-inside: avoid; page-break-after: auto; }
+              td, th { border: 1px solid black; padding: 4pt 6pt; vertical-align: middle; }
+              th { background-color: #f2f2f2; font-weight: bold; }
+              strong { font-weight: bold; }
+              .options { margin-left: 15pt; page-break-inside: avoid; }
+              .option-item { margin-bottom: 3pt; }
+              .question-number { font-weight: bold; }
+
+              /* CSS BẢNG BIẾN THIÊN CHUẨN SGK CHO WORD */
+              .bbt-table { border-collapse: collapse; margin: 12pt auto; border: 1px solid #000; min-width: 420px; }
+              .bbt-table td { padding: 4pt 8pt; text-align: center; vertical-align: middle; border: none; }
+              .bbt-table .label-col { font-weight: bold; font-style: italic; border-right: 1px solid #000; width: 40pt; }
+              .bbt-table .row-border { border-bottom: 1px solid #000; }
+            </style>
+          </head>
+          <body>
+            ${renderedBody}
+          </body>
+          </html>
+        `;
+      }
+
       const blob = await asBlob(sourceHTML, {
         orientation: 'portrait',
         margins: { top: 720, right: 720, bottom: 720, left: 720 }
@@ -725,9 +774,10 @@ const App: React.FC = () => {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('DOCX generation failed, falling back to .doc:', error);
+      console.error('Lỗi xuất file Word (.docx), fallback sang .doc:', error);
       // Fallback: xuất .doc nếu .docx thất bại
-      const blob = new Blob(['\ufeff', sourceHTML], { type: 'application/msword' });
+      const fallbackHtml = content.includes('<!DOCTYPE html>') ? content : `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${mdParser.render(content)}</body></html>`;
+      const blob = new Blob(['\ufeff', fallbackHtml], { type: 'application/msword' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -735,6 +785,7 @@ const App: React.FC = () => {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     }
   };
 

@@ -1,0 +1,406 @@
+Sau khi truy cập và rà soát toàn bộ mã nguồn repository **`hoaithanhsp/taodethi2026`**, đối chiếu trực tiếp với 2 hình ảnh bạn cung cấp, đây là **nguyên nhân chính xác và giải pháp sửa triệt để** cho cả 2 lỗi logic:
+
+---
+
+### PHẦN 1: NGUYÊN NHÂN GỐC RỄ CÁC LỖI
+
+#### 🔴 Lỗi 1: Xuất file đề thi bị dính chùm một dòng (như Ảnh 1)
+Nhìn vào Ảnh 1, toàn bộ câu hỏi, đáp án, dấu sao `*`, công thức `$`:
+`2; 5]$. * B. $[1; 7)$. * C. $(2; 5)$. * D. $[1; 2]$. * *Đáp án:* A. ... * **Câu I.10...** * *Đề:* ... * A. 2. * B. 4.`
+đều bị dồn vào **một khối văn bản duy nhất không có ngắt dòng**.
+
+- **Vị trí lỗi:** Hàm `handleDownloadWord` trong `App.tsx` (dòng 672–711).
+- **Cơ chế gây lỗi:**
+  ```typescript
+  // App.tsx dòng 696
+  let sourceHTML: string;
+  if (content.includes('<!DOCTYPE html>')) {
+    sourceHTML = content.replace(...);
+  } else {
+    sourceHTML = header + content + footer; // 💥 LỖI TẠI ĐÂY!
+  }
+  ```
+  Khi Gemini trả về nội dung đề thi dạng **Markdown** (chứa `\n`, `**`, `*`, `$`), `content.includes('<!DOCTYPE html>')` là `false`. Code nhảy vào nhánh `else` và **nhét thẳng chuỗi Markdown thô vào giữa `<body>` và `</body>`** của tài liệu HTML rồi gọi `asBlob` (html-docx-js) để tạo file `.docx`.
+  
+  Theo quy chuẩn HTML/Word: **Mọi ký tự xuống dòng `\n` trong text thuần đều bị co thành một khoảng trắng (single space)**. Vì không được chuyển đổi Markdown sang các thẻ `<p>`, `<br>`, `<div>`, Word hiển thị toàn bộ đề thi thành **một đoạn văn duy nhất dài vô tận**.
+
+- **Điều nghịch lý:** Trong thư mục `services/` của dự án đã có sẵn file `exportUtils.ts` (dùng thư viện `markdown-it` để parse Markdown sang HTML có `breaks: true`), nhưng trong `App.tsx` lại không dùng đến!
+
+---
+
+#### 🔴 Lỗi 2: Ma trận, Đặc tả và Đề thi không theo đúng cấu trúc đã khai báo (Ảnh 2)
+
+Trên Ảnh 2, bạn cấu hình:
+- **Dạng I (4 lựa chọn):** Biết: 8, Hiểu: 4, VD: 0, VDC: 0 *(Tổng: 12 câu)*
+- **Dạng II (Đúng/Sai):** Biết: 1, Hiểu: 1, VD: 0, VDC: 0 *(Tổng: 2 câu)*
+- **Dạng III (Trả lời ngắn):** Biết: 1, Hiểu: 1, VD: 2, VDC: 0 *(Tổng: 4 câu)*
+- **Tự luận:** Biết: 0, Hiểu: 0, VD: 0, VDC: 0 *(Tổng: 0 câu)*
+
+Tuy nhiên, hệ thống bị lệch cấu trúc nghiêm trọng qua 3 bước do 2 lỗi logic sau:
+
+##### 1. Xung đột giữa "Số Câu" và "Số Ý" ở Dạng II (Đúng/Sai):
+- Theo quy định chuẩn của Bộ GD&ĐT (CV 7991 / GDPT 2018): Một câu hỏi Dạng II gồm **4 ý lệnh hỏi độc lập (a, b, c, d)**.
+- Khi người dùng nhập `Biết: 1, Hiểu: 1`, người dùng đang muốn **2 CÂU Đúng/Sai** (mỗi câu 4 ý).
+- Nhưng trong `services/geminiService.ts`:
+  - **Ở Step 1 & Step 2 (Ma trận & Đặc tả - dòng 563 & 730):** Prompt lại ghi:
+    `| Dạng II (Đúng-Sai) (ý) | 1 | 1 | 0 | 2 |`
+    AI hiểu là cả đề chỉ có **2 Ý LỆNH HỎI** (tức chỉ nửa câu Đúng/Sai).
+  - **Ở Step 3 (Đề thi - dòng 942 & 963):** Code lại tính:
+    `counts.type2 = 1 + 1 = 2 câu`
+    `- **PHẦN II (Đúng/Sai):** Tạo 2 câu hỏi (mỗi câu 4 ý a,b,c,d)`
+    AI tạo ra **2 CÂU = 8 Ý HỎI**!
+  - **Kết quả:** Đề thi có 2 câu (8 ý a,b,c,d), trong khi Ma trận và Đặc tả chỉ phân bổ 2 ý. Cả 3 bước mâu thuẫn hoàn toàn với nhau.
+
+##### 2. Lỗi tự động ép sinh Tự Luận dù cấu hình = 0:
+- Trong `App.tsx` (dòng 565–578), có đoạn code kiểm tra:
+  ```typescript
+  const matrixHasEssay = detectEssayInHtml(genState.matrix);
+  const specsHasEssay = detectEssayInHtml(genState.specs);
+  ...
+  const totalEssay = finalQuestionConfig.essay.biet + finalQuestionConfig.essay.hieu + ...;
+  if (totalEssay === 0) {
+    // 💥 TỰ ĐỘNG BẬT TỰ LUẬN NẾU TRONG HTML CÓ CHỮ "TỰ LUẬN"!
+    finalQuestionConfig.essay = { biet: 0, hieu: 1, van_dung: 1, van_dung_cao: 0 };
+  }
+  ```
+- Hàm `detectEssayInHtml` (dòng 265) chỉ kiểm tra đơn giản `html.toLowerCase().includes('tự luận')`.
+- Khi AI tạo Ma trận hoặc Đặc tả, AI thường thêm ghi chú: *"Lưu ý: Đề thi không có phần tự luận"* hoặc *"Tự luận: 0 câu"*. Vì có xuất hiện chữ "tự luận", hàm này trả về `true`!
+- Ngay lập tức, `App.tsx` tự động ép `finalQuestionConfig.essay = { hieu: 1, van_dung: 1 }` (2 câu tự luận)!
+- **Kết quả:** Dù người dùng đã chỉnh Tự luận = 0 ở màn hình nhập liệu, đề thi sinh ra vẫn có câu hỏi Tự luận.
+
+---
+
+### PHẦN 2: HƯỚNG DẪN SỬA CODE CHI TIẾT
+
+#### 🛠️ 1. Sửa lỗi xuất file Word trong `App.tsx`
+Thay vì nhét chuỗi Markdown thô vào tài liệu HTML, hãy import và dùng hàm `exportToDoc` có sẵn từ `services/exportUtils.ts` (hoặc chuyển đổi qua `markdown-it` trước khi đóng gói `.docx`):
+
+Mở `App.tsx`, thay thế hàm `handleDownloadWord` (khoảng dòng 672):
+
+```typescript
+// App.tsx
+import { exportToDoc } from './services/exportUtils';
+import MarkdownIt from 'markdown-it';
+
+const mdParser = new MarkdownIt({
+  html: true,
+  breaks: true, // Bắt buộc: chuyển ký tự xuống dòng thành thẻ <br>
+  linkify: true
+});
+
+const handleDownloadWord = async (content: string, fileName: string) => {
+  try {
+    let sourceHTML = '';
+
+    // Nếu đã là Full HTML document (có thẻ html/body)
+    if (content.includes('<!DOCTYPE html>') || (content.includes('<html') && content.includes('<body'))) {
+      sourceHTML = content.replace(
+        /<\/style>/i,
+        `
+          table { page-break-inside: auto; border-collapse: collapse; width: 100%; }
+          tr { page-break-inside: avoid; }
+          td, th { border: 1px solid black; padding: 5px; }
+          p { margin-top: 4pt; margin-bottom: 4pt; line-height: 1.4; }
+          .options { margin-left: 15pt; }
+          .question-number { font-weight: bold; }
+        </style>`
+      );
+    } else {
+      // Nếu là MARKDOWN: Bắt buộc render sang HTML trước
+      const renderedBody = mdParser.render(content);
+      
+      sourceHTML = `
+        <!DOCTYPE html>
+        <html lang="vi">
+        <head>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: 'Times New Roman', serif; font-size: 13pt; line-height: 1.5; color: #000; }
+            h1, h2, h3, h4 { font-weight: bold; margin-top: 10pt; margin-bottom: 6pt; }
+            p { margin-top: 4pt; margin-bottom: 4pt; text-align: justify; }
+            ul, ol { margin-top: 2pt; margin-bottom: 6pt; padding-left: 20pt; }
+            li { margin-bottom: 3pt; }
+            table { border-collapse: collapse; width: 100%; margin: 8pt 0; }
+            td, th { border: 1px solid black; padding: 4pt 6pt; }
+            th { background-color: #f2f2f2; font-weight: bold; }
+            strong { font-weight: bold; }
+          </style>
+        </head>
+        <body>
+          ${renderedBody}
+        </body>
+        </html>
+      `;
+    }
+
+    const blob = await asBlob(sourceHTML, {
+      orientation: 'portrait',
+      margins: { top: 720, right: 720, bottom: 720, left: 720 }
+    });
+
+    const url = URL.createObjectURL(blob as Blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${fileName}.docx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Lỗi xuất file Word:', error);
+    // Fallback: xuất file .doc text html
+    const blob = new Blob(['\ufeff', content], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${fileName}.doc`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+};
+```
+
+---
+
+#### 🛠️ 2. Xóa bỏ logic tự ý bật Tự Luận trong `App.tsx`
+Trong `App.tsx`, tại hàm `handleGenerateExam` (khoảng dòng 562–582), **tôn trọng 100% cấu hình do người dùng chọn**, không tự ý đoán mò qua regex:
+
+```typescript
+// App.tsx - Sửa lại hàm handleGenerateExam
+const handleGenerateExam = async () => {
+  if (!checkAuthOrTrial()) return;
+
+  setGenState(prev => ({ ...prev, isLoading: true, error: null }));
+  try {
+    // TÔN TRỌNG CẤU HÌNH NGƯỜI DÙNG: Chỉ sinh tự luận nếu người dùng thực sự cài > 0
+    const finalQuestionConfig = { ...inputData.questionConfig };
+    
+    // Nếu tổng câu tự luận người dùng cài = 0 thì chắc chắn essay = 0, không auto-set
+    const userTotalEssay = 
+      finalQuestionConfig.essay.biet + 
+      finalQuestionConfig.essay.hieu + 
+      finalQuestionConfig.essay.van_dung + 
+      finalQuestionConfig.essay.van_dung_cao;
+
+    if (userTotalEssay === 0) {
+      finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
+    }
+
+    // Auto-extract questions from reference doc if needed...
+    let questionsToUse = extractedQuestions;
+    if (referenceDoc && extractedQuestions.length === 0) {
+      try {
+        const extracted = await extractQuestionsFromReference(
+          referenceDoc.text,
+          referenceDoc.images,
+          genState.specs,
+          inputData.subject,
+          inputData.grade
+        );
+        if (extracted.length > 0) {
+          setExtractedQuestions(extracted);
+          questionsToUse = extracted;
+        }
+      } catch (extractErr: any) {
+        console.warn('Auto-extraction fallback to raw text:', extractErr);
+      }
+    }
+
+    const exam = await generateStep3Exam(
+      genState.specs,
+      finalQuestionConfig,
+      inputData,
+      referenceDoc?.text,
+      referenceDoc?.images,
+      questionsToUse.length > 0 ? questionsToUse : undefined
+    );
+    setGenState(prev => ({ ...prev, exam, isLoading: false }));
+    setCurrentStep(AppStep.EXAM);
+    setCompletedSteps(Math.max(completedSteps, 3));
+  } catch (err: any) {
+    setGenState(prev => ({ ...prev, isLoading: false, error: err.message }));
+  }
+};
+```
+
+---
+
+#### 🛠️ 3. Đồng bộ chuẩn "Số Câu" và "Số Ý" Dạng II trong `services/geminiService.ts`
+
+Trong `services/geminiService.ts`:
+- Người dùng nhập ở giao diện là **Số câu** (ví dụ 1 câu Biết, 1 câu Hiểu = 2 câu).
+- Nhưng trong Ma trận và Đặc tả theo CV 7991, mỗi câu Đúng/Sai có **4 ý lệnh hỏi**.
+- Cần làm rõ quy ước nhân 4 cho số ý ở Ma trận và Đặc tả, hoặc giải thích rõ ràng cho Gemini:
+
+Tại hàm `generateStep1Matrix` (khoảng dòng 518) và `generateStep2Specs` (khoảng dòng 707):
+
+```typescript
+// services/geminiService.ts
+
+// Lưu ý: config.type2 trên UI là số CÂU. 
+// Trong ma trận chuẩn Bộ GD&ĐT: 1 câu Dạng II = 4 lệnh hỏi (ý a,b,c,d)
+const type2QuestionsCount = config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao;
+const type2SubItemsTotal = type2QuestionsCount * 4; // Mỗi câu có 4 ý
+
+// Điều chỉnh prompt gửi cho AI để Ma trận - Đặc tả - Đề thi thống nhất:
+// Dạng II (Đúng - Sai): Tổng số câu = ${type2QuestionsCount} câu (tương ứng ${type2SubItemsTotal} lệnh hỏi/ý).
+```
+
+Và trong bảng tóm tắt số lượng gửi cho AI:
+```markdown
+| Dạng câu hỏi | Số câu | Quy cách |
+|---|---|---|
+| Dạng I (4 lựa chọn) | ${type1Total.biet + type1Total.hieu + type1Total.vd} câu | 4 phương án A,B,C,D |
+| Dạng II (Đúng - Sai) | ${type2QuestionsCount} câu | Mỗi câu gồm 4 ý a,b,c,d (Tổng: ${type2SubItemsTotal} ý) |
+| Dạng III (Trả lời ngắn) | ${type3Total.biet + type3Total.hieu + type3Total.vd} câu | Điền kết quả số |
+| Phần Tự luận | ${totalEssayQuestions} câu | ${totalEssayQuestions === 0 ? '⛔ KHÔNG CÓ TỰ LUẬN' : 'Tự luận có thang điểm'} |
+```
+
+---
+
+### Tóm tắt các file cần sửa trên GitHub:
+
+| File | Việc cần làm |
+|---|---|
+| `App.tsx` | 1. Sửa hàm `handleDownloadWord`: Parse Markdown qua `MarkdownIt` trước khi tạo DOCX.<br>2. Sửa `handleGenerateExam`: Bỏ ép tự luận khi người dùng đã cấu hình `essay = 0`. |
+| `services/geminiService.ts` | 1. Làm rõ quy ước Dạng II (1 câu = 4 ý) trong prompt tạo Ma trận và Đặc tả để khớp số lượng với Đề thi.<br>2. Format mẫu đề thi: bắt buộc xuống dòng rõ ràng sau mỗi ý a,b,c,d và phương án A,B,C,D. |
+Nguyên nhân bảng biến thiên hiện tại nhìn giống một **bảng Excel đóng khung thô kệch (Ảnh 1)** thay vì thanh thoát, chuẩn SGK (Ảnh 2) là do:
+
+Trong `services/geminiService.ts` (dòng 1088–1133), prompt đang **bắt buộc AI** phải dùng:
+1. `border: 1px solid black` trên **từng thẻ `<td>`** $\rightarrow$ sinh ra các đường kẻ dọc ngăn cách kín mít.
+2. `Mỗi phần tử (x, dấu f'(x), mũi tên, giá trị f(x)) là MỘT Ô RIÊNG BIỆT (<td>)` $\rightarrow$ các mũi tên `↗`, `↘` bị nhốt trong từng ô vuông riêng rẽ như phím bấm.
+3. Hàng $y$ chỉ có 1 dòng ngang duy nhất $\rightarrow$ giá trị cực đại và cực tiểu nằm ngang hàng nhau, không có độ cao/thấp trực quan theo chiều biến thiên.
+
+---
+
+### Sự khác biệt cốt lõi để đạt chuẩn Ảnh 2:
+1. **Bỏ toàn bộ đường kẻ dọc bên trong**: Bảng biến thiên chuẩn chỉ có khung viền ngoài, 1 đường kẻ dọc phân cách cột nhãn ($x, y', y$) và các đường kẻ ngang phân cách hàng. Giữa các giá trị số **hoàn toàn không có vách ngăn dọc**.
+2. **Hàng $y$ phân tầng Cao – Thấp (2 tầng)**:
+   - Tầng trên (cao độ cao): Giá trị Cực đại và $+\infty$.
+   - Tầng dưới (cao độ thấp): Giá trị Cực tiểu và $-\infty$.
+   - Giữa chúng là các mũi tên nghiêng $\nearrow$ và $\searrow$ thể hiện hàm số đi lên/đi xuống.
+
+---
+
+### Hướng dẫn sửa code trong `services/geminiService.ts`
+
+Mở file `services/geminiService.ts`, tìm đến đoạn cấu hình CSS và mẫu Bảng biến thiên (khoảng dòng 1088 đến dòng 1133), thay thế toàn bộ bằng đặc tả chuẩn sau:
+
+```typescript
+// services/geminiService.ts - Cập nhật hướng dẫn bảng biến thiên
+
+  **YÊU CẦU OUTPUT:**
+  1. Xuất ra một **Full HTML Document** (<!DOCTYPE html>...). 
+  2. **Style CSS (Include in <style>):**
+     - body { font-family: "Times New Roman", serif; font-size: 13pt; line-height: 1.5; color: #000; }
+     - h3, h4 { text-align: center; font-weight: bold; margin-top: 20px; }
+     - p { margin-bottom: 10px; }
+     - .question-number { font-weight: bold; }
+     - .options { margin-left: 20px; }
+     - .option-item { margin-bottom: 5px; }
+
+     /* CSS BẢNG BIẾN THIÊN CHUẨN SGK (GIỐNG WORD/LATEX - KHÔNG ĐƯỜNG KẺ DỌC NỘI BỘ) */
+     - .bbt-table { 
+         border-collapse: collapse; 
+         margin: 15px auto; 
+         font-family: "Times New Roman", serif; 
+         font-size: 13pt; 
+         border: 1px solid #000; 
+         min-width: 420px; 
+       }
+     - .bbt-table td { 
+         padding: 5px 8px; 
+         text-align: center; 
+         vertical-align: middle; 
+         border: none; /* QUAN TRỌNG: Mặc định KHÔNG kẻ ô */
+       }
+     - .bbt-table .label-col { 
+         font-weight: bold; 
+         font-style: italic; 
+         border-right: 1px solid #000; 
+         width: 50px; 
+         text-align: center; 
+       }
+     - .bbt-table .row-border { 
+         border-bottom: 1px solid #000; 
+       }
+
+  **===== QUY TẮC BẢNG BIẾN THIÊN CHUẨN SÁCH GIÁO KHOA (BẮT BUỘC) =====**
+  
+  Khi đề bài có bảng biến thiên, PHẢI dùng cấu trúc HTML sau để hiển thị đẹp cả trên Web lẫn file Word xuất ra:
+  
+  1. **ĐƯỜNG KẺ:**
+     - CHỈ CÓ viền ngoài bảng (`border: 1px solid #000`).
+     - CHỈ CÓ 1 đường kẻ dọc ngăn cách cột nhãn (`class="label-col"` có `border-right: 1px solid #000`).
+     - CHỈ CÓ các đường kẻ ngang ngăn hàng x và hàng y' (`class="row-border"` có `border-bottom: 1px solid #000`).
+     - TUYỆT ĐỐI KHÔNG kẻ ô vuông dọc giữa các mốc giá trị!
+     
+  2. **HÀNG y PHÂN TẦNG CAO - THẤP (DÙNG 2 DÒNG CHO HÀNG y):**
+     - Cột nhãn dùng: `<td rowspan="2" class="label-col">y</td>`
+     - Dòng y thứ nhất (Tầng trên): Chỉ ghi giá trị CỰC ĐẠI và $+\infty$ ở đúng cột tương ứng. Các ô khác để trống `<td></td>`.
+     - Dòng y thứ hai (Tầng dưới): Ghi $-\infty$, mũi tên $\nearrow$ hoặc $\searrow$, và giá trị CỰC TIỂU ở dưới thấp.
+
+  **MẪU HTML CHUẨN CHO BẢNG BIẾN THIÊN (Cực đại tại x = -2 với y = -5; Cực tiểu tại x = 2 với y = -12):**
+  
+  <table class="bbt-table">
+    <!-- Hàng x -->
+    <tr class="row-border">
+      <td class="label-col">x</td>
+      <td>$-\infty$</td>
+      <td></td>
+      <td>$-2$</td>
+      <td></td>
+      <td>$2$</td>
+      <td></td>
+      <td>$+\infty$</td>
+    </tr>
+    <!-- Hàng y' -->
+    <tr class="row-border">
+      <td class="label-col">y'</td>
+      <td></td>
+      <td>+</td>
+      <td>0</td>
+      <td>−</td>
+      <td>0</td>
+      <td>+</td>
+      <td></td>
+    </tr>
+    <!-- Hàng y: Tầng cao (Cực đại -5, +∞) -->
+    <tr>
+      <td rowspan="2" class="label-col">y</td>
+      <td></td>
+      <td></td>
+      <td style="vertical-align: top; font-weight: bold;">$-5$</td>
+      <td>$\searrow$</td>
+      <td></td>
+      <td></td>
+      <td style="vertical-align: top;">$+\infty$</td>
+    </tr>
+    <!-- Hàng y: Tầng thấp (-∞, Cực tiểu -12) -->
+    <tr>
+      <td style="vertical-align: bottom;">$-\infty$</td>
+      <td>$\nearrow$</td>
+      <td></td>
+      <td></td>
+      <td style="vertical-align: bottom; font-weight: bold;">$-12$</td>
+      <td>$\nearrow$</td>
+      <td></td>
+    </tr>
+  </table>
+```
+
+---
+
+### Khi xuất sang file Word (`App.tsx`):
+Trong `handleDownloadWord` của `App.tsx`, đảm bảo đoạn CSS chèn vào Word giữ nguyên các class này:
+
+```css
+<style>
+  .bbt-table { border-collapse: collapse; margin: 12pt auto; border: 1px solid #000; }
+  .bbt-table td { padding: 4pt 8pt; text-align: center; vertical-align: middle; border: none; }
+  .bbt-table .label-col { font-weight: bold; font-style: italic; border-right: 1px solid #000; width: 40pt; }
+  .bbt-table .row-border { border-bottom: 1px solid #000; }
+</style>
+```
+
+Khi áp dụng thay đổi này, AI sẽ ngừng sinh các bảng ô vuông kiểu lưới ô cờ (Ảnh 1) và chuyển hoàn toàn sang bảng biến thiên chuẩn sư phạm với mũi tên nâng cao/hạ thấp mềm mại như trong sách giáo khoa và các đề thi chính thức (Ảnh 2).

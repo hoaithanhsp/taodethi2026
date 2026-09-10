@@ -515,6 +515,8 @@ export const generateStep1Matrix = async (
 
   // Gộp VD + VDC thành 3 mức: Biết, Hiểu, VD (theo chuẩn CV 7991)
   const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
+  const type2QuestionsCount = config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao;
+  const type2SubItemsTotal = type2QuestionsCount * 4; // Mỗi câu Dạng II gồm 4 ý/lệnh hỏi (a, b, c, d)
   const type2Total = { biet: config.type2.biet, hieu: config.type2.hieu, vd: config.type2.van_dung + config.type2.van_dung_cao };
   const type3Total = { biet: config.type3.biet, hieu: config.type3.hieu, vd: config.type3.van_dung + config.type3.van_dung_cao };
   const essayTotal = { biet: config.essay.biet, hieu: config.essay.hieu, vd: config.essay.van_dung + config.essay.van_dung_cao };
@@ -555,16 +557,20 @@ export const generateStep1Matrix = async (
   - Tổng số tiết trọng tâm: ${totalSelectedPeriods} tiết
   
   **⚠️⚠️⚠️ CẤU TRÚC SỐ LƯỢNG CÂU HỎI — BẢNG BẮT BUỘC (KHÔNG ĐƯỢC SAI DÙ 1 CÂU) ⚠️⚠️⚠️**
-  **3 mức: Biết, Hiểu, VD (VD = Vận dụng + Vận dụng cao gộp lại)**
+  - **QUY ƯỚC QUAN TRỌNG VỀ DẠNG II (Đúng/Sai):**
+    + Cấu hình đề yêu cầu **${type2QuestionsCount} câu** Dạng II.
+    + Theo quy định chuẩn CV 7991 của Bộ GD&ĐT: Mỗi câu Dạng II gồm **4 lệnh hỏi/ý (a, b, c, d)**.
+    + Tổng số lệnh hỏi/ý Dạng II trong ma trận là **${type2SubItemsTotal} ý** (gồm các mã từ II.1a -> II.${type2QuestionsCount}d).
+    + Các ý a, b, c, d được phân bổ vào các mức độ Biết, Hiểu, VD của các bài học tương ứng (thông thường ý a, b ở Nhận biết, ý c ở Thông hiểu, ý d ở Vận dụng).
 
-  | Dạng câu hỏi         | Biết | Hiểu | VD  | TỔNG |
-  |---------------------|------|------|-----|------|
-  | Dạng I (4 lựa chọn)  | ${type1Total.biet}    | ${type1Total.hieu}    | ${type1Total.vd}   | ${type1Total.biet + type1Total.hieu + type1Total.vd}    |
-  | Dạng II (Đúng-Sai) (ý) | ${type2Total.biet}    | ${type2Total.hieu}    | ${type2Total.vd}   | ${type2Total.biet + type2Total.hieu + type2Total.vd}    |
-  | Dạng III (Trả lời ngắn) | ${type3Total.biet}    | ${type3Total.hieu}    | ${type3Total.vd}   | ${type3Total.biet + type3Total.hieu + type3Total.vd}    |
-  ${hasEssay ? `| Tự luận (IV)       | ${essayTotal.biet}    | ${essayTotal.hieu}    | ${essayTotal.vd}   | ${essayTotal.biet + essayTotal.hieu + essayTotal.vd}    |` : '| Tự luận            | 0    | 0    | 0   | 0 — TUYỆT ĐỐI KHÔNG TẠO CỘT TỰ LUẬN |'}
+  | Dạng câu hỏi | Số câu | Số lệnh hỏi (ý) | Quy cách chi tiết |
+  |---|---|---|---|
+  | Dạng I (4 lựa chọn) | ${type1Total.biet + type1Total.hieu + type1Total.vd} câu | ${type1Total.biet + type1Total.hieu + type1Total.vd} | 4 phương án A,B,C,D (Biết: ${type1Total.biet}, Hiểu: ${type1Total.hieu}, VD: ${type1Total.vd}) |
+  | Dạng II (Đúng - Sai) | ${type2QuestionsCount} câu | ${type2SubItemsTotal} ý | Mỗi câu gồm 4 ý a,b,c,d (Tổng: ${type2SubItemsTotal} ý/lệnh hỏi phân bổ vào Biết, Hiểu, VD) |
+  | Dạng III (Trả lời ngắn) | ${type3Total.biet + type3Total.hieu + type3Total.vd} câu | ${type3Total.biet + type3Total.hieu + type3Total.vd} | Điền kết quả số (Biết: ${type3Total.biet}, Hiểu: ${type3Total.hieu}, VD: ${type3Total.vd}) |
+  ${hasEssay ? `| Tự luận (IV) | ${essayTotal.biet + essayTotal.hieu + essayTotal.vd} câu | ${essayTotal.biet + essayTotal.hieu + essayTotal.vd} | Tự luận có thang điểm (Biết: ${essayTotal.biet}, Hiểu: ${essayTotal.hieu}, VD: ${essayTotal.vd}) |` : '| Tự luận | 0 câu | 0 | ⛔ TUYỆT ĐỐI KHÔNG TẠO CỘT TỰ LUẬN |'}
 
-  **RÀNG BUỘC NGHIÊM NGẶT:** Tổng số câu/ý ở mỗi ô trong bảng trên phải KHỚP CHÍNH XÁC trong ma trận output. Nếu sai dù 1 câu → ma trận KHÔNG HỢP LỆ.
+  **RÀNG BUỘC NGHIÊM NGẶT:** Tổng số câu/lệnh hỏi ở mỗi dạng trong bảng trên phải KHỚP CHÍNH XÁC trong ma trận output. Nếu sai dù 1 câu → ma trận KHÔNG HỢP LỆ.
   
   ${scoringInstructions}
 
@@ -635,9 +641,9 @@ export const generateStep1Matrix = async (
   ${footnotes}
 
   **⚠️ KIỂM TRA CUỐI CÙNG TRƯỚC KHI TRẢ OUTPUT (BẮT BUỘC):**
-  1. Đếm tổng số mã câu Dạng I (I.1, I.2...) ở cột Biết, Hiểu, VD → phải khớp: Biết=${type1Total.biet}, Hiểu=${type1Total.hieu}, VD=${type1Total.vd}
-  2. Đếm tổng số ý Dạng II (II.1a, II.1b...) ở cột Biết, Hiểu, VD → phải khớp: Biết=${type2Total.biet}, Hiểu=${type2Total.hieu}, VD=${type2Total.vd}
-  3. Đếm tổng số mã câu Dạng III (III.1, III.2...) ở cột Biết, Hiểu, VD → phải khớp: Biết=${type3Total.biet}, Hiểu=${type3Total.hieu}, VD=${type3Total.vd}
+  1. Đếm tổng số mã câu Dạng I (I.1, I.2...) ở cột Biết, Hiểu, VD → phải khớp: Biết=${type1Total.biet}, Hiểu=${type1Total.hieu}, VD=${type1Total.vd} (Tổng = ${type1Total.biet + type1Total.hieu + type1Total.vd} câu)
+  2. Đếm tổng số câu Dạng II: Phải có đủ ${type2QuestionsCount} câu (tương ứng đủ ${type2SubItemsTotal} ý từ II.1a..d đến II.${type2QuestionsCount}a..d) phân bổ trong bảng.
+  3. Đếm tổng số mã câu Dạng III (III.1, III.2...) ở cột Biết, Hiểu, VD → phải khớp: Biết=${type3Total.biet}, Hiểu=${type3Total.hieu}, VD=${type3Total.vd} (Tổng = ${type3Total.biet + type3Total.hieu + type3Total.vd} câu)
   ${hasEssay ? `4. Đếm tổng số mã câu Tự luận (IV.1a...) ở cột Biết, Hiểu, VD → phải khớp: Biết=${essayTotal.biet}, Hiểu=${essayTotal.hieu}, VD=${essayTotal.vd}` : ''}
   Nếu bất kỳ số nào KHAI BÁO TRONG BẢNG TRÊN không khớp → SỬA LẠI ma trận cho đúng trước khi trả kết quả.
   `;
@@ -704,6 +710,8 @@ export const generateStep2Specs = async (
   const hasEssay = totalEssayQuestions > 0;
 
   const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
+  const type2QuestionsCount = config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao;
+  const type2SubItemsTotal = type2QuestionsCount * 4; // Mỗi câu Dạng II gồm 4 ý/lệnh hỏi (a, b, c, d)
   const type2Total = { biet: config.type2.biet, hieu: config.type2.hieu, vd: config.type2.van_dung + config.type2.van_dung_cao };
   const type3Total = { biet: config.type3.biet, hieu: config.type3.hieu, vd: config.type3.van_dung + config.type3.van_dung_cao };
   const essayTotal = { biet: config.essay.biet, hieu: config.essay.hieu, vd: config.essay.van_dung + config.essay.van_dung_cao };
@@ -724,12 +732,17 @@ export const generateStep2Specs = async (
   ${objectivesMap.join('\\n')}
 
   **===== BẢNG SỐ LƯỢNG GỐC (PHẢI KHỚP 100% - ƯU TIÊN HƠN MA TRẬN NẾU CÓ XUNG ĐỘT) =====**
-  | Dạng câu hỏi         | Biết | Hiểu | VD  | TỔNG |
-  |---------------------|------|------|-----|------|
-  | Dạng I (4 lựa chọn)  | ${type1Total.biet}    | ${type1Total.hieu}    | ${type1Total.vd}   | ${type1Total.biet + type1Total.hieu + type1Total.vd}    |
-  | Dạng II (Đúng-Sai) (ý) | ${type2Total.biet}    | ${type2Total.hieu}    | ${type2Total.vd}   | ${type2Total.biet + type2Total.hieu + type2Total.vd}    |
-  | Dạng III (Trả lời ngắn) | ${type3Total.biet}    | ${type3Total.hieu}    | ${type3Total.vd}   | ${type3Total.biet + type3Total.hieu + type3Total.vd}    |
-  ${hasEssay ? `| Tự luận (IV)       | ${essayTotal.biet}    | ${essayTotal.hieu}    | ${essayTotal.vd}   | ${essayTotal.biet + essayTotal.hieu + essayTotal.vd}    |` : ''}
+  - **QUY ƯỚC DẠNG II (Đúng/Sai):**
+    + Gồm **${type2QuestionsCount} câu** Đúng/Sai. Mỗi câu gồm **4 ý lệnh hỏi (a, b, c, d)**.
+    + Tổng số ý Dạng II cần đặc tả là **${type2SubItemsTotal} ý** (tương ứng các mã từ II.1a -> II.${type2QuestionsCount}d).
+    + Mỗi dòng đặc tả (NB, TH, VD) gắn với các ý tương ứng (ví dụ II.1a, II.1b ở NB; II.1c ở TH; II.1d ở VD...).
+
+  | Dạng câu hỏi | Số câu | Số lệnh hỏi (ý) | Quy cách |
+  |---|---|---|---|
+  | Dạng I (4 lựa chọn) | ${type1Total.biet + type1Total.hieu + type1Total.vd} câu | ${type1Total.biet + type1Total.hieu + type1Total.vd} | Biết: ${type1Total.biet}, Hiểu: ${type1Total.hieu}, VD: ${type1Total.vd} |
+  | Dạng II (Đúng - Sai) | ${type2QuestionsCount} câu | ${type2SubItemsTotal} ý | Mỗi câu gồm 4 ý a,b,c,d. Tổng: ${type2SubItemsTotal} ý phân bổ vào các mức |
+  | Dạng III (Trả lời ngắn) | ${type3Total.biet + type3Total.hieu + type3Total.vd} câu | ${type3Total.biet + type3Total.hieu + type3Total.vd} | Biết: ${type3Total.biet}, Hiểu: ${type3Total.hieu}, VD: ${type3Total.vd} |
+  ${hasEssay ? `| Tự luận (IV) | ${essayTotal.biet + essayTotal.hieu + essayTotal.vd} câu | ${essayTotal.biet + essayTotal.hieu + essayTotal.vd} | Biết: ${essayTotal.biet}, Hiểu: ${essayTotal.hieu}, VD: ${essayTotal.vd} |` : '| Tự luận | 0 câu | 0 | ⛔ TUYỆT ĐỐI KHÔNG TẠO CỘT TỰ LUẬN |'}
 
   **===== ĐỊNH DẠNG BẢNG ĐẶC TẢ BẮT BUỘC (Tuân thủ 100%) =====**
 
@@ -766,7 +779,12 @@ export const generateStep2Specs = async (
   - Số câu hỏi và mã câu PHẢI khớp 100% với BẢNG SỐ LƯỢNG GỐC ở trên (ưu tiên hơn Ma trận nếu có sai lệch)
   - Nếu Ma trận không có cột Tự luận thì Đặc tả cũng KHÔNG có
 
-  **ĐỂ KIỂM TRA CUỐI CÙNG:** Đếm tổng số mã câu trong đặc tả cho mỗi dạng và mức độ. Phải khớp CHÍNH XÁC: Dạng I: B=${type1Total.biet}/H=${type1Total.hieu}/VD=${type1Total.vd}, Dạng II: B=${type2Total.biet}/H=${type2Total.hieu}/VD=${type2Total.vd} (ý), Dạng III: B=${type3Total.biet}/H=${type3Total.hieu}/VD=${type3Total.vd}${totalEssayQuestions > 0 ? `, Tự luận: B=${essayTotal.biet}/H=${essayTotal.hieu}/VD=${essayTotal.vd}` : ''}. Nếu sai thì sửa lại trước khi trả output.
+  **ĐỂ KIỂM TRA CUỐI CÙNG:** Đếm tổng số mã câu trong đặc tả cho mỗi dạng và mức độ. Phải khớp CHÍNH XÁC:
+  - Dạng I: B=${type1Total.biet}/H=${type1Total.hieu}/VD=${type1Total.vd} (Tổng = ${type1Total.biet + type1Total.hieu + type1Total.vd} câu)
+  - Dạng II: Đủ ${type2QuestionsCount} câu, mỗi câu 4 ý a,b,c,d (Tổng = ${type2SubItemsTotal} ý từ II.1a..d đến II.${type2QuestionsCount}a..d)
+  - Dạng III: B=${type3Total.biet}/H=${type3Total.hieu}/VD=${type3Total.vd} (Tổng = ${type3Total.biet + type3Total.hieu + type3Total.vd} câu)
+  ${totalEssayQuestions > 0 ? `- Tự luận: B=${essayTotal.biet}/H=${essayTotal.hieu}/VD=${essayTotal.vd} (Tổng = ${essayTotal.biet + essayTotal.hieu + essayTotal.vd} câu)` : ''}
+  Nếu sai thì sửa lại trước khi trả output.
 
   **QUY TẮC CHÚ THÍCH (FOOTNOTES) - BẮT BUỘC:**
   Cuối bảng thêm:
@@ -1085,51 +1103,101 @@ export const generateStep3Exam = async (
      - .question-number { font-weight: bold; }
      - .options { margin-left: 20px; }
      - .option-item { margin-bottom: 5px; }
-     - /* CSS cho bảng biến thiên */
-     - .bbthien { border-collapse: collapse; margin: 10px auto; font-size: 13pt; }
-     - .bbthien td, .bbthien th { border: 1px solid black; padding: 4px 8px; text-align: center; vertical-align: middle; min-width: 40px; }
-     - .bbthien .header-row { background-color: #f0f0f0; font-weight: bold; }
-     - .bbthien .label-col { text-align: left; font-weight: bold; padding-left: 8px; width: 60px; }
+     /* CSS BẢNG BIẾN THIÊN CHUẨN SGK (GIỐNG WORD/LATEX - KHÔNG ĐƯỜNG KẺ DỌC NỘI BỘ) */
+     - .bbt-table { 
+         border-collapse: collapse; 
+         margin: 15px auto; 
+         font-family: "Times New Roman", serif; 
+         font-size: 13pt; 
+         border: 1px solid #000; 
+         min-width: 420px; 
+       }
+     - .bbt-table td { 
+         padding: 5px 8px; 
+         text-align: center; 
+         vertical-align: middle; 
+         border: none; /* QUAN TRỌNG: Mặc định KHÔNG kẻ ô */
+       }
+     - .bbt-table .label-col { 
+         font-weight: bold; 
+         font-style: italic; 
+         border-right: 1px solid #000; 
+         width: 50px; 
+         text-align: center; 
+       }
+     - .bbt-table .row-border { 
+         border-bottom: 1px solid #000; 
+       }
 
-  **===== BẢNG BIẾN THIÊN (CỰC KỲ QUAN TRỌNG - TUÂN THỦ 100%) =====**
+  **===== QUY TẮC BẢNG BIẾN THIÊN CHUẨN SÁCH GIÁO KHOA (BẮT BUỘC) =====**
   
-  Khi đề thi có câu hỏi liên quan đến hàm số cần bảng biến thiên, PHẢI dùng HTML TABLE với cấu trúc CHÍNH XÁC sau:
+  Khi đề bài có bảng biến thiên, PHẢI dùng cấu trúc HTML sau để hiển thị đẹp cả trên Web lẫn file Word xuất ra:
+  
+  1. **ĐƯỜNG KẺ:**
+     - CHỈ CÓ viền ngoài bảng (border: 1px solid #000).
+     - CHỈ CÓ 1 đường kẻ dọc ngăn cách cột nhãn (class="label-col" có border-right: 1px solid #000).
+     - CHỈ CÓ các đường kẻ ngang ngăn hàng x và hàng y' (class="row-border" có border-bottom: 1px solid #000).
+     - TUYỆT ĐỐI KHÔNG kẻ ô vuông dọc giữa các mốc giá trị!
+     
+  2. **HÀNG y PHÂN TẦNG CAO - THẤP (DÙNG 2 DÒNG CHO HÀNG y):**
+     - Cột nhãn dùng: <td rowspan="2" class="label-col">y</td>
+     - Dòng y thứ nhất (Tầng trên): Chỉ ghi giá trị CỰC ĐẠI và $+\\infty$ ở đúng cột tương ứng. Các ô khác để trống <td></td>.
+     - Dòng y thứ hai (Tầng dưới): Ghi $-\\infty$, mũi tên $\\nearrow$ hoặc $\\searrow$, và giá trị CỰC TIỂU ở dưới thấp.
 
-  **NGUYÊN TẮC VÀNG:**
-  1. Mỗi phần tử (x, dấu f'(x), mũi tên, giá trị f(x)) là MỘT Ô RIÊNG BIỆT (<td>).
-  2. Số cột phải ĐỒNG NHẤT giữa tất cả các hàng. Dùng colspan nếu cần.
-  3. TUYỆT ĐỐI KHÔNG dùng text thuần, ký tự đặc biệt hay ASCII art để vẽ bảng biến thiên.
-  4. Mỗi khoảng đồng biến/nghịch biến cần CÓ ô mũi tên: ↗ (đồng biến lên), ↘ (nghịch biến xuống).
-  5. Hàng x: liệt kê các giá trị đặc biệt (−∞, điểm cực trị, +∞).
-  6. Hàng f'(x): ghi dấu +, 0, − tương ứng với từng khoảng.
-  7. Hàng f(x): ghi giá trị cực trị và chiều mũi tên.
-
-  **MẪU HTML BẢNG BIẾN THIÊN (ví dụ hàm bậc 3 có 2 cực trị x=a, x=b):**
-  <table class="bbthien">
-    <tr>
+  **MẪU HTML CHUẨN CHO BẢNG BIẾN THIÊN (Cực đại tại x = -2 với y = -5; Cực tiểu tại x = 2 với y = -12):**
+  \`\`\`html
+  <table class="bbt-table">
+    <!-- Hàng x -->
+    <tr class="row-border">
       <td class="label-col">x</td>
-      <td>−∞</td><td></td><td>a</td><td></td><td>b</td><td></td><td>+∞</td>
+      <td>$-\\infty$</td>
+      <td></td>
+      <td>$-2$</td>
+      <td></td>
+      <td>$2$</td>
+      <td></td>
+      <td>$+\\infty$</td>
     </tr>
-    <tr>
-      <td class="label-col">f'(x)</td>
-      <td></td><td>+</td><td>0</td><td>−</td><td>0</td><td>+</td><td></td>
+    <!-- Hàng y' -->
+    <tr class="row-border">
+      <td class="label-col">y'</td>
+      <td></td>
+      <td>+</td>
+      <td>0</td>
+      <td>−</td>
+      <td>0</td>
+      <td>+</td>
+      <td></td>
     </tr>
+    <!-- Hàng y: Tầng cao (Cực đại -5, +∞) -->
     <tr>
-      <td class="label-col">f(x)</td>
-      <td>−∞</td><td>↗</td><td>f(a)</td><td>↘</td><td>f(b)</td><td>↗</td><td>+∞</td>
+      <td rowspan="2" class="label-col">y</td>
+      <td></td>
+      <td></td>
+      <td style="vertical-align: top; font-weight: bold;">$-5$</td>
+      <td>$\\searrow$</td>
+      <td></td>
+      <td></td>
+      <td style="vertical-align: top;">$+\\infty$</td>
+    </tr>
+    <!-- Hàng y: Tầng thấp (-∞, Cực tiểu -12) -->
+    <tr>
+      <td style="vertical-align: bottom;">$-\\infty$</td>
+      <td>$\\nearrow$</td>
+      <td></td>
+      <td></td>
+      <td style="vertical-align: bottom; font-weight: bold;">$-12$</td>
+      <td>$\\nearrow$</td>
+      <td></td>
     </tr>
   </table>
-  
+  \`\`\`
+
   **QUY TẮC ĐẾM Ô (BẮT BUỘC):**
   - Nếu hàng x có N ô (kể cả ô label) thì TẤT CẢ các hàng đều phải có ĐÚNG N ô.
+  - Hàng y có 2 dòng `<tr>`, dòng thứ nhất và thứ hai đều có N-1 ô nội dung (vì ô label dùng rowspan="2").
   - Ô trống dùng <td></td>, KHÔNG được bỏ qua.
-  - Khoảng giữa 2 giá trị x đặc biệt cần 1 ô cho dấu/mũi tên.
-  
-  **CÁC LOẠI BẢNG BIẾN THIÊN:**
-  - Hàm bậc 2: 1 đỉnh = hàng x có 5 cột nội dung (−∞, trống, đỉnh, trống, +∞) + 1 label = 6 cột
-  - Hàm bậc 3: 2 cực trị = hàng x có 7 cột nội dung + 1 label = 8 cột
-  - Hàm phân thức có tiệm cận đứng: thêm cột cho tiệm cận, dùng || hoặc ∥
-  - KIỂM TRA: Đếm số <td> trong mỗi <tr>, phải BẰNG NHAU. Nếu không bằng thì SỬA NGAY.
+  - Khoảng giữa 2 giá trị x đặc biệt cần 1 ô cho dấu / mũi tên.
 
   **QUY TẮC FORMAT NGHIÊM NGẶT ĐỂ XUẤT WORD:**
   
