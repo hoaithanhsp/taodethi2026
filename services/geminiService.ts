@@ -1145,7 +1145,7 @@ export const generateStep3Exam = async (
      - Dòng y thứ hai (Tầng dưới): Ghi $-\\infty$, mũi tên $\\nearrow$ hoặc $\\searrow$, và giá trị CỰC TIỂU ở dưới thấp.
 
   **MẪU HTML CHUẨN CHO BẢNG BIẾN THIÊN (Cực đại tại x = -2 với y = -5; Cực tiểu tại x = 2 với y = -12):**
-  \`\`\`html
+  
   <table class="bbt-table">
     <!-- Hàng x -->
     <tr class="row-border">
@@ -1191,11 +1191,10 @@ export const generateStep3Exam = async (
       <td></td>
     </tr>
   </table>
-  \`\`\`
 
   **QUY TẮC ĐẾM Ô (BẮT BUỘC):**
   - Nếu hàng x có N ô (kể cả ô label) thì TẤT CẢ các hàng đều phải có ĐÚNG N ô.
-  - Hàng y có 2 dòng `<tr>`, dòng thứ nhất và thứ hai đều có N-1 ô nội dung (vì ô label dùng rowspan="2").
+  - Hàng y có 2 dòng (thẻ tr), dòng thứ nhất và thứ hai đều có N-1 ô nội dung (vì ô label dùng rowspan="2").
   - Ô trống dùng <td></td>, KHÔNG được bỏ qua.
   - Khoảng giữa 2 giá trị x đặc biệt cần 1 ô cho dấu / mũi tên.
 
