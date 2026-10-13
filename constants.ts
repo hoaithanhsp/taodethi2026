@@ -39,7 +39,7 @@ Trước khi sinh bất kỳ nội dung nào, hãy kiểm tra:
 ## 3. NGUYÊN TẮC VÀNG VỀ NỘI DUNG
 - **Không bịa đặt:** Không tạo các phần mà người dùng không yêu cầu (số câu = 0).
 - **Điểm số:** Luôn là bội số của 0.25. Làm tròn hợp lý.
-- **Công thức:** Dùng HTML subscript/superscript cho công thức hóa đơn giản, LaTeX $...$ cho công thức phức tạp.
+- **Công thức:** Mọi công thức/ký hiệu toán–lý–hoá PHẢI viết bằng LaTeX: $...$ cho công thức trong dòng, $$...$$ cho công thức đứng riêng dòng. Không dùng ký tự Unicode hay HTML sub/sup thay cho LaTeX. Luôn để đúng một dấu cách hai đầu công thức trong dòng và xuống dòng quanh công thức hiển thị để không dính vào chữ.
 
 ## 4. QUY TẮC ĐIỂM SỐ CHI TIẾT
 **Kịch bản A: Có Tự luận (3-2-2-3)**

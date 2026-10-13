@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it';
+import { normalizeMathForWord } from './mathExportUtils';
 // @ts-ignore
 import { asBlob } from 'html-docx-js-typescript';
 
@@ -89,6 +90,9 @@ export const exportToDoc = async (content: string, fileName: string) => {
       </html>
     `;
   }
+
+  // Chuẩn hoá LaTeX cho Word/MathType (áp dụng cho cả nhánh HTML lẫn Markdown)
+  fullHtml = normalizeMathForWord(fullHtml);
 
   try {
     const blob = await asBlob(fullHtml, {

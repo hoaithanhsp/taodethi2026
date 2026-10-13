@@ -1251,7 +1251,13 @@ export const generateStep3Exam = async (
 
   **NGUYÊN TẮC CHUNG (BẮT BUỘC TUÂN THỦ):**
   1. **⛔ CẤM TẠO PHẦN THỪA (QUAN TRỌNG NHẤT):** Đề thi CHỈ ĐƯỢC CHỨA các phần có trong WHITELIST ở trên: [${allowedParts.join(', ')}]. Nếu PHẦN IV (Tự luận) KHÔNG có trong whitelist → TUYỆT ĐỐI KHÔNG tạo câu tự luận, không tạo tiêu đề "PHẦN IV", không nhắc đến tự luận.
-  2. **CÔNG THỨC:** Dùng LaTeX $...$ hoặc $$...$$ (Nhưng lưu ý HTML thuần không render LaTeX tự động, hãy cố gắng dùng ký tự Unicode nếu đơn giản, hoặc giữ nguyên LaTeX để người dùng convert sau bằng MathType trong Word).
+  2. **CÔNG THỨC TOÁN (BẮT BUỘC — vì đề sẽ được chuyển sang MathType trong Word):**
+     - MỌI công thức và ký hiệu toán/lý/hoá PHẢI viết bằng LaTeX, bọc trong dấu $ ... $ (công thức trong dòng) hoặc $$ ... $$ (công thức đứng riêng một dòng).
+     - TUYỆT ĐỐI KHÔNG dùng ký tự Unicode để thay cho công thức: không viết x², √x, ≤, ≥, ≠, ≈, π, a⁻¹, ½... Thay vào đó viết $x^2$, $\\sqrt{x}$, $\\le$, $\\ge$, $\\ne$, $\\approx$, $\\pi$, $a^{-1}$, $\\frac{1}{2}$.
+     - QUY TẮC RANH GIỚI (chống dính chữ): công thức trong dòng $ ... $ PHẢI có đúng một dấu cách trước và sau dấu $. ĐÚNG: "Cho tam giác đều $ABC$ có cạnh $a$." SAI: "$ABC$.a)" hoặc "cạnh$a$".
+     - Công thức $$ ... $$ PHẢI đứng trên dòng riêng: trước và sau nó luôn xuống dòng, KHÔNG nằm chung một đoạn văn với câu chữ.
+     - KHÔNG đặt công thức trong khối code (code fence), KHÔNG thêm ký tự lạ quanh dấu $, KHÔNG được bỏ hoặc đổi dấu $.
+     - Kết thúc: tự kiểm tra; nếu còn ký tự Unicode thay công thức hoặc còn công thức dính liền chữ thì sửa lại trước khi trả kết quả.
   3. **LƯU Ý MÔN HỌC:** Toàn bộ câu hỏi PHẢI thuộc phạm vi kiến thức môn ${inputData.subject} lớp ${inputData.grade}. KHÔNG được ra câu hỏi thuộc môn khác.
   4. **KIỂM TRA CUỐI CÙNG:** Trước khi trả output, hãy tự kiểm tra: Đề thi có chứa phần nào KHÔNG nằm trong whitelist không? Nếu có → XÓA phần đó.
   `;
