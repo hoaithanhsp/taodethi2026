@@ -47,6 +47,75 @@ export function encodeNonAsciiToEntities(html: string): string {
     .replace(/[^\x00-\x7F]/gu, (ch) => `&#${ch.codePointAt(0)!};`);
 }
 
+/* ------------------------------------------------------------------
+ * Bảo vệ công thức khỏi markdown-it
+ * ------------------------------------------------------------------
+ * markdown-it coi "\" là ký tự escape của Markdown nên làm hỏng LaTeX:
+ *   \\  -> \      (xuống dòng trong cases/matrix/align bị mất)
+ *   \{  -> {      (\left\{ ... bị hỏng)
+ *   \[ \( -> [ (  (mất delimiter công thức)
+ *   |x| trong bảng -> bị hiểu là ranh giới cột; _ * -> in nghiêng...
+ * Cách xử lý: tạm thay mọi công thức bằng placeholder (ký tự vùng
+ * Private Use U+E000/U+E001 mà markdown-it không đụng tới), render,
+ * rồi trả công thức NGUYÊN VĂN về chỗ cũ (escape & < > cho HTML).
+ * ------------------------------------------------------------------ */
+
+const PH_OPEN = '\uE000';
+const PH_CLOSE = '\uE001';
+
+/** Các mẫu công thức, theo thứ tự ưu tiên (display trước inline). */
+const MATH_PATTERNS: RegExp[] = [
+  // $$ ... $$ (có thể nhiều dòng)
+  /(?<!\\)\$\$[\s\S]+?(?<!\\)\$\$/g,
+  // \[ ... \]  (bỏ qua \\[2mm])
+  /(?<!\\)\\\[[\s\S]+?(?<!\\)\\\]/g,
+  // \begin{env} ... \end{env} đứng ngoài $ (env display)
+  /\\begin\{(equation\*?|align\*?|gather\*?|multline\*?|displaymath)\}[\s\S]*?\\end\{\1\}/g,
+  // \( ... \)
+  /(?<!\\)\\\([\s\S]+?(?<!\\)\\\)/g,
+  // $ ... $ trên một dòng (bỏ qua \$ đã escape)
+  /(?<![\\$])\$(?!\$)[^\n$]+?(?<!\\)\$(?!\$)/g,
+];
+
+function escapeHtmlText(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Render Markdown -> HTML mà KHÔNG để markdown-it chạm vào LaTeX.
+ * Kết quả vẫn giữ delimiter $...$ / $$...$$ / \[...\] / \(...\) để
+ * normalizeMathForWord xử lý tiếp.
+ */
+export function renderMarkdownPreservingMath(
+  md: { render: (src: string) => string },
+  src: string
+): string {
+  if (!src) return md.render(src || '');
+
+  const store: string[] = [];
+  let protectedSrc = src.replace(/[\uE000\uE001]/g, ''); // tránh trùng placeholder
+
+  for (const re of MATH_PATTERNS) {
+    protectedSrc = protectedSrc.replace(re, (m) => {
+      store.push(m);
+      return `${PH_OPEN}${store.length - 1}${PH_CLOSE}`;
+    });
+  }
+
+  if (store.length === 0) return md.render(src);
+
+  const html = md.render(protectedSrc);
+
+  // Trả công thức về (lặp vì placeholder có thể lồng nhau, vd \( $..$ \))
+  const restoreRe = new RegExp(`${PH_OPEN}(\\d+)${PH_CLOSE}`, 'g');
+  let out = html;
+  for (let guard = 0; guard < 5 && restoreRe.test(out); guard++) {
+    restoreRe.lastIndex = 0;
+    out = out.replace(restoreRe, (_m, i: string) => escapeHtmlText(store[Number(i)] ?? ''));
+  }
+  return out;
+}
+
 export function normalizeMathForWord(
   input: string,
   options: NormalizeMathOptions = {}

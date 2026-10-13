@@ -1,5 +1,5 @@
 import MarkdownIt from 'markdown-it';
-import { normalizeMathForWord } from './mathExportUtils';
+import { normalizeMathForWord, renderMarkdownPreservingMath } from './mathExportUtils';
 // @ts-ignore
 import { asBlob } from 'html-docx-js-typescript';
 
@@ -34,8 +34,8 @@ export const exportToDoc = async (content: string, fileName: string) => {
       </style>`
     );
   } else {
-    // Render markdown to HTML — giữ nguyên $...$ LaTeX không xử lý
-    const htmlBody = md.render(content);
+    // Render markdown to HTML — tạm cất LaTeX để markdown-it không làm hỏng (\\, \{, \[ ...)
+    const htmlBody = renderMarkdownPreservingMath(md, content);
 
     const css = `
       <style>
@@ -112,7 +112,7 @@ export const exportToDoc = async (content: string, fileName: string) => {
     console.error("DOCX generation failed, fallback to .doc", error);
     // Fallback sang .doc
     try {
-      const fallbackHtml = fullHtml || (content.includes('<!DOCTYPE html>') ? content : `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${md.render(content)}</body></html>`);
+      const fallbackHtml = fullHtml || normalizeMathForWord(content.includes('<!DOCTYPE html>') ? content : `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${renderMarkdownPreservingMath(md, content)}</body></html>`);
       const blob = new Blob(['\ufeff', fallbackHtml], { type: 'application/msword' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');

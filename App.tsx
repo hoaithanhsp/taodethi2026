@@ -9,7 +9,7 @@ import VariantsExamPage from './components/VariantsExamPage';
 
 import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, isValidGoogleAiApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel, getAiProvider, setAiProvider } from './services/geminiService';
 import { parseDocxWithMath } from './services/docxMathParser';
-import { normalizeMathForWord } from './services/mathExportUtils';
+import { normalizeMathForWord, renderMarkdownPreservingMath } from './services/mathExportUtils';
 // @ts-ignore
 import { asBlob } from 'html-docx-js-typescript';
 import MarkdownIt from 'markdown-it';
@@ -723,8 +723,8 @@ const App: React.FC = () => {
           </style>`
         );
       } else {
-        // Nếu là MARKDOWN: Bắt buộc render sang HTML trước bằng mdParser
-        const renderedBody = mdParser.render(content);
+        // Nếu là MARKDOWN: render sang HTML, tạm cất công thức để markdown-it không làm hỏng LaTeX
+        const renderedBody = renderMarkdownPreservingMath(mdParser, content);
         
         sourceHTML = `
           <!DOCTYPE html>
@@ -780,7 +780,7 @@ const App: React.FC = () => {
     } catch (error) {
       console.error('Lỗi xuất file Word (.docx), fallback sang .doc:', error);
       // Fallback: xuất .doc nếu .docx thất bại
-      const fallbackHtml = normalizeMathForWord(sourceHTML || (content.includes('<!DOCTYPE html>') ? content : `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${mdParser.render(content)}</body></html>`));
+      const fallbackHtml = normalizeMathForWord(sourceHTML || (content.includes('<!DOCTYPE html>') ? content : `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${renderMarkdownPreservingMath(mdParser, content)}</body></html>`));
       const blob = new Blob(['\ufeff', fallbackHtml], { type: 'application/msword' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
