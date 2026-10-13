@@ -167,9 +167,9 @@ export const buildSpecsPromptForCustomTemplate = (
     config: QuestionConfig,
 ): string => {
     const objectivesMap: string[] = [];
-    data.chapters.forEach(c => c.lessons.forEach(l => {
+    data.chapters.forEach(c => (c.lessons || []).forEach(l => {
         if (selectedLessonIds.has(l.id)) {
-            objectivesMap.push(`- Bài "${l.name}": \n   + Biết: ${l.objectives.biet || '...'}\n   + Hiểu: ${l.objectives.hieu || '...'}\n   + Vận dụng: ${l.objectives.van_dung || '...'}\n   + Vận dụng cao: ${l.objectives.van_dung_cao || '...'}`);
+            objectivesMap.push(`- Bài "${l.name}": \n   + Biết: ${l.objectives?.biet || '...'}\n   + Hiểu: ${l.objectives?.hieu || '...'}\n   + Vận dụng: ${l.objectives?.van_dung || '...'}\n   + Vận dụng cao: ${l.objectives?.van_dung_cao || '...'}`);
         }
     }));
 

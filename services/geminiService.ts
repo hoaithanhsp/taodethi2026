@@ -477,7 +477,22 @@ export const extractInfoFromDocument = async (file: File, selectedSubject?: stri
     if (start !== -1 && end !== -1 && end >= start) {
       jsonToParse = resultText.substring(start, end + 1);
     }
-    return JSON.parse(jsonToParse);
+    const parsed = JSON.parse(jsonToParse);
+    // Chuẩn hoá: AI có thể trả "objectives": null / "lessons": null cho bài Ôn tập, Kiểm tra, Thực hành...
+    const chapters = Array.isArray(parsed?.chapters)
+      ? parsed.chapters.map((c: any) => ({
+          ...c,
+          lessons: Array.isArray(c?.lessons)
+            ? c.lessons.map((l: any) => ({
+                ...l,
+                objectives: l?.objectives && typeof l.objectives === 'object'
+                  ? l.objectives
+                  : { biet: '', hieu: '', van_dung: '', van_dung_cao: '' },
+              }))
+            : [],
+        }))
+      : [];
+    return { ...parsed, chapters };
   } catch (e) {
     console.error("Failed to parse JSON. Raw text:", resultText);
     throw new Error("Không thể nhận diện nội dung file. Vui lòng kiểm tra lại định dạng hoặc thử file khác.");
@@ -699,9 +714,9 @@ export const generateStep2Specs = async (
 ): Promise<string> => {
 
   const objectivesMap: string[] = [];
-  data.chapters.forEach(c => c.lessons.forEach(l => {
+  data.chapters.forEach(c => (c.lessons || []).forEach(l => {
     if (selectedLessonIds.has(l.id)) {
-      objectivesMap.push(`- Bài "${l.name}": \n   + Biết: ${l.objectives.biet || '...'}\n   + Hiểu: ${l.objectives.hieu || '...'}\n   + Vận dụng: ${l.objectives.van_dung || '...'}\n   + Vận dụng cao: ${l.objectives.van_dung_cao || '...'}`);
+      objectivesMap.push(`- Bài "${l.name}": \n   + Biết: ${l.objectives?.biet || '...'}\n   + Hiểu: ${l.objectives?.hieu || '...'}\n   + Vận dụng: ${l.objectives?.van_dung || '...'}\n   + Vận dụng cao: ${l.objectives?.van_dung_cao || '...'}`);
     }
   }));
 
