@@ -120,7 +120,7 @@ export interface ParsedImportQuestion {
 // ============================================
 // MA TRẬN ĐẶC TẢ — Mẫu template
 // ============================================
-export type MatrixTemplate = 'template1' | 'template2' | 'template3';
+export type MatrixTemplate = 'template1' | 'template2' | 'template3' | 'template4';
 
 // ============================================
 // APP MODE — Chế độ ứng dụng

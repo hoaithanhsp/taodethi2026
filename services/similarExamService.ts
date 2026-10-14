@@ -99,13 +99,23 @@ Trình bày rõ ràng, phân chia các phần:
 **1. Trắc nghiệm nhiều phương án:**
 Câu 1: A | Câu 2: B | Câu 3: C | ...
 
-**2. Trắc nghiệm Đúng/Sai:**
-Câu ...: a) Đ; b) S; c) Đ; d) S
+**2. Trắc nghiệm Đúng - Sai (Đ/S) (BẮT BUỘC LẬP BẢNG ĐỦ 4 ĐÁP ÁN a, b, c, d):**
+| Câu | Ý a) | Ý b) | Ý c) | Ý d) |
+| :---: | :---: | :---: | :---: | :---: |
+| **Câu 1** | **Đ** | **S** | **Đ** | **S** |
+| **Câu 2** | **S** | **Đ** | **S** | **Đ** |
 
 **3. Trả lời ngắn:**
 Câu ...: Đáp số là ...
 
 #### II. LỜI GIẢI CHI TIẾT (BẮT BUỘC GIẢI TẤT CẢ CÁC CÂU)
+- **ĐẶC BIỆT CHÚ Ý PHẦN ĐÚNG - SAI (Đ/S):** Bắt buộc trình bày dưới dạng **Bảng thông tin hướng dẫn giải và 4 đáp án** cho từng câu Đúng - Sai (để khi xuất ra file Word có bảng đầy đủ 4 đáp án a, b, c, d và lời giải chi tiết cho từng ý):
+| Câu | Ý | Đáp án (Đ/S) | Hướng dẫn giải chi tiết |
+| :---: | :---: | :---: | :--- |
+| **Câu 1** | **a)** | **Đ** | Giải thích / lời giải chi tiết cho ý a)... |
+| **Câu 1** | **b)** | **S** | Giải thích / lời giải chi tiết cho ý b)... |
+| **Câu 1** | **c)** | **Đ** | Giải thích / lời giải chi tiết cho ý c)... |
+| **Câu 1** | **d)** | **S** | Giải thích / lời giải chi tiết cho ý d)... |
 
 ## Quy tắc Markdown:
 - Công thức: Inline: $x^2 + y^2 = r^2$ | Display: $$ \\\\int_{a}^{b} f(x)dx $$

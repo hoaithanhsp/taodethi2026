@@ -699,15 +699,22 @@ const App: React.FC = () => {
   const handleDownloadWord = async (content: string, fileName: string) => {
     let sourceHTML = '';
     try {
+      const cleanedContent = content.replace(/```html/g, '').replace(/```/g, '').trim();
 
       // Nếu đã là Full HTML document (có thẻ html/body hoặc doctype)
-      if (content.includes('<!DOCTYPE html>') || (content.includes('<html') && content.includes('<body'))) {
-        sourceHTML = content.replace(
+      if (cleanedContent.includes('<!DOCTYPE html>') || (cleanedContent.includes('<html') && cleanedContent.includes('<body'))) {
+        sourceHTML = cleanedContent.replace(
           /<\/style>/i,
           `
             table { page-break-inside: auto; border-collapse: collapse; width: 100%; margin-bottom: 1rem; }
             tr { page-break-inside: avoid; page-break-after: auto; }
             td, th { border: 1px solid black; padding: 5px; vertical-align: middle; }
+            th { background-color: #f2f2f2; font-weight: bold; text-align: center; }
+            .answer-table { width: 100%; border-collapse: collapse; margin: 8pt 0 12pt 0; }
+            .answer-table th, .answer-table td { border: 1px solid #000; padding: 5pt 6pt; vertical-align: middle; }
+            .answer-table th { background-color: #f2f2f2; font-weight: bold; text-align: center; }
+            .answer-table td.center { text-align: center; }
+            .answer-table td.left { text-align: left; }
             p { margin-top: 4pt; margin-bottom: 4pt; line-height: 1.4; page-break-inside: avoid; }
             .options { margin-left: 15pt; page-break-inside: avoid; }
             .option-item { margin-bottom: 3pt; }
@@ -724,7 +731,7 @@ const App: React.FC = () => {
         );
       } else {
         // Nếu là MARKDOWN: render sang HTML, tạm cất công thức để markdown-it không làm hỏng LaTeX
-        const renderedBody = renderMarkdownPreservingMath(mdParser, content);
+        const renderedBody = renderMarkdownPreservingMath(mdParser, cleanedContent);
         
         sourceHTML = `
           <!DOCTYPE html>
@@ -741,7 +748,12 @@ const App: React.FC = () => {
               table { border-collapse: collapse; width: 100%; margin: 8pt 0; page-break-inside: auto; }
               tr { page-break-inside: avoid; page-break-after: auto; }
               td, th { border: 1px solid black; padding: 4pt 6pt; vertical-align: middle; }
-              th { background-color: #f2f2f2; font-weight: bold; }
+              th { background-color: #f2f2f2; font-weight: bold; text-align: center; }
+              .answer-table { width: 100%; border-collapse: collapse; margin: 8pt 0 12pt 0; }
+              .answer-table th, .answer-table td { border: 1px solid #000; padding: 5pt 6pt; vertical-align: middle; }
+              .answer-table th { background-color: #f2f2f2; font-weight: bold; text-align: center; }
+              .answer-table td.center { text-align: center; }
+              .answer-table td.left { text-align: left; }
               strong { font-weight: bold; }
               .options { margin-left: 15pt; page-break-inside: avoid; }
               .option-item { margin-bottom: 3pt; }
@@ -760,6 +772,9 @@ const App: React.FC = () => {
           </html>
         `;
       }
+
+      // Đảm bảo mọi bảng (trừ bảng biến thiên .bbt-table) đều có border="1" để hiển thị rõ khung bảng trong Word
+      sourceHTML = sourceHTML.replace(/<table(?![^>]*bbt-table)(?![^>]*border=)/gi, '<table border="1" cellspacing="0" cellpadding="5"');
 
       // Chuẩn hoá LaTeX: tách công thức khỏi chữ + tách ranh giới cho MathType
       sourceHTML = normalizeMathForWord(sourceHTML);
@@ -1074,7 +1089,7 @@ const App: React.FC = () => {
           Chọn mẫu Ma trận – Đặc tả
         </h2>
         <p className="text-sm text-slate-500 mb-4">Chọn mẫu format bảng Ma trận & Đặc tả mà AI sẽ sinh ra.</p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {MATRIX_TEMPLATES.map((tmpl) => (
             <button
               key={tmpl.id}

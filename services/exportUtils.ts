@@ -11,8 +11,14 @@ const md = new MarkdownIt({
 
 export const exportToDoc = async (content: string, fileName: string) => {
   let fullHtml = '';
+  const cleanedContent = content.replace(/```html/g, '').replace(/```/g, '').trim();
 
   const bbtCss = `
+    .answer-table { width: 100%; border-collapse: collapse; margin: 8pt 0 12pt 0; }
+    .answer-table th, .answer-table td { border: 1px solid #000; padding: 5pt 6pt; vertical-align: middle; }
+    .answer-table th { background-color: #f2f2f2; font-weight: bold; text-align: center; }
+    .answer-table td.center { text-align: center; }
+    .answer-table td.left { text-align: left; }
     .bbt-table { border-collapse: collapse; margin: 12pt auto; border: 1px solid #000; min-width: 420px; }
     .bbt-table td { padding: 4pt 8pt; text-align: center; vertical-align: middle; border: none; }
     .bbt-table .label-col { font-weight: bold; font-style: italic; border-right: 1px solid #000; width: 40pt; }
@@ -22,20 +28,21 @@ export const exportToDoc = async (content: string, fileName: string) => {
     .question-number { font-weight: bold; }
   `;
 
-  if (content.includes('<!DOCTYPE html>') || (content.includes('<html') && content.includes('<body'))) {
-    fullHtml = content.replace(
+  if (cleanedContent.includes('<!DOCTYPE html>') || (cleanedContent.includes('<html') && cleanedContent.includes('<body'))) {
+    fullHtml = cleanedContent.replace(
       /<\/style>/i,
       `
         table { page-break-inside: auto; border-collapse: collapse; width: 100%; margin-bottom: 1rem; }
         tr { page-break-inside: avoid; page-break-after: auto; }
         td, th { border: 1px solid black; padding: 5px; vertical-align: middle; }
+        th { background-color: #f2f2f2; font-weight: bold; text-align: center; }
         p { margin-top: 4pt; margin-bottom: 4pt; line-height: 1.4; page-break-inside: avoid; }
         ${bbtCss}
       </style>`
     );
   } else {
     // Render markdown to HTML — tạm cất LaTeX để markdown-it không làm hỏng (\\, \{, \[ ...)
-    const htmlBody = renderMarkdownPreservingMath(md, content);
+    const htmlBody = renderMarkdownPreservingMath(md, cleanedContent);
 
     const css = `
       <style>
@@ -67,6 +74,7 @@ export const exportToDoc = async (content: string, fileName: string) => {
         th { 
           background-color: #f2f2f2; 
           font-weight: bold;
+          text-align: center;
         }
         ol, ul { margin: 4pt 0 8pt 20pt; }
         li { margin-bottom: 3pt; }
@@ -90,6 +98,9 @@ export const exportToDoc = async (content: string, fileName: string) => {
       </html>
     `;
   }
+
+  // Đảm bảo mọi bảng (trừ bảng biến thiên .bbt-table) đều có border="1" để hiển thị rõ khung bảng trong Word
+  fullHtml = fullHtml.replace(/<table(?![^>]*bbt-table)(?![^>]*border=)/gi, '<table border="1" cellspacing="0" cellpadding="5"');
 
   // Chuẩn hoá LaTeX cho Word/MathType (áp dụng cho cả nhánh HTML lẫn Markdown)
   fullHtml = normalizeMathForWord(fullHtml);

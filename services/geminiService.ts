@@ -699,7 +699,8 @@ export const generateStep1Matrix = async (
         temperature: 0.1,
       },
     });
-    return response.text || "Lỗi tạo ma trận.";
+    const text = response.text || "Lỗi tạo ma trận.";
+    return text.replace(/```html/g, '').replace(/```/g, '');
   });
 };
 
@@ -722,7 +723,8 @@ export const generateStep2Specs = async (
 
   const config = data.questionConfig;
   const totalEssayQuestions = config.essay.biet + config.essay.hieu + config.essay.van_dung + config.essay.van_dung_cao;
-  const hasEssay = totalEssayQuestions > 0;
+  const isGradeNoEssay = GRADE_NO_ESSAY.includes(data.grade);
+  const hasEssay = !isGradeNoEssay && totalEssayQuestions > 0;
 
   const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
   const type2QuestionsCount = config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao;
@@ -744,7 +746,7 @@ export const generateStep2Specs = async (
   ${matrixContent}
 
   **DỮ LIỆU YÊU CẦU CẦN ĐẠT:**
-  ${objectivesMap.join('\\n')}
+  ${objectivesMap.join('\n')}
 
   **===== BẢNG SỐ LƯỢNG GỐC (PHẢI KHỚP 100% - ƯU TIÊN HƠN MA TRẬN NẾU CÓ XUNG ĐỘT) =====**
   - **QUY ƯỚC DẠNG II (Đúng/Sai):**
@@ -798,7 +800,7 @@ export const generateStep2Specs = async (
   - Dạng I: B=${type1Total.biet}/H=${type1Total.hieu}/VD=${type1Total.vd} (Tổng = ${type1Total.biet + type1Total.hieu + type1Total.vd} câu)
   - Dạng II: Đủ ${type2QuestionsCount} câu, mỗi câu 4 ý a,b,c,d (Tổng = ${type2SubItemsTotal} ý từ II.1a..d đến II.${type2QuestionsCount}a..d)
   - Dạng III: B=${type3Total.biet}/H=${type3Total.hieu}/VD=${type3Total.vd} (Tổng = ${type3Total.biet + type3Total.hieu + type3Total.vd} câu)
-  ${totalEssayQuestions > 0 ? `- Tự luận: B=${essayTotal.biet}/H=${essayTotal.hieu}/VD=${essayTotal.vd} (Tổng = ${essayTotal.biet + essayTotal.hieu + essayTotal.vd} câu)` : ''}
+  ${hasEssay ? `- Tự luận: B=${essayTotal.biet}/H=${essayTotal.hieu}/VD=${essayTotal.vd} (Tổng = ${essayTotal.biet + essayTotal.hieu + essayTotal.vd} câu)` : ''}
   Nếu sai thì sửa lại trước khi trả output.
 
   **QUY TẮC CHÚ THÍCH (FOOTNOTES) - BẮT BUỘC:**
@@ -815,7 +817,7 @@ export const generateStep2Specs = async (
   .bold { font-weight: bold; }
   `;
 
-  // --- TEMPLATE 2 or 3: Use custom prompt + template file (parsed as HTML) ---
+  // --- TEMPLATE 2, 3 or 4: Use custom prompt + template file (parsed as HTML) ---
   if (template !== 'template1') {
     const customPrompt = buildSpecsPromptForCustomTemplate(
       template, matrixContent, data, selectedLessonIds, config
@@ -851,7 +853,8 @@ export const generateStep2Specs = async (
         temperature: 0.1,
       },
     });
-    return response.text || "Lỗi tạo đặc tả.";
+    const text = response.text || "Lỗi tạo đặc tả.";
+    return text.replace(/```html/g, '').replace(/```/g, '');
   });
 };
 
@@ -993,7 +996,7 @@ export const generateStep3Exam = async (
   }
 
   if (counts.type2 > 0) {
-    structureInstructions += `- **PHẦN II (Đúng/Sai):** Tạo ${counts.type2} câu hỏi (mỗi câu 4 ý a,b,c,d) và Đáp án Phần II.\n`;
+    structureInstructions += `- **PHẦN II (Đúng/Sai):** Tạo ${counts.type2} câu hỏi (mỗi câu 4 ý a,b,c,d) và Đáp án Phần II (BẮT BUỘC có bảng thông tin hướng dẫn giải chi tiết và đủ 4 đáp án a, b, c, d cho mỗi câu).\n`;
   } else {
     structureInstructions += `- **PHẦN II:** KHÔNG ĐƯỢC TẠO (Số câu = 0). Bỏ qua hoàn toàn.\n`;
   }
@@ -1118,6 +1121,11 @@ export const generateStep3Exam = async (
      - .question-number { font-weight: bold; }
      - .options { margin-left: 20px; }
      - .option-item { margin-bottom: 5px; }
+     - .answer-table { width: 100%; border-collapse: collapse; margin: 10px 0 18px 0; font-family: "Times New Roman", serif; font-size: 13pt; }
+     - .answer-table th, .answer-table td { border: 1px solid #000; padding: 6px 8px; vertical-align: middle; }
+     - .answer-table th { font-weight: bold; background-color: #f2f2f2; text-align: center; }
+     - .answer-table td.center { text-align: center; }
+     - .answer-table td.left { text-align: left; }
      /* CSS BẢNG BIẾN THIÊN CHUẨN SGK (GIỐNG WORD/LATEX - KHÔNG ĐƯỜNG KẺ DỌC NỘI BỘ) */
      - .bbt-table { 
          border-collapse: collapse; 
@@ -1234,9 +1242,9 @@ export const generateStep3Exam = async (
        <br> <!-- Dòng trống giữa các câu -->
 
   4. **LOGIC DẠNG II (Đúng/Sai):**
-     - Nếu Bảng đặc tả ghi **C13a,b** (Biết) và **C13c,d** (Hiểu), hãy gộp thành **MỘT CÂU 13 DUY NHẤT** có đề dẫn chung.
+     - Nếu Bảng đặc tả ghi **C13a,b** (hoặc **II.1a, II.1b**) ở Biết và **C13c** ở Hiểu, **C13d** ở VD, hãy gộp thành **MỘT CÂU DUY NHẤT** có đề dẫn chung và đủ **4 ý lệnh hỏi a), b), c), d)**.
      - Ví dụ:
-       <p><span class="question-number">Câu 13.</span> Cho hàm số y = f(x)... Xét tính đúng sai của các mệnh đề:</p>
+       <p><span class="question-number">Câu 1.</span> Cho hàm số $y = f(x)$... Xét tính đúng sai của các mệnh đề sau:</p>
        <div class="options">
          <div class="option-item">a) Hàm số đồng biến...</div>
          <div class="option-item">b) Đồ thị đi qua...</div>
@@ -1244,10 +1252,76 @@ export const generateStep3Exam = async (
          <div class="option-item">d) Phương trình...</div>
        </div>
 
-  5. **ĐÁP ÁN:**
-     - Trình bày rõ ràng.
-     - <p><strong>Câu 1:</strong> A</p>
-     - <p><strong>Câu 2:</strong> C</p>
+  5. **ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM (ĐẶC BIỆT CHÚ Ý KHI XUẤT RA FILE WORD):**
+     - Phải trình bày đầy đủ đáp án cho tất cả các phần có trong đề thi bằng bảng HTML có khung viền rõ ràng (\`<table class="answer-table" border="1" cellspacing="0" cellpadding="6" style="border-collapse: collapse; width: 100%;">\`).
+     - **ĐỐI VỚI PHẦN I (Trắc nghiệm nhiều lựa chọn - nếu có):**
+       + Lập bảng đáp án nhanh Phần I (hàng Câu 1, 2, 3... và hàng Đáp án A, B, C, D).
+     - **⚠️ ĐỐI VỚI PHẦN II — TRẮC NGHIỆM ĐÚNG - SAI (Đ/S) (BẮT BUỘC TUÂN THỦ 100%):**
+       + Mỗi câu hỏi Đúng - Sai gồm **4 ý lệnh hỏi (a, b, c, d)** tương ứng với **4 đáp án (Đ hoặc S)**.
+       + Trong phần Đáp án / Hướng dẫn giải của Phần II, **BẮT BUỘC PHẢI CÓ BẢNG THÔNG TIN HƯỚNG DẪN GIẢI VÀ 4 ĐÁP ÁN** theo đúng 2 bảng chuẩn dưới đây để khi xuất ra file Word hiển thị đầy đủ:
+       
+       **(a) Bảng tổng hợp 4 đáp án Đúng - Sai (Đ/S) cho từng câu:**
+       <table class="answer-table" border="1" cellspacing="0" cellpadding="6" style="border-collapse: collapse; width: 100%;">
+         <thead>
+           <tr>
+             <th style="width: 20%; text-align: center;">Câu</th>
+             <th style="width: 20%; text-align: center;">Ý a)</th>
+             <th style="width: 20%; text-align: center;">Ý b)</th>
+             <th style="width: 20%; text-align: center;">Ý c)</th>
+             <th style="width: 20%; text-align: center;">Ý d)</th>
+           </tr>
+         </thead>
+         <tbody>
+           <tr>
+             <td class="center" style="text-align: center; font-weight: bold;">Câu 1</td>
+             <td class="center" style="text-align: center; font-weight: bold;">Đ</td>
+             <td class="center" style="text-align: center; font-weight: bold;">S</td>
+             <td class="center" style="text-align: center; font-weight: bold;">Đ</td>
+             <td class="center" style="text-align: center; font-weight: bold;">S</td>
+           </tr>
+         </tbody>
+       </table>
+
+       **(b) Bảng thông tin hướng dẫn giải chi tiết và 4 đáp án (a, b, c, d) cho từng câu Đúng - Sai:**
+       <table class="answer-table" border="1" cellspacing="0" cellpadding="6" style="border-collapse: collapse; width: 100%;">
+         <thead>
+           <tr>
+             <th style="width: 12%; text-align: center;">Câu</th>
+             <th style="width: 10%; text-align: center;">Ý</th>
+             <th style="width: 15%; text-align: center;">Đáp án (Đ/S)</th>
+             <th style="width: 63%; text-align: center;">Hướng dẫn giải chi tiết</th>
+           </tr>
+         </thead>
+         <tbody>
+           <tr>
+             <td rowspan="4" class="center" style="text-align: center; font-weight: bold;">Câu 1</td>
+             <td class="center" style="text-align: center; font-weight: bold;">a)</td>
+             <td class="center" style="text-align: center; font-weight: bold;">Đ</td>
+             <td class="left" style="text-align: left;">Giải thích / trình bày lời giải chi tiết vì sao ý a) Đúng...</td>
+           </tr>
+           <tr>
+             <td class="center" style="text-align: center; font-weight: bold;">b)</td>
+             <td class="center" style="text-align: center; font-weight: bold;">S</td>
+             <td class="left" style="text-align: left;">Giải thích / trình bày lời giải chi tiết vì sao ý b) Sai...</td>
+           </tr>
+           <tr>
+             <td class="center" style="text-align: center; font-weight: bold;">c)</td>
+             <td class="center" style="text-align: center; font-weight: bold;">Đ</td>
+             <td class="left" style="text-align: left;">Giải thích / trình bày lời giải chi tiết vì sao ý c) Đúng...</td>
+           </tr>
+           <tr>
+             <td class="center" style="text-align: center; font-weight: bold;">d)</td>
+             <td class="center" style="text-align: center; font-weight: bold;">S</td>
+             <td class="left" style="text-align: left;">Giải thích / trình bày lời giải chi tiết vì sao ý d) Sai...</td>
+           </tr>
+         </tbody>
+       </table>
+       *(Lặp lại đủ 4 dòng a, b, c, d cho mọi câu hỏi thuộc Phần II. TUYỆT ĐỐI KHÔNG bỏ sót bất kỳ đáp án nào trong 4 đáp án a, b, c, d và KHÔNG bỏ trống cột Hướng dẫn giải chi tiết).*
+
+     - **ĐỐI VỚI PHẦN III (Trả lời ngắn - nếu có):**
+       + Lập bảng gồm các cột: Câu | Đáp án | Hướng dẫn giải chi tiết.
+     - **ĐỐI VỚI PHẦN IV (Tự luận - nếu có):**
+       + Lập bảng Hướng dẫn chấm gồm các cột: Câu | Nội dung / Hướng dẫn giải chi tiết | Điểm.
 
   **NGUYÊN TẮC CHUNG (BẮT BUỘC TUÂN THỦ):**
   1. **⛔ CẤM TẠO PHẦN THỪA (QUAN TRỌNG NHẤT):** Đề thi CHỈ ĐƯỢC CHỨA các phần có trong WHITELIST ở trên: [${allowedParts.join(', ')}]. Nếu PHẦN IV (Tự luận) KHÔNG có trong whitelist → TUYỆT ĐỐI KHÔNG tạo câu tự luận, không tạo tiêu đề "PHẦN IV", không nhắc đến tự luận.
@@ -1259,7 +1333,9 @@ export const generateStep3Exam = async (
      - KHÔNG đặt công thức trong khối code (code fence), KHÔNG thêm ký tự lạ quanh dấu $, KHÔNG được bỏ hoặc đổi dấu $.
      - Kết thúc: tự kiểm tra; nếu còn ký tự Unicode thay công thức hoặc còn công thức dính liền chữ thì sửa lại trước khi trả kết quả.
   3. **LƯU Ý MÔN HỌC:** Toàn bộ câu hỏi PHẢI thuộc phạm vi kiến thức môn ${inputData.subject} lớp ${inputData.grade}. KHÔNG được ra câu hỏi thuộc môn khác.
-  4. **KIỂM TRA CUỐI CÙNG:** Trước khi trả output, hãy tự kiểm tra: Đề thi có chứa phần nào KHÔNG nằm trong whitelist không? Nếu có → XÓA phần đó.
+  4. **KIỂM TRA CUỐI CÙNG:** Trước khi trả output, hãy tự kiểm tra:
+     - Đề thi có chứa phần nào KHÔNG nằm trong whitelist không? Nếu có → XÓA phần đó.
+     - Phần Đáp án Đúng - Sai (Đ/S) đã có đủ bảng 4 đáp án (a, b, c, d) và bảng thông tin hướng dẫn giải chi tiết cho cả 4 ý chưa? Nếu chưa → BỔ SUNG đầy đủ.
   `;
 
   return callWithFallback(async (ai, model) => {
@@ -1293,6 +1369,7 @@ export const generateStep3Exam = async (
         temperature: 0.7,
       },
     });
-    return response.text || "Lỗi tạo đề thi.";
+    const text = response.text || "Lỗi tạo đề thi.";
+    return text.replace(/```html/g, '').replace(/```/g, '');
   });
 };

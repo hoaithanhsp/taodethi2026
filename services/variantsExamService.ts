@@ -22,6 +22,13 @@ Quy trình làm việc chia làm 3 bước độc lập. Tại mỗi bước, b�
    - **Phần 2: ĐÁP ÁN & HƯỚNG DẪN GIẢI** (Ngay bên dưới đề thi).
      + Câu DỄ (Nhận biết/Thông hiểu): Chỉ ghi đáp án (Vd: 1.A, 2.B).
      + Câu KHÓ (Vận dụng/Vận dụng cao): Ghi đáp án + Lời giải vắn tắt/Key steps.
+     + **ĐẶC BIỆT CHÚ Ý PHẦN ĐÚNG - SAI (Đ/S):** Bắt buộc trình bày **Bảng thông tin hướng dẫn giải và 4 đáp án (a, b, c, d)** cho từng câu Đúng - Sai:
+       | Câu | Ý | Đáp án (Đ/S) | Hướng dẫn giải chi tiết |
+       | :---: | :---: | :---: | :--- |
+       | **Câu 1** | **a)** | **Đ** | Hướng dẫn giải ý a)... |
+       | **Câu 1** | **b)** | **S** | Hướng dẫn giải ý b)... |
+       | **Câu 1** | **c)** | **Đ** | Hướng dẫn giải ý c)... |
+       | **Câu 1** | **d)** | **S** | Hướng dẫn giải ý d)... |
 
 4. **Tuyệt đối không:** Không dùng ASCII art vẽ khung.
 
