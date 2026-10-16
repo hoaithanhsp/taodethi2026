@@ -3,6 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 import { SYSTEM_INSTRUCTION, MODEL_NAME, PROVIDER_FALLBACK_MODELS, GRADE_NO_ESSAY, getSubjectFootnotes, AiProvider } from '../constants';
 import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate } from '../types';
 import { fetchTemplateHtml, buildMatrixPromptForCustomTemplate, buildSpecsPromptForCustomTemplate } from './matrixTemplates';
+import { FIGURE_JSON_HTML_INSTRUCTIONS, renderFiguresInHtml } from './figureEngine';
 
 // --- Dual AI Provider Management ---
 const GOOGLE_AI_PROVIDER_KEY = 'google_ai_provider';
@@ -1335,7 +1336,8 @@ export const generateStep3Exam = async (
   3. **LƯU Ý MÔN HỌC:** Toàn bộ câu hỏi PHẢI thuộc phạm vi kiến thức môn ${inputData.subject} lớp ${inputData.grade}. KHÔNG được ra câu hỏi thuộc môn khác.
   4. **KIỂM TRA CUỐI CÙNG:** Trước khi trả output, hãy tự kiểm tra:
      - Đề thi có chứa phần nào KHÔNG nằm trong whitelist không? Nếu có → XÓA phần đó.
-     - Phần Đáp án Đúng - Sai (Đ/S) đã có đủ bảng 4 đáp án (a, b, c, d) và bảng thông tin hướng dẫn giải chi tiết cho cả 4 ý chưa? Nếu chưa → BỔ SUNG đầy đủ.
+      - Phần Đáp án Đúng - Sai (Đ/S) đã có đủ bảng 4 đáp án (a, b, c, d) và bảng thông tin hướng dẫn giải chi tiết cho cả 4 ý chưa? Nếu chưa → BỔ SUNG đầy đủ.
+  ${FIGURE_JSON_HTML_INSTRUCTIONS}
   `;
 
   return callWithFallback(async (ai, model) => {
@@ -1370,6 +1372,7 @@ export const generateStep3Exam = async (
       },
     });
     const text = response.text || "Lỗi tạo đề thi.";
-    return text.replace(/```html/g, '').replace(/```/g, '');
+    const cleaned = text.replace(/^```html\s*/i, '').replace(/\s*```$/i, '');
+    return renderFiguresInHtml(cleaned);
   });
 };

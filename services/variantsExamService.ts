@@ -2,6 +2,7 @@ import { GoogleGenAI, Chat, Part, Content } from "@google/genai";
 import { VariantFileData } from "../types";
 import { getApiKey, createGoogleAiClient, getAiProvider } from "./geminiService";
 import { AiProvider } from "../constants";
+import { FIGURE_JSON_MARKDOWN_INSTRUCTIONS } from "./figureEngine";
 
 const VARIANTS_SYSTEM_INSTRUCTION = `
 # ExamGen Pro - SINH ĐỀ THI ĐA MÔN TỰ ĐỘNG
@@ -37,6 +38,8 @@ Quy trình làm việc chia làm 3 bước độc lập. Tại mỗi bước, b�
    - Đáp án KHÔNG ĐƯỢC vượt quá 4 ký tự.
    - Nếu kết quả vượt quá 4 ký tự, đề bài phải yêu cầu làm tròn.
    - Thiết kế số liệu sao cho đáp án tự nhiên thỏa mãn điều kiện trên.
+
+${FIGURE_JSON_MARKDOWN_INSTRUCTIONS}
 `;
 
 export const getVariantModels = (provider: AiProvider = getAiProvider()) => {

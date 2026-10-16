@@ -2,6 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { SimilarExamResult, SimilarExamOptions } from "../types";
 import { getApiKey, getFriendlyGeminiErrorMessage, getGeminiModelsToTry, parseApiError, createGoogleAiClient, getAiProvider } from "./geminiService";
 import { AiProvider } from "../constants";
+import { FIGURE_JSON_MARKDOWN_INSTRUCTIONS } from "./figureEngine";
 
 const SIMILAR_SYSTEM_INSTRUCTION = `Bạn là trợ lý tạo đề thi THPT chuyên nghiệp. Nhiệm vụ của bạn là phân tích đề thi mẫu và sinh ra 1 đề thi tương tự.
 
@@ -117,9 +118,9 @@ Câu ...: Đáp số là ...
 | **Câu 1** | **c)** | **Đ** | Giải thích / lời giải chi tiết cho ý c)... |
 | **Câu 1** | **d)** | **S** | Giải thích / lời giải chi tiết cho ý d)... |
 
-## Quy tắc Markdown:
+## Quy tắc Markdown & Hình vẽ trực quan:
 - Công thức: Inline: $x^2 + y^2 = r^2$ | Display: $$ \\\\int_{a}^{b} f(x)dx $$
-- Hình vẽ TikZ: Xuất dạng mã TikZ trong block \`\`\`latex ... \`\`\`
+${FIGURE_JSON_MARKDOWN_INSTRUCTIONS}
 `;
 
 
@@ -143,12 +144,12 @@ export const generateSimilarExam = async (
   if (options) {
     if (options.diagramMode === 'detailed') {
       customInstructions += `\n\n### YÊU CẦU NÂNG CAO VỀ HÌNH VẼ (High Detail):
-- Ưu tiên sử dụng thư viện TikZ chuyên sâu.
-- Với hình không gian: Vẽ chính xác tỉ lệ, nét đứt/liền chuẩn xác.
-- Với đồ thị: Hiển thị đầy đủ tiệm cận, bảng biến thiên, điểm cực trị.`;
+- BẮT BUỘC vẽ hình trực quan bằng khối \`\`\`figure-json ... \`\`\` cho mọi câu có Bảng biến thiên (type: "bbt"), Đồ thị hàm số / Diện tích hình phẳng (type: "graph"), và Hình không gian 3D (type: "geo3d").
+- Với hình không gian: Khai báo đầy đủ các điểm phụ (extra) và ký hiệu góc vuông (marks).
+- Với đồ thị: Hiển thị đầy đủ tiệm cận, điểm cực trị và miền tô tích phân nếu có.`;
     } else {
       customInstructions += `\n\n### YÊU CẦU VỀ HÌNH VẼ (Standard):
-- Sử dụng TikZ cơ bản, tối ưu tốc độ.`;
+- Sử dụng khối \`\`\`figure-json ... \`\`\` để vẽ tự động Bảng biến thiên, Đồ thị hàm số và Hình không gian 3D.`;
     }
 
     if (options.solutionMode === 'concise') {

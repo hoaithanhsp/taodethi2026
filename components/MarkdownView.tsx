@@ -1,5 +1,6 @@
 
 import React from 'react';
+import { renderFiguresInHtml, renderFigureSpecToSvg } from '../services/figureEngine';
 
 interface Props {
   content: string;
@@ -19,9 +20,10 @@ const MarkdownView: React.FC<Props> = ({ content }) => {
   };
 
   const renderContent = () => {
-    // If the entire content seems to be an HTML table (from Gemini), render it directly
+    // If the entire content seems to be an HTML table or Full HTML Document (from Gemini), render it directly with SVG figures
     if (isHtmlTable(content) || isHtmlDocument(content)) {
-        return <div className="overflow-x-auto p-4 bg-white text-black" dangerouslySetInnerHTML={{ __html: content }} />;
+        const htmlWithFigures = renderFiguresInHtml(content);
+        return <div className="overflow-x-auto p-4 bg-white text-black" dangerouslySetInnerHTML={{ __html: htmlWithFigures }} />;
     }
 
     // Otherwise, parse line by line (simple markdown parser)
@@ -46,7 +48,7 @@ const MarkdownView: React.FC<Props> = ({ content }) => {
               inHtmlTableBlock = false;
               elements.push(
                   <div key={`table-${index}`} className="my-6 overflow-x-auto border border-slate-200 rounded-lg shadow-sm">
-                      <div dangerouslySetInnerHTML={{ __html: htmlBuffer.join('\n') }} />
+                      <div dangerouslySetInnerHTML={{ __html: renderFiguresInHtml(htmlBuffer.join('\n')) }} />
                   </div>
               );
               htmlBuffer = [];
@@ -57,13 +59,29 @@ const MarkdownView: React.FC<Props> = ({ content }) => {
       // 2. Handle Code Blocks
       if (line.trim().startsWith('```')) {
         if (inCodeBlock) {
+          const rawCode = codeBlockContent.join('\n');
+          if (codeBlockLanguage.toLowerCase() === 'figure-json') {
+            const svg = renderFigureSpecToSvg(rawCode);
+            if (svg) {
+              elements.push(
+                <div
+                  key={`fig-${index}`}
+                  className="my-4 flex justify-center overflow-x-auto bg-white p-3 rounded-lg border border-slate-200"
+                  dangerouslySetInnerHTML={{ __html: svg }}
+                />
+              );
+              codeBlockContent = [];
+              inCodeBlock = false;
+              return;
+            }
+          }
           elements.push(
             <div key={`code-${index}`} className="my-4 bg-slate-900 rounded-lg overflow-hidden shadow-sm">
               <div className="bg-slate-800 px-4 py-1 text-xs text-slate-400 font-mono uppercase tracking-wider border-b border-slate-700">
                 {codeBlockLanguage || 'Code'}
               </div>
               <pre className="p-4 text-sm text-teal-300 font-mono overflow-x-auto whitespace-pre">
-                {codeBlockContent.join('\n')}
+                {rawCode}
               </pre>
             </div>
           );

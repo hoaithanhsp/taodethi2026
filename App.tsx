@@ -10,6 +10,7 @@ import VariantsExamPage from './components/VariantsExamPage';
 import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, isValidGoogleAiApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel, getAiProvider, setAiProvider } from './services/geminiService';
 import { parseDocxWithMath } from './services/docxMathParser';
 import { normalizeMathForWord, renderMarkdownPreservingMath } from './services/mathExportUtils';
+import { extractFiguresToPlaceholders, restoreFiguresAsPngForWord } from './services/figureEngine';
 // @ts-ignore
 import { asBlob } from 'html-docx-js-typescript';
 import MarkdownIt from 'markdown-it';
@@ -699,7 +700,8 @@ const App: React.FC = () => {
   const handleDownloadWord = async (content: string, fileName: string) => {
     let sourceHTML = '';
     try {
-      const cleanedContent = content.replace(/```html/g, '').replace(/```/g, '').trim();
+      const { text: contentWithoutFigures, figures } = extractFiguresToPlaceholders(content);
+      const cleanedContent = contentWithoutFigures.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
 
       // Nếu đã là Full HTML document (có thẻ html/body hoặc doctype)
       if (cleanedContent.includes('<!DOCTYPE html>') || (cleanedContent.includes('<html') && cleanedContent.includes('<body'))) {
@@ -778,6 +780,9 @@ const App: React.FC = () => {
 
       // Chuẩn hoá LaTeX: tách công thức khỏi chữ + tách ranh giới cho MathType
       sourceHTML = normalizeMathForWord(sourceHTML);
+
+      // Chuyển các hình vẽ (BBT, đồ thị, hình 3D) thành ảnh PNG 300 DPI nhúng vào Word
+      sourceHTML = await restoreFiguresAsPngForWord(sourceHTML, figures, 300);
 
       const blob = await asBlob(sourceHTML, {
         orientation: 'portrait',

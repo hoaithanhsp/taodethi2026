@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import { normalizeMathForWord, renderMarkdownPreservingMath } from './mathExportUtils';
+import { extractFiguresToPlaceholders, restoreFiguresAsPngForWord } from './figureEngine';
 // @ts-ignore
 import { asBlob } from 'html-docx-js-typescript';
 
@@ -11,7 +12,8 @@ const md = new MarkdownIt({
 
 export const exportToDoc = async (content: string, fileName: string) => {
   let fullHtml = '';
-  const cleanedContent = content.replace(/```html/g, '').replace(/```/g, '').trim();
+  const { text: contentWithoutFigures, figures } = extractFiguresToPlaceholders(content);
+  const cleanedContent = contentWithoutFigures.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
 
   const bbtCss = `
     .answer-table { width: 100%; border-collapse: collapse; margin: 8pt 0 12pt 0; }
@@ -104,6 +106,9 @@ export const exportToDoc = async (content: string, fileName: string) => {
 
   // Chuẩn hoá LaTeX cho Word/MathType (áp dụng cho cả nhánh HTML lẫn Markdown)
   fullHtml = normalizeMathForWord(fullHtml);
+
+  // Chuyển các hình vẽ (BBT, đồ thị, hình 3D) thành ảnh PNG 300 DPI nhúng vào Word
+  fullHtml = await restoreFiguresAsPngForWord(fullHtml, figures, 300);
 
   try {
     const blob = await asBlob(fullHtml, {
