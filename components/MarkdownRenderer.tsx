@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
-import { renderFigureSpecToSvg, downloadSvgAsPng } from '../services/figureEngine';
+import { renderFigureSpecToSvg, downloadSvgAsPng, sanitizeAndValidateFigureSpec } from '../services/figureEngine';
 
 interface MarkdownRendererProps {
   content: string;
@@ -11,12 +11,26 @@ interface MarkdownRendererProps {
 }
 
 const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className }) => {
-  // Chuyển các thẻ <script class="figure-json">...</script> sang khối ```figure-json để ReactMarkdown xử lý đồng nhất
+  // Chuyển các thẻ <script class="figure-json">...</script> sang khối ```figure-json và đối chiếu ngữ cảnh câu hỏi
   const normalizedContent = React.useMemo(() => {
     if (!content) return '';
-    return content.replace(
+    const withFences = content.replace(
       /<script[^>]*class=["'][^"']*figure-json[^"']*["'][^>]*>([\s\S]*?)<\/script>/gi,
       (_m, body) => `\n\`\`\`figure-json\n${String(body).trim()}\n\`\`\`\n`
+    );
+    return withFences.replace(
+      /```figure-json\s*([\s\S]*?)```/gi,
+      (full, jsonBody, offset) => {
+        try {
+          const before = withFences.slice(Math.max(0, Number(offset) - 600), Number(offset));
+          const parsed = JSON.parse(String(jsonBody).trim());
+          const fixed = sanitizeAndValidateFigureSpec(parsed, before);
+          if (!fixed) return '';
+          return `\`\`\`figure-json\n${JSON.stringify(fixed)}\n\`\`\``;
+        } catch {
+          return full;
+        }
+      }
     );
   }, [content]);
 
@@ -33,7 +47,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className 
 
             if (
               lang === 'figure-json' ||
-              (lang === 'json' && /"type"\s*:\s*"(bbt|graph|geo3d)"/i.test(rawText))
+              (lang === 'json' && /"type"\s*:\s*"(bbt|graph|geo2d|geo3d)"/i.test(rawText))
             ) {
               const svg = renderFigureSpecToSvg(rawText);
               if (svg) {

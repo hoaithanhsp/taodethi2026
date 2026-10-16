@@ -61,7 +61,8 @@ const MarkdownView: React.FC<Props> = ({ content }) => {
         if (inCodeBlock) {
           const rawCode = codeBlockContent.join('\n');
           if (codeBlockLanguage.toLowerCase() === 'figure-json') {
-            const svg = renderFigureSpecToSvg(rawCode);
+            const precedingCtx = lines.slice(Math.max(0, index - 25), index).join('\n');
+            const svg = renderFigureSpecToSvg(rawCode, precedingCtx);
             if (svg) {
               elements.push(
                 <div
@@ -70,10 +71,10 @@ const MarkdownView: React.FC<Props> = ({ content }) => {
                   dangerouslySetInnerHTML={{ __html: svg }}
                 />
               );
-              codeBlockContent = [];
-              inCodeBlock = false;
-              return;
             }
+            codeBlockContent = [];
+            inCodeBlock = false;
+            return;
           }
           elements.push(
             <div key={`code-${index}`} className="my-4 bg-slate-900 rounded-lg overflow-hidden shadow-sm">
