@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Copy, RotateCcw, FileSpreadsheet, CheckCircle, Download, FileText, Sliders, Image, List, BrainCircuit, BookOpen } from 'lucide-react';
 import FileUploadZone from './FileUploadZone';
 import MarkdownRenderer from './MarkdownRenderer';
+import BbtQuickGenerator from './BbtQuickGenerator';
 import { generateSimilarExam } from '../services/similarExamService';
 import { exportToDoc } from '../services/exportUtils';
 import { SimilarExamResult, SimilarExamFileData, DiagramMode, SolutionMode } from '../types';
@@ -304,6 +305,22 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
               </button>
             </div>
           </div>
+
+          {result && (activeTab === 'examContent' || activeTab === 'detailedSolution') && (
+            <BbtQuickGenerator
+              examContent={activeTab === 'examContent' ? result.examContent : result.detailedSolution}
+              onUpdateExamContent={(newContent) =>
+                setResult((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        [activeTab]: newContent,
+                      }
+                    : prev
+                )
+              }
+            />
+          )}
 
           {/* Content */}
           <div>

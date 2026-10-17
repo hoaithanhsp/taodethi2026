@@ -1153,74 +1153,23 @@ export const generateStep3Exam = async (
          border-bottom: 1px solid #000; 
        }
 
-  **===== QUY TẮC BẢNG BIẾN THIÊN CHUẨN SÁCH GIÁO KHOA (BẮT BUỘC) =====**
+  **===== QUY TẮC BẢNG BIẾN THIÊN CHUẨN SÁCH GIÁO KHOA (TỰ ĐỘNG TẠO ẢNH & DÁN VÀO CÂU HỎI) =====**
   
-  Khi đề bài có bảng biến thiên, PHẢI dùng cấu trúc HTML sau để hiển thị đẹp cả trên Web lẫn file Word xuất ra:
+  Khi câu hỏi hoặc lời giải có **Bảng biến thiên**, TUYỆT ĐỐI KHÔNG tự kẻ bảng HTML thủ công bằng ký tự mũi tên rời rạc.
+  Thay vào đó, **BẮT BUỘC** nhúng thẻ \`<script type="application/json" class="figure-json">...</script>\` ngay tại vị trí cần hiển thị bảng biến thiên trong câu hỏi (ngay dưới câu dẫn, trước các phương án A, B, C, D). Hệ thống sẽ tự động tính toán, vẽ thành **ảnh Bảng biến thiên chuẩn SGK 300 DPI** (kiểu \`tkz-tab\` LaTeX) và dán trực tiếp vào câu hỏi tương ứng!
   
-  1. **ĐƯỜNG KẺ:**
-     - CHỈ CÓ viền ngoài bảng (border: 1px solid #000).
-     - CHỈ CÓ 1 đường kẻ dọc ngăn cách cột nhãn (class="label-col" có border-right: 1px solid #000).
-     - CHỈ CÓ các đường kẻ ngang ngăn hàng x và hàng y' (class="row-border" có border-bottom: 1px solid #000).
-     - TUYỆT ĐỐI KHÔNG kẻ ô vuông dọc giữa các mốc giá trị!
+  1. **Trường hợp 1 — Biết công thức hàm số cụ thể (ví dụ $y = x^3 - 3x$, $y = -x^4 + 2x^2 + 3$, $y = \\frac{2x+1}{x-1}$):**
+     Chỉ cần khai báo trường \`"fn"\`, hệ thống sẽ tự tính đạo hàm, nghiệm, cực trị, giới hạn, vạch đôi không xác định và vẽ ảnh:
+     <script type="application/json" class="figure-json">
+     {"type": "bbt", "fn": "x^3 - 3*x"}
+     </script>
      
-  2. **HÀNG y PHÂN TẦNG CAO - THẤP (DÙNG 2 DÒNG CHO HÀNG y):**
-     - Cột nhãn dùng: <td rowspan="2" class="label-col">y</td>
-     - Dòng y thứ nhất (Tầng trên): Chỉ ghi giá trị CỰC ĐẠI và $+\\infty$ ở đúng cột tương ứng. Các ô khác để trống <td></td>.
-     - Dòng y thứ hai (Tầng dưới): Ghi $-\\infty$, mũi tên $\\nearrow$ hoặc $\\searrow$, và giá trị CỰC TIỂU ở dưới thấp.
-
-  **MẪU HTML CHUẨN CHO BẢNG BIẾN THIÊN (Cực đại tại x = -2 với y = -5; Cực tiểu tại x = 2 với y = -12):**
-  
-  <table class="bbt-table">
-    <!-- Hàng x -->
-    <tr class="row-border">
-      <td class="label-col">x</td>
-      <td>$-\\infty$</td>
-      <td></td>
-      <td>$-2$</td>
-      <td></td>
-      <td>$2$</td>
-      <td></td>
-      <td>$+\\infty$</td>
-    </tr>
-    <!-- Hàng y' -->
-    <tr class="row-border">
-      <td class="label-col">y'</td>
-      <td></td>
-      <td>+</td>
-      <td>0</td>
-      <td>−</td>
-      <td>0</td>
-      <td>+</td>
-      <td></td>
-    </tr>
-    <!-- Hàng y: Tầng cao (Cực đại -5, +∞) -->
-    <tr>
-      <td rowspan="2" class="label-col">y</td>
-      <td></td>
-      <td></td>
-      <td style="vertical-align: top; font-weight: bold;">$-5$</td>
-      <td>$\\searrow$</td>
-      <td></td>
-      <td></td>
-      <td style="vertical-align: top;">$+\\infty$</td>
-    </tr>
-    <!-- Hàng y: Tầng thấp (-∞, Cực tiểu -12) -->
-    <tr>
-      <td style="vertical-align: bottom;">$-\\infty$</td>
-      <td>$\\nearrow$</td>
-      <td></td>
-      <td></td>
-      <td style="vertical-align: bottom; font-weight: bold;">$-12$</td>
-      <td>$\\nearrow$</td>
-      <td></td>
-    </tr>
-  </table>
-
-  **QUY TẮC ĐẾM Ô (BẮT BUỘC):**
-  - Nếu hàng x có N ô (kể cả ô label) thì TẤT CẢ các hàng đều phải có ĐÚNG N ô.
-  - Hàng y có 2 dòng (thẻ tr), dòng thứ nhất và thứ hai đều có N-1 ô nội dung (vì ô label dùng rowspan="2").
-  - Ô trống dùng <td></td>, KHÔNG được bỏ qua.
-  - Khoảng giữa 2 giá trị x đặc biệt cần 1 ô cho dấu / mũi tên.
+  2. **Trường hợp 2 — Câu hỏi cho bảng biến thiên của hàm $y = f(x)$ tổng quát (không cho công thức $f(x)$):**
+     Khai báo trực tiếp các mốc \`"xs"\`, dấu đạo hàm \`"signs"\` (dùng \`"||"\` tại điểm không xác định), và giá trị \`"ys"\`:
+     <script type="application/json" class="figure-json">
+     {"type": "bbt", "xs": ["-\\infty", "-1", "1", "+\\infty"], "signs": ["+", "0", "-", "0", "+"], "ys": [["-\\infty", "bottom"], ["2", "top"], ["-2", "bottom"], ["+\\infty", "top"]]}
+     </script>
+     *(Nếu tại mốc có tiệm cận đứng / không xác định \`"||"\`, khai báo phần tử \`ys\` tại mốc đó là \`{"pole": true, "left": {"level": "bottom", "label": "-\\infty"}, "right": {"level": "top", "label": "+\\infty"}}\`).*
 
   **QUY TẮC FORMAT NGHIÊM NGẶT ĐỂ XUẤT WORD:**
   

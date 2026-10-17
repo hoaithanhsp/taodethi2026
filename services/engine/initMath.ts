@@ -1,7 +1,13 @@
-import { parse, derivative } from 'mathjs';
+import { parse, derivative, rationalize, fraction, evaluate, simplify } from 'mathjs';
 
 const g = typeof window !== 'undefined' ? (window as any) : (globalThis as any);
-if (!g.math) {
-  g.math = { parse, derivative };
-}
+g.math = {
+  ...(g.math || {}),
+  parse,
+  derivative,
+  rationalize,
+  fraction,
+  evaluate,
+  simplify,
+};
 export default g.math;

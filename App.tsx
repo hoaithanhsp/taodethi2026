@@ -4,6 +4,7 @@ import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, Question
 import StepIndicator from './components/StepIndicator';
 import Button from './components/Button';
 import MarkdownView from './components/MarkdownView';
+import BbtQuickGenerator from './components/BbtQuickGenerator';
 import SimilarExamPage from './components/SimilarExamPage';
 import VariantsExamPage from './components/VariantsExamPage';
 
@@ -1404,6 +1405,13 @@ const App: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+
+      {currentStep === AppStep.EXAM && (
+        <BbtQuickGenerator
+          examContent={content}
+          onUpdateExamContent={onUpdateContent}
+        />
       )}
 
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-6 pb-2">
