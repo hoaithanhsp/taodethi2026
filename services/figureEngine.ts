@@ -395,7 +395,7 @@ export function sanitizeAndValidateFigureSpec(
   }
 
   const is3DContext =
-    /(hình\s+chóp|khối\s+chóp|tứ\s+diện|lăng\s+trụ|hình\s+hộp|lập\s+phương|hình\s+nón|khối\s+nón|hình\s+trụ|khối\s+trụ|mặt\s+cầu|khối\s+cầu|đa\s+diện|không\s+gian|Oxyz|mặt\s+phẳng|\bS\.[A-Z]{3,4}\b)/i.test(
+    /(hình\s+chóp|khối\s+chóp|tứ\s+diện|lăng\s+trụ|hình\s+hộp|lập\s+phương|hình\s+nón|khối\s+nón|mặt\s+nón|nón\s+cụt|hình\s+trụ|khối\s+trụ|mặt\s+trụ|mặt\s+cầu|khối\s+cầu|khối\s+tròn\s+xoay|mặt\s+tròn\s+xoay|đa\s+diện|không\s+gian|Oxyz|mặt\s+phẳng|\bS\.[A-Z]{3,4}\b)/i.test(
       ctx
     );
 
@@ -413,10 +413,11 @@ export function sanitizeAndValidateFigureSpec(
   if (
     type === 'geo3d' ||
     (!type &&
-      /^(pyramid|tetra|prism|box|cube|cone|cylinder|sphere)/i.test(String(spec.preset || '')))
+      /^(pyramid|tetra|prism|box|cube|cone|cylinder|sphere|frustum)/i.test(String(spec.preset || '')))
   ) {
     const preset = String(spec.preset || '').toLowerCase();
-    const needsApexS = preset.startsWith('pyramid') || preset === 'cone';
+    const isRevolutionPreset = /^(cone|cylinder|sphere|frustum)/i.test(preset);
+    const needsApexS = preset.startsWith('pyramid');
     const hasPointSInCtx = pointsInContext.size === 0 || pointsInContext.has('S');
 
     if (ctx.length > 10 && (!is3DContext || (needsApexS && !hasPointSInCtx))) {
@@ -506,7 +507,7 @@ export function sanitizeAndValidateFigureSpec(
       return null;
     }
 
-    if (pointsInContext.size >= 3) {
+    if (pointsInContext.size >= 3 && !isRevolutionPreset) {
       const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, pointsInContext);
       spec.extra = extra;
       spec.marks = marks;
@@ -598,7 +599,7 @@ export function renderFigureSpecToSvg(
     if (spec.preset || spec.points || spec.extra) {
       return g.Geo3D.renderGeo3D({ ...spec, type: 'geo3d' });
     }
-    if (spec.fn && (spec.xRange || spec.yRange || spec.asymptotes || spec.shade)) {
+    if (spec.fn && (spec.xRange || spec.yRange || spec.asymptotes || spec.shade || spec.revolve)) {
       return g.Graph.renderGraph({ ...spec, type: 'graph' });
     }
     if (spec.fn) {
@@ -953,8 +954,8 @@ export const FIGURE_JSON_HTML_INSTRUCTIONS = `
         {"type": "bbt", "xs": ["-\\infty", "-1", "1", "+\\infty"], "signs": ["+", "0", "-", "0", "+"], "ys": [["-\\infty", "bottom"], ["2", "top"], ["-2", "bottom"], ["+\\infty", "top"]]}
         </script>
 
-   2. **ĐỒ THỊ HÀM SỐ & MIỀN TÍCH PHÂN (\`type: "graph"\`):**
-      - Truyền đúng biểu thức hàm số \`fn\` của câu hỏi:
+   2. **ĐỒ THỊ HÀM SỐ, MIỀN TÍCH PHÂN & KHỐI TRÒN XOAY QUANH TRỤC Ox (\`type: "graph"\`):**
+      - Truyền đúng biểu thức hàm số \`fn\` của câu hỏi (nếu quay miền phẳng quanh trục $Ox$ tạo khối tròn xoay từ $x=a$ đến $x=b$, thêm \`"revolve": {"fn": "...", "from": a, "to": b}\`):
         <script type="application/json" class="figure-json">
         {"type": "graph", "fn": ["(2*x+1)/(x-1)"], "xRange": [-4, 5], "yRange": [-4, 7], "asymptotes": "auto", "points": "extrema+intercepts"}
         </script>
@@ -965,10 +966,10 @@ export const FIGURE_JSON_HTML_INSTRUCTIONS = `
         {"type": "geo2d", "preset": "navigation", "params": {"ab": 20, "bc": 30, "bearingAB": "N45E", "bearingBC": "S30E", "labelAB": "20 km", "labelBC": "30 km", "labelAC": "?"}}
         </script>
 
-   4. **HÌNH HỌC KHÔNG GIAN 3D (\`type: "geo3d"\` — CHỈ dùng khi đề bài nêu rõ Hình chóp, Lăng trụ, Hình hộp, Tứ diện, Nón, Trụ, Cầu, Oxyz):**
-      - Các \`preset\` 3D: \`"pyramid-tri"\`, \`"pyramid-square"\`, \`"pyramid-rect"\` (thêm \`"apexOver": "A"\` nếu $SA \\perp$ đáy), \`"tetra-right"\`, \`"prism-tri"\`, \`"box"\`, \`"cube"\`, \`"cone"\`, \`"cylinder"\`, \`"sphere"\`.
+   4. **HÌNH HỌC KHÔNG GIAN 3D & KHỐI TRÒN XOAY (\`type: "geo3d"\` — CHỈ dùng khi đề bài nêu rõ Hình chóp, Lăng trụ, Hình hộp, Tứ diện, Nón, Trụ, Cầu, Nón cụt, Oxyz):**
+      - Các \`preset\` 3D: \`"pyramid-tri"\`, \`"pyramid-square"\`, \`"pyramid-rect"\` (thêm \`"apexOver": "A"\` nếu $SA \\perp$ đáy), \`"tetra-right"\`, \`"prism-tri"\`, \`"box"\`, \`"cube"\`, và các khối tròn xoay \`"cone"\` (hình nón), \`"cylinder"\` (hình trụ), \`"sphere"\` (mặt cầu/khối cầu), \`"frustum"\` (hình nón cụt).
         <script type="application/json" class="figure-json">
-        {"type": "geo3d", "preset": "pyramid-square", "params": {"a": 2, "h": 2.6}, "extra": ["point O center(ABCD)", "segment S O", "segment A C", "segment B D"], "marks": ["rightangle S O B"]}
+        {"type": "geo3d", "preset": "cone", "params": {"r": 1.6, "h": 2.6}}
         </script>
 `;
 
@@ -988,7 +989,7 @@ Khi câu hỏi cần Bảng biến thiên hoặc Hình minh họa trực quan, B
 {"type": "bbt", "xs": ["-\\infty", "-1", "1", "+\\infty"], "signs": ["+", "0", "-", "0", "+"], "ys": [["-\\infty", "bottom"], ["2", "top"], ["-2", "bottom"], ["+\\infty", "top"]]}
 \`\`\`
 
-2. **Đồ thị hàm số & miền tích phân (\`type: "graph"\`):**
+2. **Đồ thị hàm số, miền tích phân & khối tròn xoay tích phân quanh $Ox$ (\`type: "graph"\`):**
 \`\`\`figure-json
 {"type": "graph", "fn": ["(2*x+1)/(x-1)"], "xRange": [-4, 5], "yRange": [-4, 7], "asymptotes": "auto", "points": "extrema+intercepts"}
 \`\`\`
@@ -998,8 +999,9 @@ Khi câu hỏi cần Bảng biến thiên hoặc Hình minh họa trực quan, B
 {"type": "geo2d", "preset": "parallelogram", "params": {"center": true}}
 \`\`\`
 
-4. **Hình học không gian 3D (\`type: "geo3d"\` — CHỈ dùng cho Hình chóp, Lăng trụ, Hình hộp, Tứ diện, Nón, Trụ, Cầu):**
+4. **Hình học không gian 3D & Khối tròn xoay (\`type: "geo3d"\` — Hình chóp, Lăng trụ, Hình hộp, Tứ diện, Nón \`cone\`, Trụ \`cylinder\`, Cầu \`sphere\`, Nón cụt \`frustum\`):**
 \`\`\`figure-json
 {"type": "geo3d", "preset": "pyramid-square", "params": {"a": 2, "h": 2.6}, "extra": ["point O center(ABCD)", "segment S O", "segment A C", "segment B D"], "marks": ["rightangle S O B"]}
 \`\`\`
 `;
+

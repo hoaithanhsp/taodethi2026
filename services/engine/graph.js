@@ -96,6 +96,59 @@
       out.push(`<polygon points="${pts.join(' ')}" fill="#9bb7e8" fill-opacity="0.45" stroke="none" clip-path="url(#gClip)"/>`);
     }
 
+    // khối tròn xoay quanh trục Ox (tích phân thể tích V = pi * int_a^b [f(x)]^2 dx)
+    if (spec.revolve) {
+      const revFn = compile(spec.revolve.fn || fns[0]);
+      const a = spec.revolve.from ?? 0, b = spec.revolve.to ?? 2, N = 200;
+      const topPts = [], botPts = [];
+      for (let k = 0; k <= N; k++) {
+        const x = a + (b - a) * k / N, yv = revFn(x);
+        if (isFinite(yv)) {
+          topPts.push([X(x), Y(yv)]);
+          botPts.push([X(x), Y(-yv)]);
+        }
+      }
+      if (topPts.length > 1) {
+        const polyPts = [...topPts, ...botPts.slice().reverse()].map(([px, py]) => `${px.toFixed(1)},${py.toFixed(1)}`).join(' ');
+        out.push(`<polygon points="${polyPts}" fill="#9bb7e8" fill-opacity="0.32" stroke="none" clip-path="url(#gClip)"/>`);
+        out.push(`<path d="M${botPts.map(([px, py]) => `${px.toFixed(2)},${py.toFixed(2)}`).join(' L')}" fill="none" stroke="#333" stroke-width="1.3" clip-path="url(#gClip)"/>`);
+      }
+      // Hàm vẽ thiết diện elip đứng tại hoành độ xSec
+      const drawDisk = (xSec, fillOpacity = 0) => {
+        const rVal = Math.abs(revFn(xSec));
+        if (!isFinite(rVal) || rVal < 1e-3) return;
+        const cx = X(xSec), cy = Y(0);
+        const ry = Math.abs(Y(0) - Y(rVal));
+        const rx = Math.max(6, Math.min(ry * 0.32, Math.abs(X(b) - X(a)) * 0.14));
+        if (fillOpacity > 0) {
+          out.push(`<ellipse cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" fill="#7ea4e0" fill-opacity="${fillOpacity}" stroke="none"/>`);
+        }
+        // Nửa trước (bên phải: -pi/2 -> pi/2) nét liền
+        const front = [], back = [];
+        const Msteps = 40;
+        for (let i = 0; i <= Msteps; i++) {
+          const tF = -Math.PI / 2 + (Math.PI * i) / Msteps;
+          front.push([cx + rx * Math.cos(tF), cy + ry * Math.sin(tF)]);
+          const tB = Math.PI / 2 + (Math.PI * i) / Msteps;
+          back.push([cx + rx * Math.cos(tB), cy + ry * Math.sin(tB)]);
+        }
+        out.push(`<path d="M${front.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' L')}" fill="none" stroke="#000" stroke-width="1.4"/>`);
+        // Nửa sau (bên trái: pi/2 -> 3pi/2) nét đứt
+        for (let i = 0; i < back.length - 1; i += 2) {
+          const p0 = back[i], p1 = back[Math.min(i + 1, back.length - 1)];
+          out.push(`<line x1="${p0[0].toFixed(2)}" y1="${p0[1].toFixed(2)}" x2="${p1[0].toFixed(2)}" y2="${p1[1].toFixed(2)}" stroke="#000" stroke-width="1.15"/>`);
+        }
+        // Bán kính tại thiết diện
+        out.push(`<line x1="${cx.toFixed(1)}" y1="${cy.toFixed(1)}" x2="${cx.toFixed(1)}" y2="${Y(revFn(xSec)).toFixed(1)}" stroke="#000" stroke-width="1" stroke-dasharray="4,3"/>`);
+        out.push(`<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="2.2" fill="#000"/>`);
+      };
+      drawDisk(a, 0.18);
+      if (spec.revolve.midDisk !== false && b - a > 0.5) {
+        drawDisk((a + b) / 2, 0.12);
+      }
+      drawDisk(b, 0.25);
+    }
+
     // trục toạ độ
     const ox = Math.min(Math.max(0, x0), x1), oy = Math.min(Math.max(0, y0), y1);
     out.push(`<line x1="${pad - 8}" y1="${Y(oy)}" x2="${W - 4}" y2="${Y(oy)}" stroke="#000" marker-end="url(#gArr)"/>`);
@@ -106,6 +159,14 @@
 
     // vạch số trên trục (chỉ ghi số tại các mốc có ý nghĩa nếu points != none, ngược lại ghi số nguyên)
     const ticksX = new Set(), ticksY = new Set();
+    if (spec.revolve) {
+      if (spec.revolve.from) ticksX.add(spec.revolve.from);
+      if (spec.revolve.to) ticksX.add(spec.revolve.to);
+    }
+    if (spec.shade) {
+      if (spec.shade.from) ticksX.add(spec.shade.from);
+      if (spec.shade.to) ticksX.add(spec.shade.to);
+    }
     if (spec.ticks === 'all' || spec.grid) {
       for (let i = Math.ceil(x0); i <= x1; i++) if (i) ticksX.add(i);
       for (let j = Math.ceil(y0); j <= y1; j++) if (j) ticksY.add(j);
