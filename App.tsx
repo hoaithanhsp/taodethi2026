@@ -1414,20 +1414,7 @@ const App: React.FC = () => {
         />
       )}
 
-      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-6 pb-2">
-        {/* Editor Side */}
-        <div className="flex flex-col h-full panel-elevated">
-          <div className="bg-slate-50/80 px-4 py-2.5 border-b border-teal-100/50 flex-shrink-0 flex justify-between items-center">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Source Code (HTML/Markdown)</label>
-          </div>
-          <textarea
-            className="flex-1 w-full p-4 font-mono text-xs sm:text-sm focus:outline-none resize-none leading-relaxed text-slate-800 bg-slate-50"
-            value={content}
-            onChange={(e) => onUpdateContent(e.target.value)}
-            spellCheck={false}
-          />
-        </div>
-
+      <div className="flex-1 min-h-0 flex flex-col pb-2">
         {/* Preview Side */}
         <div className="flex flex-col h-full panel-elevated">
           <div className="bg-gradient-to-r from-teal-50 to-emerald-50 px-4 py-2.5 border-b border-teal-100/50 flex-shrink-0">
