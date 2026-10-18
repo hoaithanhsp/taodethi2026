@@ -1,6 +1,19 @@
 
-import { GoogleGenAI } from "@google/genai";
-import { SYSTEM_INSTRUCTION, MODEL_NAME, PROVIDER_FALLBACK_MODELS, GRADE_NO_ESSAY, getSubjectFootnotes, AiProvider } from '../constants';
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import {
+  SYSTEM_INSTRUCTION,
+  MODEL_NAME,
+  DEFAULT_GEMINI_MODEL,
+  DEFAULT_AGENT_PLATFORM_MODEL,
+  GEMINI_MODEL_STORAGE_KEY,
+  LEGACY_GEMINI_MODEL_STORAGE_KEYS,
+  GEMINI_MODELS,
+  AGENT_PLATFORM_MODELS,
+  PROVIDER_FALLBACK_MODELS,
+  GRADE_NO_ESSAY,
+  getSubjectFootnotes,
+  AiProvider,
+} from '../constants';
 import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate, ReferenceUsageMode } from '../types';
 import { fetchTemplateHtml, buildMatrixPromptForCustomTemplate, buildSpecsPromptForCustomTemplate } from './matrixTemplates';
 import { FIGURE_JSON_HTML_INSTRUCTIONS, renderFiguresInHtml } from './figureEngine';
@@ -10,28 +23,86 @@ import {
 } from './cv7991Template';
 import { extractQuestionsLocally } from './docxMathParser';
 
-// --- Dual AI Provider Management ---
+// --- Dual AI Provider & Storage Keys ---
 const GOOGLE_AI_PROVIDER_KEY = 'google_ai_provider';
+const GOOGLE_AI_PROVIDER_SELECTION_SOURCE_KEY = 'google_ai_provider_selection_source';
 const GEMINI_API_KEY_STORAGE_KEY = 'gemini_api_key';
 const AGENT_PLATFORM_API_KEY_STORAGE_KEY = 'agent_platform_api_key';
 const LEGACY_API_KEY_STORAGE_KEY = 'examcraft_api_key';
 const LEGACY_USER_API_KEY_STORAGE_KEY = 'user_gemini_api_key';
-const MODEL_STORAGE_KEY = 'examcraft_selected_model';
+const MODEL_STORAGE_KEY = GEMINI_MODEL_STORAGE_KEY;
 
 const MODEL_ALIASES: Record<string, string> = {
-  'gemini-3-flash-preview': 'gemini-3.5-flash',
+  'gemini-3-flash-preview': 'gemini-3.8-flash',
   'gemini-3-pro-preview': 'gemini-3.1-pro-preview',
+  'gemini-3.1-flash-lite-preview': 'gemini-3.5-flash-lite',
+  'gemini-2.0-flash': 'gemini-3.8-flash',
+  'gemini-2.0-flash-lite': 'gemini-3.5-flash-lite',
+  'gemini-1.5-flash': 'gemini-2.5-flash',
 };
 
 export const GOOGLE_AI_API_KEY_PATTERN = /^(?:AIzaSy|AQ)\S{8,}$/;
 
 export type GeminiApiErrorType =
   | 'INVALID_API_KEY'
+  | 'PERMISSION_DENIED'
   | 'QUOTA_EXCEEDED'
   | 'MODEL_OVERLOADED'
+  | 'TRANSIENT_SERVER_ERROR'
+  | 'INVALID_ARGUMENT'
   | 'UNKNOWN';
 
+// --- Tự động di trú (Migration) Model mặc định & Provider trong localStorage ---
+const runStorageMigrationOnce = (() => {
+  let migrated = false;
+  return () => {
+    if (migrated || typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+    migrated = true;
+    try {
+      for (const legacyKey of LEGACY_GEMINI_MODEL_STORAGE_KEYS) {
+        localStorage.removeItem(legacyKey);
+      }
+      const rawProvider = localStorage.getItem(GOOGLE_AI_PROVIDER_KEY);
+      if (rawProvider === 'vertex') {
+        localStorage.setItem(GOOGLE_AI_PROVIDER_KEY, 'gemini');
+        localStorage.removeItem(GOOGLE_AI_PROVIDER_SELECTION_SOURCE_KEY);
+      }
+    } catch {
+      // Ignore storage access errors in private/restricted mode
+    }
+  };
+})();
+
+runStorageMigrationOnce();
+
+// --- Fallback Notice Pub/Sub (Thông báo nhẹ nhàng khi tự động chuyển model & tự ẩn khi hoàn tất) ---
+type FallbackNoticeListener = (notice: string | null) => void;
+const fallbackNoticeListeners = new Set<FallbackNoticeListener>();
+let currentFallbackNotice: string | null = null;
+
+export const setFallbackNotice = (notice: string | null): void => {
+  currentFallbackNotice = notice;
+  fallbackNoticeListeners.forEach(listener => {
+    try {
+      listener(notice);
+    } catch {
+      // ignore listener errors
+    }
+  });
+};
+
+export const getFallbackNotice = (): string | null => currentFallbackNotice;
+
+export const subscribeFallbackNotice = (listener: FallbackNoticeListener): (() => void) => {
+  fallbackNoticeListeners.add(listener);
+  listener(currentFallbackNotice);
+  return () => {
+    fallbackNoticeListeners.delete(listener);
+  };
+};
+
 export const getAiProvider = (): AiProvider => {
+  runStorageMigrationOnce();
   const provider = localStorage.getItem(GOOGLE_AI_PROVIDER_KEY);
   if (provider === 'agent-platform') return 'agent-platform';
   return 'gemini';
@@ -39,6 +110,7 @@ export const getAiProvider = (): AiProvider => {
 
 export const setAiProvider = (provider: AiProvider): void => {
   localStorage.setItem(GOOGLE_AI_PROVIDER_KEY, provider);
+  localStorage.setItem(GOOGLE_AI_PROVIDER_SELECTION_SOURCE_KEY, 'manual');
 };
 
 export const getApiKey = (provider: AiProvider = getAiProvider()): string | null => {
@@ -73,22 +145,41 @@ export const removeApiKey = (provider: AiProvider = getAiProvider()): void => {
   }
 };
 
-export const isValidApiKey = (key: string, provider: AiProvider = getAiProvider()): boolean => {
-  const trimmed = key.trim();
-  if (!trimmed) return false;
-  if (provider === 'gemini') {
-    return GOOGLE_AI_API_KEY_PATTERN.test(trimmed);
-  }
-  return trimmed.length > 0;
+export const isValidGoogleAiApiKey = (key: string): boolean => {
+  return GOOGLE_AI_API_KEY_PATTERN.test(key.trim());
 };
 
-export const isValidGoogleAiApiKey = (key: string): boolean => {
-  return isValidApiKey(key, 'gemini');
+export const isValidApiKey = (key: string, _provider: AiProvider = getAiProvider()): boolean => {
+  return isValidGoogleAiApiKey(key);
 };
 
 const normalizeGeminiModel = (model: string | null): string | null => {
   if (!model) return null;
-  return MODEL_ALIASES[model] || model;
+  const trimmed = model.trim();
+  if (!trimmed) return null;
+  return MODEL_ALIASES[trimmed] || trimmed;
+};
+
+export const getSelectedModel = (provider: AiProvider = getAiProvider()): string => {
+  runStorageMigrationOnce();
+  const storedModel = localStorage.getItem(MODEL_STORAGE_KEY);
+  const normalizedModel = normalizeGeminiModel(storedModel);
+  if (storedModel && normalizedModel && normalizedModel !== storedModel) {
+    localStorage.setItem(MODEL_STORAGE_KEY, normalizedModel);
+  }
+
+  if (provider === 'agent-platform') {
+    const isAgentPlatformCompatible = AGENT_PLATFORM_MODELS.some(m => m.id === normalizedModel);
+    return isAgentPlatformCompatible && normalizedModel ? normalizedModel : DEFAULT_AGENT_PLATFORM_MODEL;
+  }
+
+  const isGeminiCompatible = GEMINI_MODELS.some(m => m.id === normalizedModel);
+  return isGeminiCompatible && normalizedModel ? normalizedModel : DEFAULT_GEMINI_MODEL;
+};
+
+export const setSelectedModel = (model: string): void => {
+  runStorageMigrationOnce();
+  localStorage.setItem(MODEL_STORAGE_KEY, normalizeGeminiModel(model) || DEFAULT_GEMINI_MODEL);
 };
 
 export const getGeminiModelsToTry = (
@@ -96,9 +187,58 @@ export const getGeminiModelsToTry = (
   provider: AiProvider = getAiProvider()
 ): string[] => {
   const fallbackList = PROVIDER_FALLBACK_MODELS[provider] || PROVIDER_FALLBACK_MODELS['gemini'];
-  const defaultModel = provider === 'agent-platform' ? 'gemini-2.5-flash' : MODEL_NAME;
-  const primaryModel = normalizeGeminiModel(preferredModel || getSelectedModel()) || defaultModel;
+  const defaultModel = provider === 'agent-platform' ? DEFAULT_AGENT_PLATFORM_MODEL : MODEL_NAME;
+  const normalizedPreferred = normalizeGeminiModel(preferredModel || null);
+  const primaryModel = normalizedPreferred || getSelectedModel(provider) || defaultModel;
+
+  // Đối với Agent Platform, đảm bảo model đầu tiên tương thích với Agent Platform
+  if (provider === 'agent-platform' && !AGENT_PLATFORM_MODELS.some(m => m.id === primaryModel)) {
+    return Array.from(new Set([DEFAULT_AGENT_PLATFORM_MODEL, ...fallbackList]));
+  }
+
   return Array.from(new Set([primaryModel, ...fallbackList]));
+};
+
+/**
+ * Chuẩn hóa config gọi Gemini 3.x & 2.5 theo API.md v4.2:
+ * - Không truyền temperature/topP/topK cho các model gemini-3*
+ * - Mặc định dùng ThinkingLevel.MEDIUM cho bước sinh chính; ThinkingLevel.LOW cho bước trích xuất/phụ trợ
+ * - Không bao giờ gửi 'minimal' cho gemini-3.8-flash / gemini-3.7-flash
+ */
+export const createGeminiConfig = ({
+  provider = getAiProvider(),
+  model,
+  systemInstruction,
+  responseMimeType,
+  responseSchema,
+  maxOutputTokens,
+  thinkingLevel = ThinkingLevel.MEDIUM,
+  temperature = 0.3,
+}: {
+  provider?: AiProvider;
+  model: string;
+  systemInstruction?: string;
+  responseMimeType?: string;
+  responseSchema?: any;
+  maxOutputTokens?: number;
+  thinkingLevel?: ThinkingLevel;
+  temperature?: number;
+}) => {
+  const isGemini3 = model.startsWith('gemini-3');
+  const safeThinkingLevel =
+    thinkingLevel === ThinkingLevel.MINIMAL ? ThinkingLevel.LOW : thinkingLevel;
+
+  return {
+    ...(systemInstruction ? { systemInstruction } : {}),
+    ...(responseMimeType ? { responseMimeType } : {}),
+    ...(responseSchema ? { responseSchema } : {}),
+    ...(maxOutputTokens ? { maxOutputTokens } : {}),
+    // Chỉ truyền temperature cho dòng 2.5 trở xuống (Gemini 3.x đã deprecated temperature/topP/topK)
+    ...(!isGemini3 ? { temperature } : {}),
+    ...(provider === 'gemini' && isGemini3
+      ? { thinkingConfig: { thinkingLevel: safeThinkingLevel } }
+      : {}),
+  };
 };
 
 const getErrorText = (error: any): string => {
@@ -117,18 +257,8 @@ export const parseApiError = (error: any): GeminiApiErrorType => {
   const status = String(error?.status || error?.code || '').toLowerCase();
 
   if (
-    status === '401' ||
-    status === '403' ||
-    text.includes('api_key_invalid') ||
-    text.includes('api key not valid') ||
-    text.includes('invalid api key') ||
-    text.includes('permission_denied')
-  ) {
-    return 'INVALID_API_KEY';
-  }
-
-  if (
     status === '429' ||
+    text.includes('429') ||
     text.includes('resource_exhausted') ||
     text.includes('quota') ||
     text.includes('rate limit') ||
@@ -139,42 +269,99 @@ export const parseApiError = (error: any): GeminiApiErrorType => {
 
   if (
     status === '503' ||
+    text.includes('503') ||
     text.includes('unavailable') ||
     text.includes('service unavailable') ||
     text.includes('high demand') ||
-    text.includes('overloaded')
+    text.includes('overloaded') ||
+    text.includes('try again later') ||
+    text.includes('temporarily unavailable')
   ) {
     return 'MODEL_OVERLOADED';
+  }
+
+  if (
+    status === '500' ||
+    status === '502' ||
+    status === '504' ||
+    status === '404' ||
+    text.includes('500') ||
+    text.includes('502') ||
+    text.includes('504') ||
+    text.includes('404') ||
+    text.includes('not_found') ||
+    text.includes('deadline_exceeded') ||
+    text.includes('deadline exceeded') ||
+    text.includes('bad gateway') ||
+    text.includes('fetch failed') ||
+    text.includes('failed to fetch') ||
+    text.includes('networkerror') ||
+    text.includes('econnreset') ||
+    text.includes('etimedout')
+  ) {
+    return 'TRANSIENT_SERVER_ERROR';
+  }
+
+  if (status === '403' || text.includes('permission_denied') || text.includes('403')) {
+    return 'PERMISSION_DENIED';
+  }
+
+  if (
+    status === '401' ||
+    text.includes('401') ||
+    text.includes('api_key_invalid') ||
+    text.includes('api key not valid') ||
+    text.includes('invalid api key')
+  ) {
+    return 'INVALID_API_KEY';
+  }
+
+  if (status === '400' || text.includes('invalid_argument') || text.includes('400')) {
+    return 'INVALID_ARGUMENT';
   }
 
   return 'UNKNOWN';
 };
 
-export const getFriendlyGeminiErrorMessage = (error: any): string => {
+export const isFallbackEligibleError = (
+  errorType: GeminiApiErrorType,
+  provider: AiProvider = getAiProvider()
+): boolean => {
+  if (
+    errorType === 'MODEL_OVERLOADED' ||
+    errorType === 'TRANSIENT_SERVER_ERROR' ||
+    errorType === 'QUOTA_EXCEEDED'
+  ) {
+    return true;
+  }
+  // Với Agent Platform API, cho phép thử model tương thích tiếp theo khi gặp 403 PERMISSION_DENIED
+  if (provider === 'agent-platform' && errorType === 'PERMISSION_DENIED') {
+    return true;
+  }
+  return false;
+};
+
+export const getFriendlyGeminiErrorMessage = (
+  error: any,
+  provider: AiProvider = getAiProvider()
+): string => {
   const errorType = parseApiError(error);
   if (errorType === 'INVALID_API_KEY') {
-    return 'API Key không hợp lệ hoặc chưa có quyền truy cập AI. Vui lòng kiểm tra lại key trong phần Cài đặt.';
+    return 'API Key không hợp lệ hoặc đã hết hạn. Vui lòng kiểm tra lại trong Cài đặt.';
+  }
+  if (errorType === 'PERMISSION_DENIED') {
+    if (provider === 'agent-platform') {
+      return 'Google đã nhận API Key nhưng dự án/key chưa được cấp quyền gọi Agent Platform API hoặc model này. Vui lòng kiểm tra Agent Platform API đã bật, billing, API restrictions và quyền sử dụng model.';
+    }
+    return 'API key không có quyền truy cập Gemini API. Vui lòng kiểm tra lại trong Cài đặt.';
   }
   if (errorType === 'QUOTA_EXCEEDED') {
-    return 'Hết hạn mức sử dụng hoặc đang bị giới hạn tốc độ. Vui lòng thử lại sau, giảm dung lượng file, hoặc đổi API Key.';
+    return 'Đã hết quota hoặc vượt giới hạn tốc độ API. Vui lòng đợi rồi thử lại hoặc đổi API Key.';
   }
-  if (errorType === 'MODEL_OVERLOADED') {
-    return 'Model AI đang tạm quá tải. Ứng dụng đã thử các model dự phòng; vui lòng đợi 1-2 phút rồi thử lại hoặc chọn model nhẹ hơn.';
+  if (errorType === 'MODEL_OVERLOADED' || errorType === 'TRANSIENT_SERVER_ERROR') {
+    return 'Hệ thống AI đang tạm thời quá tải ở tất cả các model dự phòng. Vui lòng đợi 1-2 phút rồi thử lại hoặc chọn model nhẹ hơn (như Gemini 3.5 Flash-Lite).';
   }
   return `Lỗi API AI: ${error?.message || 'Không xác định'}`;
-};
-
-export const getSelectedModel = (): string | null => {
-  const storedModel = localStorage.getItem(MODEL_STORAGE_KEY);
-  const normalizedModel = normalizeGeminiModel(storedModel);
-  if (storedModel && normalizedModel !== storedModel) {
-    localStorage.setItem(MODEL_STORAGE_KEY, normalizedModel!);
-  }
-  return normalizedModel;
-};
-
-export const setSelectedModel = (model: string): void => {
-  localStorage.setItem(MODEL_STORAGE_KEY, normalizeGeminiModel(model) || model);
 };
 
 export function createGoogleAiClient(
@@ -183,33 +370,34 @@ export function createGoogleAiClient(
 ): GoogleGenAI {
   const key = apiKey || getApiKey(provider);
   if (!key) {
-    throw new Error(`Chưa có API Key cho ${provider === 'agent-platform' ? 'Agent Platform' : 'Google Gemini'}. Vui lòng nhập API Key trong phần Cài đặt.`);
+    throw new Error('Vui lòng cấu hình API Key trước khi sử dụng tính năng này.');
   }
 
   if (provider === 'agent-platform') {
-    return new GoogleGenAI({ apiKey: key, vertexai: true });
+    // Cờ kỹ thuật của Google Gen AI SDK để định tuyến tới aiplatform.googleapis.com trong chế độ API key
+    return new GoogleGenAI({ vertexai: true, apiKey: key });
   }
   return new GoogleGenAI({ apiKey: key });
 }
 
-// --- Retry helper for 503/overloaded errors ---
+// --- Retry helper for transient / overloaded errors ---
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const isRetryableError = (err: any): boolean => {
   const errorType = parseApiError(err);
-  return errorType === 'MODEL_OVERLOADED' || errorType === 'QUOTA_EXCEEDED';
+  return errorType === 'MODEL_OVERLOADED' || errorType === 'TRANSIENT_SERVER_ERROR';
 };
 
 const callWithRetry = async <T>(
   fn: () => Promise<T>,
-  maxRetries: number = 3,
+  maxRetries: number = 1,
   label: string = ''
 ): Promise<T> => {
   let lastError: any = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       if (attempt > 0) {
-        const waitMs = Math.min(2000 * Math.pow(2, attempt - 1), 15000);
+        const waitMs = Math.min(1200 * Math.pow(2, attempt - 1), 4000);
         console.log(`[ExamCraft] ${label} Retry ${attempt}/${maxRetries} sau ${waitMs / 1000}s...`);
         await delay(waitMs);
       }
@@ -226,43 +414,101 @@ const callWithRetry = async <T>(
   throw lastError;
 };
 
-// --- Fallback wrapper: try models in order with retry ---
-export const callWithFallback = async (
-  promptFn: (ai: GoogleGenAI, model: string) => Promise<string>,
+// --- Centralized Fallback Wrapper: try models in order and manage fallbackNotice ---
+export const callWithFallback = async <T = string>(
+  promptFn: (ai: GoogleGenAI, model: string) => Promise<T>,
   preferredModel?: string | null,
   provider: AiProvider = getAiProvider()
-): Promise<string> => {
+): Promise<T> => {
   const apiKey = getApiKey(provider);
   if (!apiKey) {
-    throw new Error(`Chưa có API Key cho ${provider === 'agent-platform' ? 'Agent Platform' : 'Google Gemini'}. Vui lòng kiểm tra lại trong phần Cài đặt.`);
+    throw new Error('Vui lòng cấu hình API Key trước khi sử dụng tính năng này.');
   }
   const ai = createGoogleAiClient(apiKey, provider);
   const modelsToTry = getGeminiModelsToTry(preferredModel, provider);
   let lastError: any = null;
 
-  for (const model of modelsToTry) {
-    try {
-      console.log(`[ExamCraft] (${provider}) Trying model: ${model}`);
-      return await callWithRetry(
-        () => promptFn(ai, model),
-        2,
-        `[${provider}:${model}]`
-      );
-    } catch (err: any) {
-      lastError = err;
-      const errorType = parseApiError(err);
-      console.warn(`[ExamCraft] (${provider}) Model ${model} failed (${errorType}):`, err.message || err);
-      if (errorType === 'INVALID_API_KEY') {
-        break;
+  try {
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const model = modelsToTry[i];
+      try {
+        console.log(`[ExamCraft] (${provider}) Trying model: ${model}`);
+        const result = await callWithRetry(
+          () => promptFn(ai, model),
+          1,
+          `[${provider}:${model}]`
+        );
+        // BẮT BUỘC: Xóa cảnh báo fallback ngay khi tác vụ hoàn thành thành công
+        setFallbackNotice(null);
+        return result;
+      } catch (err: any) {
+        lastError = err;
+        const errorType = parseApiError(err);
+        console.warn(`[ExamCraft] (${provider}) Model ${model} failed (${errorType}):`, err.message || err);
+
+        if (!isFallbackEligibleError(errorType, provider)) {
+          break;
+        }
+
+        if (i < modelsToTry.length - 1) {
+          const nextModel = modelsToTry[i + 1];
+          setFallbackNotice(
+            `Đang tự động chuyển từ ${model} sang ${nextModel} (do ${model} đang bận)...`
+          );
+        }
       }
-      if (errorType === 'QUOTA_EXCEEDED') {
-        console.warn(`[ExamCraft] Quota exceeded for ${model}, trying next model...`);
-      }
-      continue;
     }
+  } finally {
+    // Đảm bảo xóa cảnh báo vàng khi kết thúc chuỗi gọi
+    setFallbackNotice(null);
   }
 
-  throw new Error(getFriendlyGeminiErrorMessage(lastError));
+  throw new Error(getFriendlyGeminiErrorMessage(lastError, provider));
+};
+
+export const generateContentWithModelFallback = async ({
+  contents,
+  config,
+  preferredModel,
+  provider = getAiProvider(),
+  thinkingLevel = ThinkingLevel.MEDIUM,
+  maxOutputTokens,
+  temperature = 0.3,
+}: {
+  contents: any;
+  config?: {
+    systemInstruction?: string;
+    responseMimeType?: string;
+    responseSchema?: any;
+    maxOutputTokens?: number;
+    temperature?: number;
+  };
+  preferredModel?: string | null;
+  provider?: AiProvider;
+  thinkingLevel?: ThinkingLevel;
+  maxOutputTokens?: number;
+  temperature?: number;
+}) => {
+  return callWithFallback(
+    async (ai, model) => {
+      return await ai.models.generateContent({
+        model,
+        contents,
+        config: createGeminiConfig({
+          provider,
+          model,
+          systemInstruction: config?.systemInstruction,
+          responseMimeType: config?.responseMimeType,
+          responseSchema: config?.responseSchema,
+          maxOutputTokens: config?.maxOutputTokens ?? maxOutputTokens,
+          thinkingLevel,
+          temperature: config?.temperature ?? temperature,
+        }),
+      });
+    },
+    preferredModel,
+    provider
+  );
 };
 
 // --- File utilities ---
@@ -307,6 +553,11 @@ export const convertMatrixFileToHtml = async (file: File): Promise<string> => {
           { text: prompt }
         ]
       },
+      config: createGeminiConfig({
+        model,
+        thinkingLevel: ThinkingLevel.LOW,
+        maxOutputTokens: 16384,
+      }),
     });
     const text = response.text || "";
     return text.replace(/```html/g, '').replace(/```/g, '');
@@ -362,6 +613,11 @@ export const convertMatrixTextToHtml = async (
     const response = await ai.models.generateContent({
       model,
       contents: [{ role: 'user', parts }],
+      config: createGeminiConfig({
+        model,
+        thinkingLevel: ThinkingLevel.LOW,
+        maxOutputTokens: 16384,
+      }),
     });
     const resultText = response.text || "";
     return resultText.replace(/```html/g, '').replace(/```/g, '');
@@ -469,9 +725,12 @@ export const extractInfoFromDocument = async (file: File, selectedSubject?: stri
     const response = await ai.models.generateContent({
       model,
       contents: [{ role: 'user', parts }],
-      config: {
+      config: createGeminiConfig({
+        model,
         responseMimeType: "application/json",
-      }
+        thinkingLevel: ThinkingLevel.LOW,
+        maxOutputTokens: 16384,
+      }),
     });
     return response.text || "{}";
   });
@@ -685,10 +944,13 @@ export const generateStep1Matrix = async (
       const response = await ai.models.generateContent({
         model,
         contents: fullPrompt,
-        config: {
+        config: createGeminiConfig({
+          model,
           systemInstruction: SYSTEM_INSTRUCTION,
+          thinkingLevel: ThinkingLevel.MEDIUM,
+          maxOutputTokens: 16384,
           temperature: 0.1,
-        },
+        }),
       });
       const text = response.text || "Lỗi tạo ma trận.";
       return text.replace(/```html/g, '').replace(/```/g, '');
@@ -705,10 +967,13 @@ export const generateStep1Matrix = async (
     const response = await ai.models.generateContent({
       model,
       contents: cvPrompt,
-      config: {
+      config: createGeminiConfig({
+        model,
         systemInstruction: SYSTEM_INSTRUCTION,
+        thinkingLevel: ThinkingLevel.MEDIUM,
+        maxOutputTokens: 16384,
         temperature: 0.1,
-      },
+      }),
     });
     const text = (response.text || "Lỗi tạo ma trận.").replace(/```html/g, '').replace(/```/g, '');
     return useCv
@@ -827,10 +1092,13 @@ export const generateStep2Specs = async (
       const response = await ai.models.generateContent({
         model,
         contents: fullPrompt,
-        config: {
+        config: createGeminiConfig({
+          model,
           systemInstruction: SYSTEM_INSTRUCTION,
+          thinkingLevel: ThinkingLevel.MEDIUM,
+          maxOutputTokens: 16384,
           temperature: 0.1,
-        },
+        }),
       });
       const text = response.text || "Lỗi tạo đặc tả.";
       return text.replace(/```html/g, '').replace(/```/g, '');
@@ -847,10 +1115,13 @@ export const generateStep2Specs = async (
     const response = await ai.models.generateContent({
       model,
       contents: cvPrompt,
-      config: {
+      config: createGeminiConfig({
+        model,
         systemInstruction: SYSTEM_INSTRUCTION,
+        thinkingLevel: ThinkingLevel.MEDIUM,
+        maxOutputTokens: 16384,
         temperature: 0.1,
-      },
+      }),
     });
     const text = (response.text || "Lỗi tạo đặc tả.").replace(/```html/g, '').replace(/```/g, '');
     return useCv
@@ -921,30 +1192,19 @@ export const extractQuestionsFromReference = async (
 
   const resultText = await callWithFallback(async (ai, model) => {
     console.log(`[ExamCraft] Fast AI question extraction with model: ${model}`);
-    try {
-      const response = await ai.models.generateContent({
+    const response = await ai.models.generateContent({
+      model,
+      contents: [{ role: 'user', parts }],
+      config: createGeminiConfig({
         model,
-        contents: [{ role: 'user', parts }],
-        config: {
-          responseMimeType: 'application/json',
-          temperature: 0.1,
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      });
-      return response.text || '[]';
-    } catch {
-      // Fallback without thinkingConfig if model does not support it
-      const response = await ai.models.generateContent({
-        model,
-        contents: [{ role: 'user', parts }],
-        config: {
-          responseMimeType: 'application/json',
-          temperature: 0.1,
-        },
-      });
-      return response.text || '[]';
-    }
-  }, 'gemini-2.5-flash');
+        responseMimeType: 'application/json',
+        thinkingLevel: ThinkingLevel.LOW,
+        maxOutputTokens: 16384,
+        temperature: 0.1,
+      }),
+    });
+    return response.text || '[]';
+  });
 
   try {
     let jsonStr = resultText;
@@ -1364,10 +1624,13 @@ export const generateStep3Exam = async (
     const response = await ai.models.generateContent({
       model,
       contents: [{ role: 'user', parts }],
-      config: {
+      config: createGeminiConfig({
+        model,
         systemInstruction: SYSTEM_INSTRUCTION,
+        thinkingLevel: ThinkingLevel.MEDIUM,
+        maxOutputTokens: 16384,
         temperature: 0.7,
-      },
+      }),
     });
     const text = response.text || "Lỗi tạo đề thi.";
     const cleaned = text.replace(/^```html\s*/i, '').replace(/\s*```$/i, '');

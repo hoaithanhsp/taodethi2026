@@ -1,7 +1,7 @@
-import { GoogleGenAI, Chat, Part, Content } from "@google/genai";
+import { Chat, Part, Content, ThinkingLevel } from "@google/genai";
 import { VariantFileData } from "../types";
-import { getApiKey, createGoogleAiClient, getAiProvider } from "./geminiService";
-import { AiProvider } from "../constants";
+import { createGoogleAiClient, getAiProvider, createGeminiConfig } from "./geminiService";
+import { AiProvider, GEMINI_MODELS, AGENT_PLATFORM_MODELS } from "../constants";
 import { FIGURE_JSON_MARKDOWN_INSTRUCTIONS } from "./figureEngine";
 
 const VARIANTS_SYSTEM_INSTRUCTION = `
@@ -44,19 +44,9 @@ ${FIGURE_JSON_MARKDOWN_INSTRUCTIONS}
 
 export const getVariantModels = (provider: AiProvider = getAiProvider()) => {
   if (provider === 'agent-platform') {
-    return [
-      { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-      { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
-      { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash" },
-    ];
+    return AGENT_PLATFORM_MODELS.map(m => ({ id: m.id, name: m.name }));
   }
-  return [
-    { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
-    { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
-    { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash-Lite" },
-    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-    { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" },
-  ];
+  return GEMINI_MODELS.map(m => ({ id: m.id, name: m.name }));
 };
 
 export const VARIANT_MODELS = getVariantModels('gemini');
@@ -71,10 +61,13 @@ export const createVariantSession = (
   const ai = createGoogleAiClient(apiKey, provider);
   return ai.chats.create({
     model: selectedModel,
-    config: {
+    config: createGeminiConfig({
+      provider,
+      model: selectedModel,
       systemInstruction: VARIANTS_SYSTEM_INSTRUCTION,
-      maxOutputTokens: 8192,
-    },
+      thinkingLevel: ThinkingLevel.MEDIUM,
+      maxOutputTokens: 16384,
+    }),
   });
 };
 
@@ -95,10 +88,13 @@ export const cloneVariantSession = async (
   return ai.chats.create({
     model: newModel,
     history: history,
-    config: {
+    config: createGeminiConfig({
+      provider,
+      model: newModel,
       systemInstruction: VARIANTS_SYSTEM_INSTRUCTION,
-      maxOutputTokens: 8192,
-    },
+      thinkingLevel: ThinkingLevel.MEDIUM,
+      maxOutputTokens: 16384,
+    }),
   });
 };
 

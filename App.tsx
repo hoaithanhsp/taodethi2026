@@ -8,14 +8,14 @@ import BbtQuickGenerator from './components/BbtQuickGenerator';
 import SimilarExamPage from './components/SimilarExamPage';
 import VariantsExamPage from './components/VariantsExamPage';
 
-import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, isValidGoogleAiApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel, getAiProvider, setAiProvider } from './services/geminiService';
+import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, isValidApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel, getAiProvider, setAiProvider, getFallbackNotice, setFallbackNotice, subscribeFallbackNotice } from './services/geminiService';
 import { parseDocxWithMath, extractQuestionsLocally, extractDocxTablesAndHtml, parseMatrixMetadataAndConfig } from './services/docxMathParser';
 import { normalizeMathForWord, renderMarkdownPreservingMath } from './services/mathExportUtils';
 import { extractFiguresToPlaceholders, restoreFiguresAsPngForWord } from './services/figureEngine';
 // @ts-ignore
 import { asBlob } from 'html-docx-js-typescript';
 import MarkdownIt from 'markdown-it';
-import { GEMINI_MODELS, AGENT_PLATFORM_MODELS, AiProvider } from './constants';
+import { GEMINI_MODELS, AGENT_PLATFORM_MODELS, DEFAULT_GEMINI_MODEL, DEFAULT_AGENT_PLATFORM_MODEL, AiProvider } from './constants';
 import { MATRIX_TEMPLATES } from './services/matrixTemplates';
 import { validateAccount, Account } from './data/accounts';
 import { ArrowRight, ArrowLeft, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, Lock, User, Gift, Phone, Shield, Copy, Shuffle, Sparkles, Layers, Zap, History, Save, Eye } from 'lucide-react';
@@ -84,7 +84,23 @@ const App: React.FC = () => {
 
   // -- Provider & Selected Model State --
   const [provider, setProviderState] = useState<AiProvider>(getAiProvider());
-  const [selectedModel, setSelectedModelState] = useState(getSelectedModel() || GEMINI_MODELS[0].id);
+  const [selectedModel, setSelectedModelState] = useState(() => {
+    const currentProvider = getAiProvider();
+    const saved = getSelectedModel();
+    const validList = currentProvider === 'agent-platform' ? AGENT_PLATFORM_MODELS : GEMINI_MODELS;
+    const defaultId = currentProvider === 'agent-platform' ? DEFAULT_AGENT_PLATFORM_MODEL : DEFAULT_GEMINI_MODEL;
+    if (saved && validList.some(m => m.id === saved)) {
+      return saved;
+    }
+    return defaultId;
+  });
+  const [fallbackNotice, setFallbackNoticeState] = useState<string | null>(getFallbackNotice());
+
+  useEffect(() => {
+    return subscribeFallbackNotice((msg) => {
+      setFallbackNoticeState(msg);
+    });
+  }, []);
 
   // -- UI State --
   const [selectedLessonIds, setSelectedLessonIds] = useState<Set<string>>(new Set());
@@ -216,12 +232,18 @@ const App: React.FC = () => {
       return;
     }
 
-    if (provider === 'gemini' && !isValidGoogleAiApiKey(geminiKeyClean)) {
-      setApiKeyError('API Key Gemini không hợp lệ. Vui lòng nhập key bắt đầu bằng AIzaSy... hoặc AQ...');
+    if (!isValidApiKey(activeKey)) {
+      setApiKeyError('API Key không hợp lệ. Vui lòng nhập key bắt đầu bằng AIzaSy... hoặc AQ...');
       return;
     }
 
+    const validModels = provider === 'agent-platform' ? AGENT_PLATFORM_MODELS : GEMINI_MODELS;
+    const defaultModel = provider === 'agent-platform' ? DEFAULT_AGENT_PLATFORM_MODEL : DEFAULT_GEMINI_MODEL;
+    const normalizedModel = validModels.some(m => m.id === selectedModel) ? selectedModel : defaultModel;
+
     setAiProvider(provider);
+    setSelectedModelState(normalizedModel);
+    setSelectedModel(normalizedModel);
     if (geminiKeyClean) saveApiKey(geminiKeyClean, 'gemini');
     if (agentPlatformKeyClean) saveApiKey(agentPlatformKeyClean, 'agent-platform');
 
@@ -2237,6 +2259,10 @@ const App: React.FC = () => {
                     onClick={() => {
                       setProviderState('gemini');
                       setApiKeyError('');
+                      if (!GEMINI_MODELS.some(m => m.id === selectedModel)) {
+                        setSelectedModelState(DEFAULT_GEMINI_MODEL);
+                        setSelectedModel(DEFAULT_GEMINI_MODEL);
+                      }
                     }}
                     className={`p-3 rounded-xl border-2 font-medium text-sm flex items-center justify-center gap-2 transition-all ${
                       provider === 'gemini'
@@ -2251,6 +2277,10 @@ const App: React.FC = () => {
                     onClick={() => {
                       setProviderState('agent-platform');
                       setApiKeyError('');
+                      if (!AGENT_PLATFORM_MODELS.some(m => m.id === selectedModel)) {
+                        setSelectedModelState(DEFAULT_AGENT_PLATFORM_MODEL);
+                        setSelectedModel(DEFAULT_AGENT_PLATFORM_MODEL);
+                      }
                     }}
                     className={`p-3 rounded-xl border-2 font-medium text-sm flex items-center justify-center gap-2 transition-all ${
                       provider === 'agent-platform'
@@ -2300,11 +2330,19 @@ const App: React.FC = () => {
                       if (apiKeyError) setApiKeyError('');
                     }}
                     onKeyDown={(e) => e.key === 'Enter' && handleSaveApiKey()}
-                    placeholder="Dán Agent Platform API Key"
+                    placeholder="Dán Agent Platform API Key (AQ... hoặc AIzaSy...)"
                     className="w-full p-3 input-elevated focus:ring-2 focus:ring-primary outline-none font-mono text-sm"
                     autoFocus
                   />
-                  <p className="text-xs text-slate-500 mt-1">Sử dụng endpoint Vertex AI proxy trên Agent Platform</p>
+                  <a
+                    href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/start/api-keys"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-sm text-primary hover:underline font-medium mt-2"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Hướng dẫn lấy API Key tại Agent Platform
+                  </a>
                 </div>
               )}
 
@@ -2403,7 +2441,12 @@ const App: React.FC = () => {
             </button>
             <button
               onClick={() => {
-                setProviderState(getAiProvider());
+                const activeProvider = getAiProvider();
+                const savedModel = getSelectedModel();
+                const validModels = activeProvider === 'agent-platform' ? AGENT_PLATFORM_MODELS : GEMINI_MODELS;
+                const defaultModel = activeProvider === 'agent-platform' ? DEFAULT_AGENT_PLATFORM_MODEL : DEFAULT_GEMINI_MODEL;
+                setProviderState(activeProvider);
+                setSelectedModelState(savedModel && validModels.some(m => m.id === savedModel) ? savedModel : defaultModel);
                 setTempGeminiKey(getApiKey('gemini') || '');
                 setTempAgentPlatformKey(getApiKey('agent-platform') || '');
                 setApiKeyError('');
@@ -2461,6 +2504,21 @@ const App: React.FC = () => {
 
       {/* Main Content */}
       <main className="flex-1 relative w-full overflow-hidden">
+
+        {/* Transient Fallback Notice Banner */}
+        {fallbackNotice && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-amber-50 border border-amber-300 text-amber-800 px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2.5 max-w-xl animate-fade-in-up">
+            <Sparkles className="w-4 h-4 shrink-0 text-amber-600 animate-spin" />
+            <span className="text-sm flex-1 font-medium">{fallbackNotice}</span>
+            <button
+              onClick={() => setFallbackNotice(null)}
+              className="shrink-0 hover:bg-amber-200/60 rounded p-0.5 transition-colors"
+              title="Đóng thông báo"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* ===== HOME LANDING — 3 MODE CARDS ===== */}
         {appMode === 'home' && (

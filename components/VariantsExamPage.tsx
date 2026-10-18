@@ -3,10 +3,10 @@ import { Download, Play, RefreshCw, AlertCircle, Loader2, FileCheck, ArrowRight 
 import { Chat } from "@google/genai";
 import FileUploadZone from './FileUploadZone';
 import MarkdownRenderer from './MarkdownRenderer';
-import { createVariantSession, generateVariantStep1, generateVariantNextStep, cloneVariantSession, getVariantModels } from '../services/variantsExamService';
+import { createVariantSession, generateVariantStep1, generateVariantNextStep, cloneVariantSession } from '../services/variantsExamService';
 import { exportToDoc } from '../services/exportUtils';
 import { VariantFileData, VariantState } from '../types';
-import { getApiKey, getFriendlyGeminiErrorMessage, parseApiError, getAiProvider } from '../services/geminiService';
+import { getApiKey, getFriendlyGeminiErrorMessage, parseApiError, getAiProvider, getGeminiModelsToTry, getSelectedModel, setFallbackNotice } from '../services/geminiService';
 
 interface VariantsExamPageProps {
   checkAuth: () => boolean;
@@ -34,7 +34,7 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
   ) => {
     let lastError: any = null;
     const provider = getAiProvider();
-    const models = getVariantModels(provider);
+    const models = getGeminiModelsToTry(getSelectedModel(), provider);
     const apiKey = getApiKey(provider);
     if (!apiKey) throw new Error(`Vui lòng nhập API Key cho ${provider === 'agent-platform' ? 'Agent Platform' : 'Google Gemini'} trong phần Cài đặt.`);
 
@@ -42,10 +42,11 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
       try {
         await executeFn(chatSessionRef.current!);
         currentModelIndexRef.current = i;
+        setFallbackNotice(null);
         return;
       } catch (err: any) {
         const errorType = parseApiError(err);
-        console.warn(`[Variants] (${provider}) Step '${stepName}' failed with ${models[i].id} (${errorType}):`, err);
+        console.warn(`[Variants] (${provider}) Step '${stepName}' failed with ${models[i]} (${errorType}):`, err);
         lastError = err;
 
         if (errorType === 'INVALID_API_KEY') {
@@ -54,7 +55,11 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
 
         if (i < models.length - 1) {
           resetOutput();
-          const nextModel = models[i + 1].id;
+          const currentModel = models[i];
+          const nextModel = models[i + 1];
+          setFallbackNotice(
+            `Đang tự động chuyển từ ${currentModel} sang ${nextModel} (do ${currentModel} đang bận)...`
+          );
           console.log(`[Variants] (${provider}) Switching to fallback: ${nextModel}`);
           if (chatSessionRef.current) {
             chatSessionRef.current = await cloneVariantSession(apiKey, chatSessionRef.current, nextModel, provider);
@@ -62,6 +67,7 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
         }
       }
     }
+    setFallbackNotice(null);
     throw new Error(getFriendlyGeminiErrorMessage(lastError));
   };
 
@@ -70,7 +76,7 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
     if (!checkAuth()) return;
 
     const provider = getAiProvider();
-    const models = getVariantModels(provider);
+    const models = getGeminiModelsToTry(getSelectedModel(), provider);
     const apiKey = getApiKey(provider);
     if (!apiKey) {
       setError(`Vui lòng nhập API Key cho ${provider === 'agent-platform' ? 'Agent Platform' : 'Google Gemini'} trong phần Cài đặt.`);
@@ -81,8 +87,9 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
     setState(VariantState.PROCESSING_STEP_1);
     setCol1(''); setCol2(''); setCol3('');
     setError(null);
+    setFallbackNotice(null);
 
-    chatSessionRef.current = createVariantSession(apiKey, models[0].id, provider);
+    chatSessionRef.current = createVariantSession(apiKey, models[0], provider);
 
     try {
       // Step 1
@@ -123,6 +130,7 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
         },
         () => setCol3('')
       );
+      setFallbackNotice(null);
       setState(VariantState.COMPLETE);
     } catch (err: any) {
       handleError(err);
@@ -130,20 +138,9 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
   };
 
   const handleError = (err: any) => {
+    setFallbackNotice(null);
     setState(VariantState.ERROR);
-    let message = "Có lỗi xảy ra";
-    if (typeof err === 'string') message = err;
-    else if (err instanceof Error) message = err.message;
-    else if (err && typeof err === 'object') message = JSON.stringify(err);
-
-    if (message.includes("MODEL_OVERLOADED") || message.includes("503") || message.includes("UNAVAILABLE") || message.toLowerCase().includes("overloaded") || message.toLowerCase().includes("high demand") || message.includes("quá tải")) {
-      message = "Model Gemini đang tạm quá tải. Ứng dụng đã thử các model dự phòng; vui lòng đợi 1-2 phút rồi thử lại.";
-    } else if (message.includes("429") || message.includes("Quota exceeded") || message.includes("RESOURCE_EXHAUSTED")) {
-      message = "Hết hạn mức sử dụng (Quota Exceeded). Vui lòng thử lại sau hoặc đổi API Key.";
-    } else if (message.includes("API key not valid") || message.includes("INVALID_API_KEY")) {
-      message = "API Key không hợp lệ. Vui lòng kiểm tra lại.";
-    }
-    setError(message);
+    setError(getFriendlyGeminiErrorMessage(err));
   };
 
   const handleExport = () => {

@@ -118,39 +118,57 @@ export const GRADE_NO_ESSAY = ['12'];
 
 export type AiProvider = 'gemini' | 'agent-platform';
 
-export const MODEL_NAME = 'gemini-3.5-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+export const DEFAULT_AGENT_PLATFORM_MODEL = 'gemini-2.5-flash';
+export const MODEL_NAME = DEFAULT_GEMINI_MODEL;
+
+export const GEMINI_MODEL_STORAGE_KEY = 'gemini_model_id_v38';
+export const LEGACY_GEMINI_MODEL_STORAGE_KEYS = [
+  'GEMINI_MODEL_ID',
+  'examcraft_selected_model',
+  'gemini_model_id',
+] as const;
 
 export const GEMINI_MODELS = [
-  { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', desc: 'Stable, frontier reasoning, low latency', badge: 'Mặc định' },
-  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', desc: 'Reasoning mạnh, phù hợp tác vụ khó', badge: 'Pro' },
-  { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', desc: 'Nhanh, tiết kiệm, fallback nhẹ', badge: 'Lite' },
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Ổn định, low-latency', badge: 'Stable' },
-  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', desc: 'Nhanh và rẻ cho tác vụ nhẹ', badge: 'Lite' },
-  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', desc: 'Complex reasoning, analysis sâu', badge: 'Premium' },
+  { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', desc: 'Mới nhất (GA 09/2026) — thông minh, tốc độ cao & chịu tải tốt nhất', badge: 'Mặc định' },
+  { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', desc: 'Bản ổn định tốc độ cao, thực thi đa bước tin cậy (GA 08/2026)', badge: 'Stable' },
+  { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', desc: 'Tốc độ cực nhanh, chi phí thấp, dung lượng chịu tải rất lớn', badge: 'Lite' },
+  { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', desc: 'Bản ổn định thế hệ 3.6 cân bằng đa phương thức', badge: 'Stable' },
+  { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', desc: 'Bản ổn định thế hệ 3.5', badge: 'Stable' },
+  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Preview)', desc: 'Suy luận chuyên sâu phức tạp (yêu cầu Paid API Key)', badge: 'Pro' },
+  { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', desc: 'Nhẹ, tương thích ngược', badge: 'Lite' },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Ổn định thế hệ 2.5, dự phòng cuối chuỗi', badge: 'Stable' },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', desc: 'Suy luận sâu thế hệ 2.5', badge: 'Pro' },
 ];
 
 export const AGENT_PLATFORM_MODELS = [
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Tốc độ cao, xử lý ổn định trên Agent Platform', badge: 'Mặc định' },
-  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', desc: 'Khả năng suy luận chuyên sâu', badge: 'Pro' },
-  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', desc: 'Phiên bản tiêu chuẩn Agent Platform', badge: 'Lite' },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Mặc định cho Agent Platform API, tốc độ nhanh, ổn định', badge: 'Mặc định' },
+  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', desc: 'Tốc độ cao, chi phí thấp trên Agent Platform', badge: 'Lite' },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', desc: 'Suy luận mạnh trên Agent Platform, xử lý tài liệu dài', badge: 'Pro' },
+  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Preview)', desc: 'Suy luận phức tạp thế hệ 3.1 trên Agent Platform', badge: 'Pro' },
 ];
 
+export const FALLBACK_GEMINI_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+] as const;
+
+export const AGENT_PLATFORM_FALLBACK_MODELS = [
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-pro',
+] as const;
+
 export const PROVIDER_FALLBACK_MODELS: Record<AiProvider, string[]> = {
-  'gemini': [
-    'gemini-3.5-flash',
-    'gemini-3.1-flash-lite',
-    'gemini-2.5-flash',
-    'gemini-2.5-flash-lite',
-    'gemini-2.5-pro'
-  ],
-  'agent-platform': [
-    'gemini-2.5-flash',
-    'gemini-2.5-pro',
-    'gemini-1.5-flash'
-  ]
+  'gemini': [...FALLBACK_GEMINI_MODELS],
+  'agent-platform': [...AGENT_PLATFORM_FALLBACK_MODELS],
 };
 
 export const FALLBACK_MODELS = PROVIDER_FALLBACK_MODELS['gemini'];
 
 export const AVAILABLE_MODELS = GEMINI_MODELS;
-

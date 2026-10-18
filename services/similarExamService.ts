@@ -1,6 +1,6 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { Type, ThinkingLevel } from "@google/genai";
 import { SimilarExamResult, SimilarExamOptions } from "../types";
-import { getApiKey, getFriendlyGeminiErrorMessage, getGeminiModelsToTry, parseApiError, createGoogleAiClient, getAiProvider } from "./geminiService";
+import { callWithFallback, createGeminiConfig, getAiProvider } from "./geminiService";
 import { AiProvider } from "../constants";
 import { FIGURE_JSON_MARKDOWN_INSTRUCTIONS } from "./figureEngine";
 
@@ -70,7 +70,7 @@ QUY TẮC CÔNG THỨC TOÁN HỌC (BẮT BUỘC)
 - Vector: $\\vec{a}$, tập hợp: $\\mathbb{R}$
 - Dấu: $\\leq$, $\\geq$, $\\neq$, $\\infty$, $\\pm$, $\\cdot$
 
-### ⛔ LỖI NGHIÊM TRỌNG CẦN TRÁNH:
+### ⛔ LỖI NGHIÊNG TRỌNG CẦN TRÁNH:
 - KHÔNG ĐƯỢC dùng \\text{sin}, \\text{cos}, \\text{tan}, \\text{cot}, \\text{log}, \\text{ln}
   → PHẢI dùng \\sin, \\cos, \\tan, \\cot, \\log, \\ln (lệnh LaTeX chuẩn)
 - KHÔNG ĐƯỢC viết: $\\text{sin}x$ ❌ → PHẢI viết: $\\sin x$ ✅
@@ -131,14 +131,6 @@ export const generateSimilarExam = async (
   preferredModel?: string,
   provider: AiProvider = getAiProvider()
 ): Promise<SimilarExamResult> => {
-  const apiKey = getApiKey(provider);
-  if (!apiKey) {
-    throw new Error(`Vui lòng nhập API Key cho ${provider === 'agent-platform' ? 'Agent Platform' : 'Google Gemini'} trong phần Cài đặt`);
-  }
-
-  const ai = createGoogleAiClient(apiKey, provider);
-  let lastError: any = null;
-
   // Build custom instructions based on options
   let customInstructions = "";
   if (options) {
@@ -166,10 +158,8 @@ export const generateSimilarExam = async (
 
   const finalSystemInstruction = SIMILAR_SYSTEM_INSTRUCTION + customInstructions;
 
-  const candidateModels = getGeminiModelsToTry(preferredModel, provider);
-
-  for (const modelName of candidateModels) {
-    try {
+  return callWithFallback(
+    async (ai, modelName) => {
       console.log(`[SimilarExam] (${provider}) Trying model: ${modelName}`);
       const response = await ai.models.generateContent({
         model: modelName,
@@ -187,8 +177,12 @@ export const generateSimilarExam = async (
             }
           ]
         },
-        config: {
+        config: createGeminiConfig({
+          provider,
+          model: modelName,
           systemInstruction: finalSystemInstruction,
+          thinkingLevel: ThinkingLevel.MEDIUM,
+          maxOutputTokens: 16384,
           temperature: 0.5,
           responseMimeType: "application/json",
           responseSchema: {
@@ -209,7 +203,7 @@ export const generateSimilarExam = async (
             },
             required: ["analysis", "examContent", "detailedSolution"]
           }
-        }
+        })
       });
 
       const text = response.text;
@@ -217,16 +211,8 @@ export const generateSimilarExam = async (
 
       const result = JSON.parse(text) as SimilarExamResult;
       return result;
-
-    } catch (error) {
-      const errorType = parseApiError(error);
-      console.warn(`[SimilarExam] (${provider}) Model ${modelName} failed (${errorType}):`, error);
-      lastError = error;
-      if (errorType === 'INVALID_API_KEY') {
-        break;
-      }
-    }
-  }
-
-  throw new Error(getFriendlyGeminiErrorMessage(lastError));
+    },
+    preferredModel,
+    provider
+  );
 };
