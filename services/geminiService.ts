@@ -724,7 +724,8 @@ export const generateStep2Specs = async (
   matrixContent: string,
   data: InputData,
   selectedLessonIds: Set<string>,
-  template: MatrixTemplate = 'template1'
+  template: MatrixTemplate = 'template1',
+  isUploadedMatrix: boolean = false
 ): Promise<string> => {
 
   const objectivesMap: string[] = [];
@@ -737,12 +738,12 @@ export const generateStep2Specs = async (
   const config = data.questionConfig;
   const totalEssayQuestions = config.essay.biet + config.essay.hieu + config.essay.van_dung + config.essay.van_dung_cao;
   const isGradeNoEssay = GRADE_NO_ESSAY.includes(data.grade);
-  const hasEssay = !isGradeNoEssay && totalEssayQuestions > 0;
+  const allowEssay = isUploadedMatrix ? totalEssayQuestions > 0 : !isGradeNoEssay;
+  const hasEssay = allowEssay && totalEssayQuestions > 0;
 
   const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
   const type2QuestionsCount = config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao;
   const type2SubItemsTotal = type2QuestionsCount * 4; // Mỗi câu Dạng II gồm 4 ý/lệnh hỏi (a, b, c, d)
-  const type2Total = { biet: config.type2.biet, hieu: config.type2.hieu, vd: config.type2.van_dung + config.type2.van_dung_cao };
   const type3Total = { biet: config.type3.biet, hieu: config.type3.hieu, vd: config.type3.van_dung + config.type3.van_dung_cao };
   const essayTotal = { biet: config.essay.biet, hieu: config.essay.hieu, vd: config.essay.van_dung + config.essay.van_dung_cao };
 
@@ -752,20 +753,20 @@ export const generateStep2Specs = async (
   const footnotes = getSubjectFootnotes(data.subject);
 
   const prompt = `
-  Dựa trên **Ma trận đề kiểm tra** (HTML) đã tạo, hãy tạo **BẢNG ĐẶC TẢ ĐỀ KIỂM TRA** (Full HTML Document).
-  Phân tích HTML ma trận để lấy số lượng câu hỏi, mã câu, cấu trúc cột chính xác.
+  Dựa trên **Ma trận đề kiểm tra** (HTML) đã có, hãy tạo **BẢNG ĐẶC TẢ ĐỀ KIỂM TRA** (Full HTML Document).
+  Phân tích HTML ma trận để lấy chính xác toàn bộ Chủ đề/Chương, Nội dung/đơn vị kiến thức, số lượng câu hỏi, mã câu, điểm số và cấu trúc cột.
 
-  **MA TRẬN ĐẦU VÀO:**
+  **MA TRẬN ĐẦU VÀO (NGUỒN CHUẨN DUY NHẤT - BẮT BUỘC KHỚP 100%):**
   ${matrixContent}
 
-  **DỮ LIỆU YÊU CẦU CẦN ĐẠT:**
-  ${objectivesMap.join('\n')}
+  **DỮ LIỆU YÊU CẦU CẦN ĐẠT THAM KHẢO:**
+  ${objectivesMap.length ? objectivesMap.join('\n') : '(Tự suy luận Yêu cầu cần đạt chuẩn GDPT 2018 cho từng Nội dung/Đơn vị kiến thức có trong Ma trận đầu vào)'}
 
-  **===== BẢNG SỐ LƯỢNG GỐC (PHẢI KHỚP 100% - ƯU TIÊN HƠN MA TRẬN NẾU CÓ XUNG ĐỘT) =====**
+  **===== BẢNG SỐ LƯỢNG TỔNG HỢP TỪ MA TRẬN =====**
   - **QUY ƯỚC DẠNG II (Đúng/Sai):**
     + Gồm **${type2QuestionsCount} câu** Đúng/Sai. Mỗi câu gồm **4 ý lệnh hỏi (a, b, c, d)**.
     + Tổng số ý Dạng II cần đặc tả là **${type2SubItemsTotal} ý** (tương ứng các mã từ II.1a -> II.${type2QuestionsCount}d).
-    + Mỗi dòng đặc tả (NB, TH, VD) gắn với các ý tương ứng (ví dụ II.1a, II.1b ở NB; II.1c ở TH; II.1d ở VD...).
+    + Mỗi dòng đặc tả (NB, TH, VD) gắn với các ý tương ứng theo đúng ô của Ma trận đầu vào.
 
   | Dạng câu hỏi | Số câu | Số lệnh hỏi (ý) | Quy cách |
   |---|---|---|---|
@@ -781,40 +782,20 @@ export const generateStep2Specs = async (
 
   **QUY TẮC NĂM HỌC (BẮT BUỘC):** Thông tin năm học phải ĐỂ TRỐNG dạng: "NĂM HỌC 20... - 20...". TUYỆT ĐỐI KHÔNG điền sẵn bất kỳ năm cụ thể nào.
 
-  **HEADER BẢNG (2 dòng):**
-  - Dòng header 1: TT(rowspan=2) | Chương(rowspan=2) | Nội dung/đơn vị kiến thức(rowspan=2) | **Cấp độ tư duy**(rowspan=2) | **Yêu cầu cần đạt**(rowspan=2) | Số lượng câu hỏi ở các mức độ(colspan=...)
-  - Dòng header 2 (chia nhỏ cột "Số lượng câu hỏi"):
-    + Trắc nghiệm: Nhiều lựa chọn | Đúng-Sai | Trả lời ngắn
-    + Tự luận: (nếu có)
-
-  CẤU TRÚC CỘT PHẢI **KHỚP** với Ma trận. Nếu Ma trận không có Tự luận thì Đặc tả cũng không có.
+  **HEADER BẢNG:**
+  CẤU TRÚC CỘT PHẢI **KHỚP 100%** với Ma trận đầu vào. Nếu Ma trận không có Tự luận thì Đặc tả cũng không có.
 
   **NỘI DUNG BẢNG (Quan trọng nhất):**
-  Với mỗi bài học/nội dung kiến thức, tạo CÁC DÒNG theo mức độ:
-
+  Giữ nguyên 100% danh sách Chương/chủ đề và Nội dung/Đơn vị kiến thức từ Ma trận đầu vào (không tự ý thêm/bớt hay đổi tên bài học):
   - Ô "TT" và "Chương/chủ đề": Merge theo chương (rowspan)
-  - Ô "Nội dung/ĐVKT": Tên bài
-  - Ô "Cấp độ tư duy": Ghi **NB** (Nhận biết), **TH** (Thông hiểu), hoặc **VD** (Vận dụng) - mỗi mức là 1 dòng riêng
-  - Ô "Yêu cầu cần đạt": Nội dung CHI TIẾT yêu cầu cần đạt ở mức độ tương ứng. Text-align: left.
-  - Các ô mã câu: Ghi mã câu tương ứng (I.1, I.2, II.1a II.1b, III.1, IV.1a...) - PHẢI KHỚP 100% với Ma trận
-
-  **QUAN TRỌNG - FORMAT TỪNG HÀNG:**
-  Mỗi bài học có 3 dòng (NB, TH, VD):
-  | Nội dung (rowspan=3) | NB | Yêu cầu cần đạt mức NB | I.1 I.2 | | | III.1 | ... |
-  | | TH | Yêu cầu cần đạt mức TH | | II.1c | | ... |
-  | | VD | Yêu cầu cần đạt mức VD | I.11 | | II.1d | III.2 | ... |
+  - Ô "Nội dung/ĐVKT": Tên bài (khớp y hệt Ma trận)
+  - Ô "Yêu cầu cần đạt": Nội dung CHI TIẾT yêu cầu cần đạt ở từng mức độ (Nhận biết, Thông hiểu, Vận dụng). Text-align: left.
+  - Các ô số lượng/mã câu: Ghi số lượng hoặc mã câu tương ứng - PHẢI KHỚP 100% ở từng hàng và từng cột với Ma trận đầu vào!
 
   **QUAN TRỌNG:**
   - Cột "Yêu cầu cần đạt" phải đủ rộng, text-align: left, chứa nội dung chi tiết
-  - Số câu hỏi và mã câu PHẢI khớp 100% với BẢNG SỐ LƯỢNG GỐC ở trên (ưu tiên hơn Ma trận nếu có sai lệch)
-  - Nếu Ma trận không có cột Tự luận thì Đặc tả cũng KHÔNG có
-
-  **ĐỂ KIỂM TRA CUỐI CÙNG:** Đếm tổng số mã câu trong đặc tả cho mỗi dạng và mức độ. Phải khớp CHÍNH XÁC:
-  - Dạng I: B=${type1Total.biet}/H=${type1Total.hieu}/VD=${type1Total.vd} (Tổng = ${type1Total.biet + type1Total.hieu + type1Total.vd} câu)
-  - Dạng II: Đủ ${type2QuestionsCount} câu, mỗi câu 4 ý a,b,c,d (Tổng = ${type2SubItemsTotal} ý từ II.1a..d đến II.${type2QuestionsCount}a..d)
-  - Dạng III: B=${type3Total.biet}/H=${type3Total.hieu}/VD=${type3Total.vd} (Tổng = ${type3Total.biet + type3Total.hieu + type3Total.vd} câu)
-  ${hasEssay ? `- Tự luận: B=${essayTotal.biet}/H=${essayTotal.hieu}/VD=${essayTotal.vd} (Tổng = ${essayTotal.biet + essayTotal.hieu + essayTotal.vd} câu)` : ''}
-  Nếu sai thì sửa lại trước khi trả output.
+  - Số câu hỏi, mã câu và vị trí từng ô PHẢI khớp 100% với **MA TRẬN ĐẦU VÀO** ở trên.
+  - Nếu Ma trận không có cột Tự luận thì Đặc tả cũng KHÔNG có.
 
   **QUY TẮC CHÚ THÍCH (FOOTNOTES) - BẮT BUỘC:**
   Cuối bảng thêm:
@@ -833,7 +814,7 @@ export const generateStep2Specs = async (
   // --- TEMPLATE 2, 3 or 4: Use custom prompt + template file (parsed as HTML) ---
   if (template !== 'template1') {
     const customPrompt = buildSpecsPromptForCustomTemplate(
-      template, matrixContent, data, selectedLessonIds, config
+      template, matrixContent, data, selectedLessonIds, config, isUploadedMatrix
     );
     const templateHtml = await fetchTemplateHtml(template);
 
@@ -857,10 +838,10 @@ export const generateStep2Specs = async (
   }
 
   // --- TEMPLATE 1: Mẫu chuẩn CV 7991 (đúng Phụ lục CV 7991/BGDĐT-GDTrH) ---
-  const cvLayout = computeCv7991Layout(config, !isGradeNoEssay);
+  const cvLayout = computeCv7991Layout(config, allowEssay);
   const useCv = cvLayout.types.length > 0;
   const cvPrompt = useCv
-    ? buildCv7991SpecsPrompt({ data, layout: cvLayout, footnotes, matrixContent, objectivesMap })
+    ? buildCv7991SpecsPrompt({ data, layout: cvLayout, footnotes, matrixContent, objectivesMap, isUploadedMatrix })
     : prompt;
   return callWithFallback(async (ai, model) => {
     const response = await ai.models.generateContent({
@@ -991,8 +972,10 @@ export const generateStep3Exam = async (
   referenceText?: string,
   referenceImages?: { base64: string; mimeType: string }[],
   extractedQuestions?: ExtractedQuestion[],
-  referenceMode: ReferenceUsageMode = 'exact'
-): Promise<string> => {
+  referenceMode: ReferenceUsageMode = 'exact',
+  matrixContent?: string,
+  isUploadedMatrix: boolean = false
+ ): Promise<string> => {
 
   const counts = {
     type1: questionConfig.type1.biet + questionConfig.type1.hieu + questionConfig.type1.van_dung + questionConfig.type1.van_dung_cao,
@@ -1008,34 +991,35 @@ export const generateStep3Exam = async (
   if (counts.type3 > 0) allowedParts.push('PHẦN III (Trả lời ngắn)');
   if (counts.essay > 0) allowedParts.push('PHẦN IV (Tự luận)');
 
-  let structureInstructions = "**CẤU TRÚC ĐỀ THI & ĐÁP ÁN CẦN TẠO (CHỈ TẠO CÁC PHẦN SAU):**\n";
+  let structureInstructions = "**CẤU TRÚC ĐỀ THI & ĐÁP ÁN CẦN TẠO (BÁM SÁT 100% MA TRẬN & ĐẶC TẢ):**\n";
 
   if (counts.type1 > 0) {
-    structureInstructions += `- **PHẦN I (Trắc nghiệm nhiều lựa chọn):** Tạo ${counts.type1} câu hỏi và Đáp án Phần I.\n`;
+    structureInstructions += `- **PHẦN I (Trắc nghiệm nhiều lựa chọn):** Tạo đúng ${counts.type1} câu hỏi (Nhận biết: ${questionConfig.type1.biet}, Thông hiểu: ${questionConfig.type1.hieu}, Vận dụng: ${questionConfig.type1.van_dung + questionConfig.type1.van_dung_cao}) và Đáp án Phần I.\n`;
   } else {
     structureInstructions += `- **PHẦN I:** KHÔNG ĐƯỢC TẠO (Số câu = 0). Bỏ qua hoàn toàn.\n`;
   }
 
   if (counts.type2 > 0) {
-    structureInstructions += `- **PHẦN II (Đúng/Sai):** Tạo ${counts.type2} câu hỏi (mỗi câu 4 ý a,b,c,d) và Đáp án Phần II (BẮT BUỘC có bảng thông tin hướng dẫn giải chi tiết và đủ 4 đáp án a, b, c, d cho mỗi câu).\n`;
+    structureInstructions += `- **PHẦN II (Đúng/Sai):** Tạo đúng ${counts.type2} câu hỏi (mỗi câu 4 ý a,b,c,d) và Đáp án Phần II (BẮT BUỘC có bảng thông tin hướng dẫn giải chi tiết và đủ 4 đáp án a, b, c, d cho mỗi câu).\n`;
   } else {
     structureInstructions += `- **PHẦN II:** KHÔNG ĐƯỢC TẠO (Số câu = 0). Bỏ qua hoàn toàn.\n`;
   }
 
   if (counts.type3 > 0) {
-    structureInstructions += `- **PHẦN III (Trả lời ngắn):** Tạo ${counts.type3} câu hỏi và Đáp án Phần III.\n`;
+    structureInstructions += `- **PHẦN III (Trả lời ngắn):** Tạo đúng ${counts.type3} câu hỏi (Nhận biết: ${questionConfig.type3.biet}, Thông hiểu: ${questionConfig.type3.hieu}, Vận dụng: ${questionConfig.type3.van_dung + questionConfig.type3.van_dung_cao}) và Đáp án Phần III.\n`;
   } else {
     structureInstructions += `- **PHẦN III:** KHÔNG ĐƯỢC TẠO (Số câu = 0). Bỏ qua hoàn toàn.\n`;
   }
 
   if (counts.essay > 0) {
-    structureInstructions += `- **PHẦN IV (Tự luận):** Tạo ${counts.essay} câu hỏi và Đáp án/Hướng dẫn chấm chi tiết Phần IV.\n`;
+    structureInstructions += `- **PHẦN IV (Tự luận):** Tạo đúng ${counts.essay} câu hỏi (Nhận biết: ${questionConfig.essay.biet}, Thông hiểu: ${questionConfig.essay.hieu}, Vận dụng: ${questionConfig.essay.van_dung + questionConfig.essay.van_dung_cao}) và Đáp án/Hướng dẫn chấm chi tiết Phần IV.\n`;
   } else {
     structureInstructions += `- **PHẦN IV (Tự luận):** ⛔ CẤM TẠO. Số câu = 0. TUYỆT ĐỐI KHÔNG SINH RA BẤT KỲ CÂU TỰ LUẬN NÀO.\n`;
   }
 
-  structureInstructions += `\n**⚠️ DANH SÁCH PHẦN ĐƯỢC PHÉP TẠO (WHITELIST):** ${allowedParts.length > 0 ? allowedParts.join(', ') : 'Không có phần nào'}.\n`;
-  structureInstructions += `**⛔ NGHIÊM CẤM:** Bất kỳ phần nào KHÔNG có trong whitelist trên đều KHÔNG ĐƯỢC TẠO. Nếu tự luận không nằm trong danh sách trên thì KHÔNG ĐƯỢC tạo phần tự luận.\n`;
+  structureInstructions += `\n**⚠️ DANH SÁCH PHẦN ĐƯỢC PHÉP TẠO (WHITELIST):** ${allowedParts.length > 0 ? allowedParts.join(', ') : 'Theo đúng các phần có trong Ma trận & Bảng đặc tả'}.\n`;
+  structureInstructions += `**⛔ NGHIÊM CẤM:** Bất kỳ phần nào KHÔNG có trong Ma trận/Bảng đặc tả và whitelist trên đều KHÔNG ĐƯỢC TẠO.\n`;
+  structureInstructions += `**🎯 BẮT BUỘC TUÂN THỦ MA TRẬN & ĐẶC TẢ:** Từng câu hỏi (Câu 1, Câu 2...) ở mỗi phần PHẢI khớp chính xác với **Đơn vị kiến thức/Bài học**, **Mức độ tư duy (Nhận biết / Thông hiểu / Vận dụng)** và **Yêu cầu cần đạt** tại đúng dòng/cột tương ứng trong Ma trận và Bảng đặc tả!\n`;
 
   // Build reference section
   let referenceSection = '';
@@ -1154,6 +1138,10 @@ export const generateStep3Exam = async (
     }
   }
 
+  const matrixSection = matrixContent && matrixContent.trim().length > 0
+    ? `\n  Dựa trên **Ma trận đề kiểm tra** ${isUploadedMatrix ? '(Ma trận gốc do người dùng tải lên - BẮT BUỘC TUÂN THỦ 100%)' : ''} sau (HTML):\n  ${matrixContent}\n`
+    : '';
+
   const prompt = `
   **===== THÔNG TIN ĐỀ THI BẮT BUỘC (CỰC KỲ QUAN TRỌNG) =====**
   - **Môn học:** ${inputData.subject}
@@ -1161,13 +1149,11 @@ export const generateStep3Exam = async (
   - **Loại đề:** ${inputData.examType}
   - **Thời gian:** ${inputData.duration} phút
 
-  **===== RÀNG BUỘC MÔN HỌC =====**
-  - TUYỆT ĐỐI CHỈ tạo câu hỏi về nội dung **môn ${inputData.subject} lớp ${inputData.grade}**.
-  - KHÔNG ĐƯỢC tạo câu hỏi thuộc môn học khác hoặc khối lớp khác.
-  - Nội dung câu hỏi phải phù hợp với chương trình **${inputData.examType}** (${inputData.examType.includes('2') ? 'Học kỳ 2' : 'Học kỳ 1'}).
-  - Nếu là đề Cuối kỳ 2 hoặc Giữa kỳ 2: CHỈ ra câu hỏi về kiến thức HỌC KỲ 2, KHÔNG ra kiến thức Học kỳ 1.
-
-  Dựa trên **Bảng đặc tả** sau (HTML):
+  **===== RÀNG BUỘC MÔN HỌC & PHẠM VI KIẾN THỨC =====**
+  - TUYỆT ĐỐI CHỈ tạo câu hỏi về nội dung **môn ${inputData.subject} lớp ${inputData.grade}** theo đúng các Chủ đề/Bài học có trong Ma trận và Bảng đặc tả bên dưới.
+  - KHÔNG ĐƯỢC tạo câu hỏi thuộc môn học khác hoặc nằm ngoài các đơn vị kiến thức của Ma trận & Bảng đặc tả.
+  ${matrixSection}
+  Và dựa trên **Bảng đặc tả đề kiểm tra** sau (HTML):
   ${specsContent}
 
   ${referenceSection}

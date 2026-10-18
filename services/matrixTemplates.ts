@@ -1,6 +1,6 @@
-
 import { MatrixTemplate, InputData, QuestionConfig } from '../types';
 import { SYSTEM_INSTRUCTION, GRADE_NO_ESSAY, getSubjectFootnotes } from '../constants';
+import { extractDocxTablesAndHtml } from './docxMathParser';
 
 // ============================================
 // TEMPLATE FILE PATHS (stored in public/templates/)
@@ -15,8 +15,7 @@ const TEMPLATE_FILES: Record<string, string> = {
 const templateHtmlCache: Record<string, string> = {};
 
 /**
- * Fetch file mẫu .docx từ public/templates/, parse bằng mammoth → trả về HTML string.
- * Gemini API không hỗ trợ .docx inline, nên phải convert sang HTML text trước.
+ * Fetch file mẫu .docx từ public/templates/, parse trực tiếp bảng XML (rowspan/colspan chuẩn) → trả về HTML string.
  */
 export const fetchTemplateHtml = async (template: MatrixTemplate): Promise<string | null> => {
     // Return cached if available
@@ -30,7 +29,13 @@ export const fetchTemplateHtml = async (template: MatrixTemplate): Promise<strin
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const arrayBuffer = await response.arrayBuffer();
 
-        // Dynamic import mammoth to parse .docx → HTML
+        const extracted = await extractDocxTablesAndHtml(arrayBuffer);
+        if (extracted.hasTable && extracted.fullHtml) {
+            templateHtmlCache[template] = extracted.fullHtml;
+            return extracted.fullHtml;
+        }
+
+        // Fallback to mammoth
         const mammoth = await import('mammoth');
         const result = await mammoth.convertToHtml({ arrayBuffer });
         const html = result.value;
@@ -206,6 +211,7 @@ export const buildSpecsPromptForCustomTemplate = (
     data: InputData,
     selectedLessonIds: Set<string>,
     config: QuestionConfig,
+    isUploadedMatrix?: boolean,
 ): string => {
     const objectivesMap: string[] = [];
     data.chapters.forEach(c => (c.lessons || []).forEach(l => {
@@ -221,7 +227,6 @@ export const buildSpecsPromptForCustomTemplate = (
     const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
     const type2QuestionsCount = config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao;
     const type2SubItemsTotal = type2QuestionsCount * 4;
-    const type2Total = { biet: config.type2.biet, hieu: config.type2.hieu, vd: config.type2.van_dung + config.type2.van_dung_cao };
     const type3Total = { biet: config.type3.biet, hieu: config.type3.hieu, vd: config.type3.van_dung + config.type3.van_dung_cao };
     const essayTotal = { biet: config.essay.biet, hieu: config.essay.hieu, vd: config.essay.van_dung + config.essay.van_dung_cao };
 
@@ -234,34 +239,33 @@ export const buildSpecsPromptForCustomTemplate = (
     return `
   Dựa trên **Ma trận đề kiểm tra** (HTML) đã tạo, hãy tạo **BẢNG ĐẶC TẢ ĐỀ KIỂM TRA** (Full HTML Document).
 
-  **⚠️ QUAN TRỌNG: SINH THEO MẪU HTML BÊN DƯỚI ⚠️**
+  **⚠️ QUAN TRỌNG: SINH THEO MẪU HTML BÊN DƯỚI & TUÂN THỦ 100% MA TRẬN ĐẦU VÀO ⚠️**
   Cuối prompt có phần "NỘI DUNG FILE MẪU" chứa HTML của **${templateName}**.
   BẠN PHẢI:
   1. ĐỌC KĨ nội dung HTML mẫu để hiểu cấu trúc bảng ĐẶC TẢ (nếu có bảng đặc tả trong file).
   2. SINH BẢNG ĐẶC TẢ MỚI **THEO ĐÚNG CẤU TRÚC BẢN MẪU** (giữ nguyên format, cách chia cột, header, merge cells).
-  3. CHỈ THAY ĐỔI nội dung (tên chương, bài, yêu cầu cần đạt, phân bổ câu hỏi) dựa trên DỮ LIỆU ĐẦU VÀO.
+  3. **BẮT BUỘC GIỮ NGUYÊN 100%** danh sách Chương/Chủ đề, Nội dung/Bài học, các dạng câu hỏi, số lượng câu hỏi/lệnh hỏi ở từng mức độ (Biết, Hiểu, Vận dụng), mã câu hỏi và điểm số đúng y hệt **MA TRẬN ĐẦU VÀO**.
   4. Nếu file mẫu chỉ có bảng Ma trận mà không có bảng Đặc tả riêng (như Mẫu 4 - file 03 Ma trận.docx), hãy tạo Bảng Đặc tả có cấu trúc cột dạng câu hỏi, cách đánh mã câu (I.1, II.1a, II.1b, II.1c, II.1d, III.1, IV.1...) và các dòng footer đồng bộ 100% với bảng Ma trận đầu vào, đồng thời có thêm cột "Yêu cầu cần đạt" chi tiết theo 3 mức Biết / Hiểu / Vận dụng cho từng bài học.
 
-  **MA TRẬN ĐẦU VÀO:**
+  **MA TRẬN ĐẦU VÀO (CHUẨN GỐC BẮT BUỘC TUÂN THỦ 100%):**
   ${matrixContent}
 
-  **DỮ LIỆU YÊU CẦU CẦN ĐẠT:**
-  ${objectivesMap.join('\n')}
+  ${objectivesMap.length > 0 ? `**DỮ LIỆU YÊU CẦU CẦN ĐẠT:**\n  ${objectivesMap.join('\n')}` : '**YÊU CẦU CẦN ĐẠT:** Tự biên soạn chi tiết Yêu cầu cần đạt (Biết / Hiểu / Vận dụng) chuẩn Chương trình GDPT 2018 sát với từng Nội dung/Đơn vị kiến thức và mức độ câu hỏi có trong Ma trận đầu vào.'}
 
-  **BẢNG SỐ LƯỢNG GỐC (PHẢI KHỚP 100%):**
+  ${isUploadedMatrix ? '**LƯU Ý ĐẶC BIỆT:** Đây là Ma trận do người dùng tải lên sẵn. Mọi con số, mã câu, dạng câu hỏi và bài học trong Bảng đặc tả PHẢI lấy chính xác từ Ma trận đầu vào.' : `**BẢNG SỐ LƯỢNG ĐỒNG BỘ VỚI MA TRẬN:**
   | Dạng câu hỏi         | Số câu | Số lệnh hỏi (ý) | Chi tiết |
   |---------------------|--------|-----------------|----------|
   | Dạng I (4 lựa chọn)  | ${type1Total.biet + type1Total.hieu + type1Total.vd} câu | ${type1Total.biet + type1Total.hieu + type1Total.vd} | Biết: ${type1Total.biet}, Hiểu: ${type1Total.hieu}, VD: ${type1Total.vd} |
   | Dạng II (Đúng-Sai)   | ${type2QuestionsCount} câu | ${type2SubItemsTotal} ý | Mỗi câu 4 ý a,b,c,d (Tổng ${type2SubItemsTotal} ý) |
   | Dạng III (Trả lời ngắn) | ${type3Total.biet + type3Total.hieu + type3Total.vd} câu | ${type3Total.biet + type3Total.hieu + type3Total.vd} | Biết: ${type3Total.biet}, Hiểu: ${type3Total.hieu}, VD: ${type3Total.vd} |
-  ${hasEssay ? `| Tự luận (IV)       | ${essayTotal.biet + essayTotal.hieu + essayTotal.vd} câu | ${essayTotal.biet + essayTotal.hieu + essayTotal.vd} | Biết: ${essayTotal.biet}, Hiểu: ${essayTotal.hieu}, VD: ${essayTotal.vd} |` : ''}
+  ${hasEssay ? `| Tự luận (IV)       | ${essayTotal.biet + essayTotal.hieu + essayTotal.vd} câu | ${essayTotal.biet + essayTotal.hieu + essayTotal.vd} | Biết: ${essayTotal.biet}, Hiểu: ${essayTotal.hieu}, VD: ${essayTotal.vd} |` : ''}`}
 
   **YÊU CẦU OUTPUT:**
   1. Full HTML Document (<!DOCTYPE html>...).
-  2. Tiêu đề: "ĐẶC TẢ ĐỀ KIỂM TRA ${examTypeLabel} ${semesterNum} - LỚP ${data.grade} - MÔN ${data.subject.toUpperCase()} - NĂM HỌC 20... - 20..."
+  2. Tiêu đề: "ĐẶC TẢ ĐỀ KIỂM TRA ${examTypeLabel} ${semesterNum}${data.grade ? ` - LỚP ${data.grade}` : ''}${data.subject ? ` - MÔN ${data.subject.toUpperCase()}` : ''} - NĂM HỌC 20... - 20..."
   3. **QUY TẮC NĂM HỌC:** Thông tin năm học phải ĐỂ TRỐNG: "NĂM HỌC 20... - 20...".
   4. Cột "Yêu cầu cần đạt" phải có nội dung chi tiết, text-align: left.
-  5. Số câu hỏi và mã câu PHẢI khớp 100% với Ma trận đầu vào và BẢNG SỐ LƯỢNG GỐC.
+  5. Số câu hỏi, các dạng câu hỏi và mã câu PHẢI khớp 100% với Ma trận đầu vào.
   6. CẤU TRÚC BẢNG HTML phải đồng bộ với Ma trận đầu vào và HTML mẫu ở cuối prompt.
 
   **CHÚ THÍCH NĂNG LỰC:**
@@ -275,12 +279,6 @@ export const buildSpecsPromptForCustomTemplate = (
   th { font-weight: bold; }
   .left-align, .text-left { text-align: left; padding: 6px 8px; vertical-align: top; }
   .bold { font-weight: bold; }
-
-  **KIỂM TRA CUỐI CÙNG:** Đếm tổng mã câu mỗi dạng/mức phải khớp:
-  Dạng I: B=${type1Total.biet}/H=${type1Total.hieu}/VD=${type1Total.vd},
-  Dạng II: ${type2QuestionsCount} câu (${type2SubItemsTotal} ý a,b,c,d),
-  Dạng III: B=${type3Total.biet}/H=${type3Total.hieu}/VD=${type3Total.vd}
-  ${hasEssay ? `, Tự luận: B=${essayTotal.biet}/H=${essayTotal.hieu}/VD=${essayTotal.vd}` : ''}
   `;
 };
 

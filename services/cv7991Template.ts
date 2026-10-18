@@ -323,9 +323,9 @@ ${CV7991_CSS}
 
 /** Prompt bước 2 — BẢN ĐẶC TẢ theo mẫu chuẩn CV 7991 */
 export const buildCv7991SpecsPrompt = (
-    p: PromptCommon & { matrixContent: string; objectivesMap: string[] },
+    p: PromptCommon & { matrixContent: string; objectivesMap: string[]; isUploadedMatrix?: boolean },
 ): string => {
-    const { data, layout, footnotes, matrixContent, objectivesMap } = p;
+    const { data, layout, footnotes, matrixContent, objectivesMap, isUploadedMatrix } = p;
     const { examTypeLabel, semesterNum } = examLabels(data);
     const cols = cv7991SpecsColumnCount(layout);
     const comps = getCv7991Competencies(data.subject, footnotes);
@@ -334,14 +334,16 @@ export const buildCv7991SpecsPrompt = (
   Dựa trên **MA TRẬN** (HTML) dưới đây, hãy tạo **BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ** (Full HTML Document)
   theo ĐÚNG mẫu "2. BẢN ĐẶC TẢ ĐỀ KIỂM TRA ĐỊNH KÌ" trong Phụ lục kèm Công văn số 7991/BGDĐT-GDTrH ngày 17/12/2024.
 
-  **MA TRẬN ĐẦU VÀO:**
+  **⚠️ NGUYÊN TẮC TỐI THƯỢNG: TUÂN THỦ 100% MA TRẬN ĐẦU VÀO ⚠️**
+  - Mọi Chương/Chủ đề, Nội dung/Đơn vị kiến thức, các dạng câu hỏi, số câu/lệnh hỏi ở từng mức độ (Biết, Hiểu, Vận dụng), mã câu hỏi và tổng điểm PHẢI GIỮ NGUYÊN 100% theo **MA TRẬN ĐẦU VÀO** bên dưới.
+  - TUYỆT ĐỐI KHÔNG tự ý thêm/bớt bài học hoặc thay đổi số lượng câu hỏi khác với Ma trận đầu vào.
+
+  **MA TRẬN ĐẦU VÀO (CHUẨN GỐC BẮT BUỘC TUÂN THỦ 100%):**
   ${matrixContent}
 
-  **YÊU CẦU CẦN ĐẠT THEO BÀI (tham khảo, viết lại cho phù hợp mã câu):**
-  ${objectivesMap.join('\n')}
+  ${objectivesMap.length > 0 ? `**YÊU CẦU CẦN ĐẠT THEO BÀI (tham khảo, viết lại cho phù hợp mã câu):**\n  ${objectivesMap.join('\n')}` : '**YÊU CẦU CẦN ĐẠT:** Tự biên soạn chi tiết Yêu cầu cần đạt (Biết / Hiểu / Vận dụng) chuẩn Chương trình GDPT 2018 sát với từng Nội dung/Đơn vị kiến thức và mức độ câu hỏi có trong Ma trận đầu vào.'}
 
-  **SỐ LƯỢNG GỐC (ưu tiên hơn ma trận nếu lệch):**
-${describeTypes(layout)}
+  ${isUploadedMatrix ? '**LƯU Ý ĐẶC BIỆT:** Đây là Ma trận do người dùng tải lên. Hãy lấy chính xác số câu, số lệnh hỏi, điểm số và cấu trúc các dạng câu hỏi thực tế trong Ma trận đầu vào làm chuẩn tuyệt đối.' : `**THÔNG TIN CẤU HÌNH ĐỒNG BỘ VỚI MA TRẬN:**\n${describeTypes(layout)}`}
 
   **===== CẤU TRÚC BẢNG BẮT BUỘC =====**
   Bảng có đúng **${cols} cột** (KHÔNG có cột "Cấp độ tư duy", KHÔNG có cột Tổng). Dùng NGUYÊN VĂN <thead> sau:
@@ -351,15 +353,15 @@ ${buildCv7991SpecsThead(layout)}
 
   **PHẦN THÂN — mỗi đơn vị kiến thức (bài học) là 1 hàng, đúng thứ tự & cùng bài như ma trận:**
   - "TT" và "Chủ đề/Chương": gộp ô (rowspan) theo chương; tên chương in đậm (<b>), class="left-align".
-  - "Nội dung/đơn vị kiến thức": tên bài (class="left-align").
+  - "Nội dung/đơn vị kiến thức": tên bài đúng nguyên văn như trong Ma trận đầu vào (class="left-align").
   - "Yêu cầu cần đạt" (class="left-align"): liệt kê theo 3 mức, mỗi mức bắt đầu bằng gạch đầu dòng:
       <b>- Biết:</b> … <br><b>- Hiểu:</b> … <br><b>- Vận dụng:</b> …
-    Chỉ ghi mức nào hàng đó thực sự có lệnh hỏi; nội dung là các động từ hành động đo được, khớp với câu hỏi được giao.
-  - Các ô câu hỏi: ghi **mã câu** đúng y như ô tương ứng trong ma trận (cùng hàng, cùng dạng, cùng mức), và ngay dưới mã câu ghi **tên năng lực viết tắt** trong ngoặc đơn (chú thích 6 của Phụ lục), ví dụ: "I.1, I.2<br>(${comps[0]?.code || 'NL1'})".
+    Chỉ ghi mức nào hàng đó thực sự có lệnh hỏi trong Ma trận; nội dung là các động từ hành động đo được, khớp với câu hỏi được giao.
+  - Các ô câu hỏi: ghi **mã câu / số câu** đúng y như ô tương ứng trong Ma trận (cùng hàng, cùng dạng, cùng mức), và ngay dưới ghi **tên năng lực viết tắt** trong ngoặc đơn (chú thích 6 của Phụ lục), ví dụ: "I.1, I.2<br>(${comps[0]?.code || 'NL1'})".
     Năng lực viết tắt được dùng: ${compList}.
   - Ô không có câu hỏi để trống.
 
-  **3 DÒNG CUỐI (footer) — dùng đúng khung sau, thay {…} bằng số lệnh hỏi:**
+  **3 DÒNG CUỐI (footer) — đồng bộ 100% với 3 dòng cuối của Ma trận đầu vào:**
 \`\`\`
 ${buildCv7991SpecsFooterTemplate(layout)}
 \`\`\`
@@ -367,11 +369,11 @@ ${buildCv7991SpecsFooterTemplate(layout)}
   **YÊU CẦU OUTPUT:**
   1. Full HTML Document, CSS trong <style>:
 ${CV7991_CSS}
-  2. Trên bảng: <h2>BẢN ĐẶC TẢ ĐỀ KIỂM TRA ${examTypeLabel} ${semesterNum} - LỚP ${data.grade} - MÔN ${data.subject.toUpperCase()} – NĂM HỌC 20... - 20...</h2> (năm học để trống).
+  2. Trên bảng: <h2>BẢN ĐẶC TẢ ĐỀ KIỂM TRA ${examTypeLabel} ${semesterNum}${data.grade ? ` - LỚP ${data.grade}` : ''}${data.subject ? ` - MÔN ${data.subject.toUpperCase()}` : ''} – NĂM HỌC 20... - 20...</h2> (nếu Ma trận đầu vào đã có tiêu đề môn/lớp/kỳ kiểm tra cụ thể, hãy giữ đúng môn/lớp/kỳ kiểm tra của Ma trận đầu vào; năm học để trống).
   3. Dưới bảng (class="note"): "Chú thích năng lực: ${compList}."
   4. Chỉ trả về HTML, không giải thích.
 
-  **KIỂM TRA TRƯỚC KHI TRẢ KẾT QUẢ:** tập mã câu trong đặc tả phải TRÙNG KHỚP 100% với ma trận (đủ, không trùng, cùng mức); mỗi hàng đúng ${cols} cột.
+  **KIỂM TRA TRƯỚC KHI TRẢ KẾT QUẢ:** tập mã câu/số câu và danh sách bài học trong đặc tả phải TRÙNG KHỚP 100% với Ma trận đầu vào.
   `;
 };
 
