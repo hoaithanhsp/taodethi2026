@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion, MatrixTemplate } from './types';
+import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion, MatrixTemplate, ExamHistoryItem } from './types';
 import StepIndicator from './components/StepIndicator';
 import Button from './components/Button';
 import MarkdownView from './components/MarkdownView';
@@ -18,7 +18,7 @@ import MarkdownIt from 'markdown-it';
 import { GEMINI_MODELS, AGENT_PLATFORM_MODELS, AiProvider } from './constants';
 import { MATRIX_TEMPLATES } from './services/matrixTemplates';
 import { validateAccount, Account } from './data/accounts';
-import { ArrowRight, ArrowLeft, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, Lock, User, Gift, Phone, Shield, Copy, Shuffle, Sparkles, Layers, Zap } from 'lucide-react';
+import { ArrowRight, ArrowLeft, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, Lock, User, Gift, Phone, Shield, Copy, Shuffle, Sparkles, Layers, Zap, History, Save, Eye } from 'lucide-react';
 
 const mdParser = new MarkdownIt({
   html: true,
@@ -132,6 +132,31 @@ const App: React.FC = () => {
   const [showApiKeyModal, setShowApiKeyModal] = useState<boolean>(!getApiKey(getAiProvider()));
   const [tempGeminiKey, setTempGeminiKey] = useState<string>(getApiKey('gemini') || '');
   const [tempAgentPlatformKey, setTempAgentPlatformKey] = useState<string>(getApiKey('agent-platform') || '');
+
+  // -- Exam Creation History State (Max 5 recent items) --
+  const HISTORY_STORAGE_KEY = 'examcraft_creation_history';
+  const [examHistory, setExamHistory] = useState<ExamHistoryItem[]>(() => {
+    try {
+      const raw = localStorage.getItem('examcraft_creation_history');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.slice(0, 5) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
+  const [isCurrentExamSaved, setIsCurrentExamSaved] = useState<boolean>(false);
+
+  const persistExamHistory = (items: ExamHistoryItem[]) => {
+    const limited = items.slice(0, 5);
+    setExamHistory(limited);
+    try {
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(limited));
+    } catch (e) {
+      console.warn('[ExamCraft] Không thể lưu lịch sử vào localStorage:', e);
+    }
+  };
 
   // --- Auth Handlers ---
   const handleLogin = () => {
@@ -642,11 +667,128 @@ const App: React.FC = () => {
       setGenState(prev => ({ ...prev, exam, isLoading: false }));
       setCurrentStep(AppStep.EXAM);
       setCompletedSteps(Math.max(completedSteps, 3));
-
-
+      setIsCurrentExamSaved(false);
     } catch (err: any) {
       setGenState(prev => ({ ...prev, isLoading: false, error: err.message }));
     }
+  };
+
+  // -- History Handlers (Lưu 5 lịch sử gần nhất & Tái sử dụng Ma trận/Đặc tả để tạo đề thêm) --
+  const buildHistoryTitle = (): string => {
+    if (inputData.subject) {
+      const gradeStr = inputData.grade ? ` - Lớp ${inputData.grade}` : '';
+      const typeStr = inputData.examType ? ` • ${inputData.examType}` : '';
+      const durStr = inputData.duration ? ` (${inputData.duration} phút)` : '';
+      return `${inputData.subject}${gradeStr}${typeStr}${durStr}`;
+    }
+    const titleMatch = (genState.exam || genState.specs || genState.matrix).match(/<title[^>]*>(.*?)<\/title>/i);
+    if (titleMatch && titleMatch[1]?.trim()) {
+      return titleMatch[1].trim();
+    }
+    return `Đề kiểm tra ${inputData.examType || ''} (${inputData.duration || 45} phút)`.trim();
+  };
+
+  const handleSaveHistory = () => {
+    if (!genState.exam && !genState.specs) return;
+    const createdAt = new Date().toLocaleString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
+    const newItem: ExamHistoryItem = {
+      id: `hist_${Date.now()}`,
+      createdAt,
+      title: buildHistoryTitle(),
+      inputData: JSON.parse(JSON.stringify(inputData)),
+      matrixTemplate,
+      selectedLessonIds: Array.from(selectedLessonIds),
+      matrix: genState.matrix,
+      specs: genState.specs,
+      exam: genState.exam,
+    };
+    const updated = [newItem, ...examHistory].slice(0, 5);
+    persistExamHistory(updated);
+    setIsCurrentExamSaved(true);
+  };
+
+  const handleGenerateExamFromHistory = async (item: ExamHistoryItem) => {
+    if (!checkAuthOrTrial()) return;
+
+    setShowHistoryModal(false);
+    setAppMode('cv7991');
+    setInputData(item.inputData);
+    setMatrixTemplate(item.matrixTemplate || 'template1');
+    setSelectedLessonIds(new Set(item.selectedLessonIds || []));
+    setIsCurrentExamSaved(false);
+    setCurrentStep(AppStep.EXAM);
+    setCompletedSteps(3);
+    setGenState({
+      matrix: item.matrix,
+      specs: item.specs,
+      exam: item.exam,
+      isLoading: true,
+      error: null,
+    });
+
+    try {
+      const finalQuestionConfig = { ...item.inputData.questionConfig };
+      const userTotalEssay =
+        finalQuestionConfig.essay.biet +
+        finalQuestionConfig.essay.hieu +
+        finalQuestionConfig.essay.van_dung +
+        finalQuestionConfig.essay.van_dung_cao;
+
+      if (userTotalEssay === 0) {
+        finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
+      }
+
+      const newExam = await generateStep3Exam(
+        item.specs || item.matrix,
+        finalQuestionConfig,
+        item.inputData,
+        referenceDoc?.text,
+        referenceDoc?.images,
+        extractedQuestions.length > 0 ? extractedQuestions : undefined
+      );
+
+      setGenState({
+        matrix: item.matrix,
+        specs: item.specs,
+        exam: newExam,
+        isLoading: false,
+        error: null,
+      });
+      setCurrentStep(AppStep.EXAM);
+      setCompletedSteps(3);
+      setIsCurrentExamSaved(false);
+    } catch (err: any) {
+      setGenState(prev => ({ ...prev, isLoading: false, error: err.message }));
+    }
+  };
+
+  const handleRestoreHistory = (item: ExamHistoryItem) => {
+    setShowHistoryModal(false);
+    setAppMode('cv7991');
+    setInputData(item.inputData);
+    setMatrixTemplate(item.matrixTemplate || 'template1');
+    setSelectedLessonIds(new Set(item.selectedLessonIds || []));
+    setGenState({
+      matrix: item.matrix,
+      specs: item.specs,
+      exam: item.exam,
+      isLoading: false,
+      error: null,
+    });
+    setCurrentStep(AppStep.EXAM);
+    setCompletedSteps(3);
+    setIsCurrentExamSaved(true);
+  };
+
+  const handleDeleteHistoryItem = (id: string) => {
+    const updated = examHistory.filter(item => item.id !== id);
+    persistExamHistory(updated);
   };
 
   // -- Reference Document Upload Handler --
@@ -1238,14 +1380,14 @@ const App: React.FC = () => {
     onUpdateContent: (val: string) => void
   ) => (
     <div className="max-w-[1400px] mx-auto h-full flex flex-col p-4 sm:p-6">
-      <div className="flex justify-between items-center mb-4 card-elevated p-4 flex-shrink-0">
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-4 card-elevated p-4 flex-shrink-0">
         <h2 className="text-xl font-bold text-teal-800 flex items-center gap-2.5">
           <span className="w-8 h-8 rounded-full badge-section text-white flex items-center justify-center text-sm shrink-0 font-bold">
             {currentStep + 1}
           </span>
           {title}
         </h2>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-2.5">
           {/* Upload Matrix Button - Only for Matrix Step */}
           {currentStep === AppStep.MATRIX && (
             <>
@@ -1281,6 +1423,27 @@ const App: React.FC = () => {
           }} icon={<Download className="w-4 h-4" />}>
             Tải HTML
           </Button>
+
+          {isLastStep && (
+            <>
+              <Button
+                variant={isCurrentExamSaved ? 'secondary' : 'primary'}
+                onClick={handleSaveHistory}
+                disabled={isCurrentExamSaved || genState.isLoading || !content}
+                icon={isCurrentExamSaved ? <Check className="w-4 h-4 text-emerald-600" /> : <Save className="w-4 h-4" />}
+              >
+                {isCurrentExamSaved ? 'Đã lưu lịch sử' : 'Lưu lịch sử tạo'}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setShowHistoryModal(true)}
+                icon={<History className="w-4 h-4 text-teal-700" />}
+              >
+                Lịch sử tạo ({examHistory.length}/5)
+              </Button>
+            </>
+          )}
+
           {!isLastStep && (
             <Button onClick={onNext} isLoading={genState.isLoading} icon={<ArrowRight className="w-4 h-4" />}>
               {nextLabel}
@@ -1414,7 +1577,20 @@ const App: React.FC = () => {
         />
       )}
 
-      <div className="flex-1 min-h-0 flex flex-col pb-2">
+      <div className="flex-1 min-h-0 flex flex-col pb-2 relative">
+        {/* Loading overlay when generating additional exam from history */}
+        {genState.isLoading && isLastStep && (
+          <div className="absolute inset-0 z-20 bg-white/85 backdrop-blur-sm rounded-xl flex flex-col items-center justify-center gap-3 p-6 text-center">
+            <div className="w-10 h-10 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
+            <p className="text-base font-bold text-teal-800">
+              Đang sinh đề thi mới từ Ma trận & Bảng đặc tả đã lưu...
+            </p>
+            <p className="text-xs text-slate-500">
+              Hệ thống đang giữ nguyên cấu trúc Ma trận, Đặc tả và sinh bộ câu hỏi mới.
+            </p>
+          </div>
+        )}
+
         {/* Preview Side */}
         <div className="flex flex-col h-full panel-elevated">
           <div className="bg-gradient-to-r from-teal-50 to-emerald-50 px-4 py-2.5 border-b border-teal-100/50 flex-shrink-0">
@@ -1451,11 +1627,97 @@ const App: React.FC = () => {
       setExtractedQuestions([]);
       setComboMatrixFile(null);
       setComboSpecsFile(null);
+      setIsCurrentExamSaved(false);
     }
   }
 
   return (
     <div className="h-screen w-full flex flex-col bg-app-gradient font-sans text-black overflow-hidden">
+
+      {/* History Modal (5 lịch sử tạo gần nhất) */}
+      {showHistoryModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[55] flex items-center justify-center p-4" onClick={() => setShowHistoryModal(false)}>
+          <div className="modal-elevated max-w-2xl w-full p-0 overflow-hidden max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            {/* Modal Header */}
+            <div style={{ background: 'linear-gradient(135deg, #0d9488 0%, #0f766e 50%, #115e59 100%)' }} className="p-5 text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-white/15">
+                  <History className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold">Lịch sử tạo đề thi (5 gần nhất)</h2>
+                  <p className="text-xs text-teal-100">Bấm "Tạo đề thi" để tận dụng Ma trận & Đặc tả đã tạo trước đó sinh đề thêm</p>
+                </div>
+              </div>
+              <button onClick={() => setShowHistoryModal(false)} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 overflow-y-auto space-y-3 flex-1">
+              {examHistory.length === 0 ? (
+                <div className="text-center py-10 space-y-2">
+                  <History className="w-12 h-12 text-slate-300 mx-auto" />
+                  <p className="text-sm font-semibold text-slate-600">Chưa có lịch sử tạo đề nào được lưu</p>
+                  <p className="text-xs text-slate-400">Sau khi tạo xong đề thi, hãy bấm nút "Lưu lịch sử tạo" để lưu lại Ma trận, Đặc tả và Đề thi tại đây.</p>
+                </div>
+              ) : (
+                examHistory.slice(0, 5).map((item, idx) => (
+                  <div
+                    key={item.id}
+                    className="p-4 rounded-xl border border-teal-100 bg-white hover:border-teal-300 transition-all shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                  >
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-teal-100 text-teal-800 shrink-0">
+                          #{idx + 1}
+                        </span>
+                        <h3 className="text-sm font-bold text-teal-900 truncate" title={item.title}>
+                          {item.title}
+                        </h3>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                        <span>🕒 {item.createdAt}</span>
+                        <span>•</span>
+                        <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-medium">
+                          Đã lưu Ma trận + Đặc tả + Đề
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        onClick={() => handleGenerateExamFromHistory(item)}
+                        isLoading={genState.isLoading}
+                        icon={<Sparkles className="w-4 h-4" />}
+                        className="text-xs px-3.5 py-2 whitespace-nowrap"
+                      >
+                        Tạo đề thi
+                      </Button>
+                      <button
+                        onClick={() => handleRestoreHistory(item)}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-teal-200 text-teal-700 hover:bg-teal-50 text-xs font-semibold transition-colors whitespace-nowrap"
+                        title="Xem lại Ma trận, Đặc tả và Đề thi đã lưu"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        Xem lại
+                      </button>
+                      <button
+                        onClick={() => handleDeleteHistoryItem(item.id)}
+                        className="p-2 rounded-xl border border-slate-200 text-slate-400 hover:text-red-600 hover:bg-red-50 hover:border-red-200 transition-colors"
+                        title="Xóa lịch sử này"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Login Modal */}
       {showLoginModal && (
@@ -1777,6 +2039,14 @@ const App: React.FC = () => {
                 </span>
               )}
             </button>
+            <Button
+              variant="secondary"
+              onClick={() => setShowHistoryModal(true)}
+              icon={<History className="w-4 h-4 text-teal-700" />}
+              className="text-sm px-3 py-1.5 h-9"
+            >
+              Lịch sử tạo {examHistory.length > 0 ? `(${examHistory.length})` : ''}
+            </Button>
             <Button variant="secondary" onClick={handleReset} icon={<RotateCcw className="w-4 h-4" />} className="text-sm px-3 py-1.5 h-9">
               Tạo mới
             </Button>

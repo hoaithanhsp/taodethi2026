@@ -58,6 +58,18 @@ export interface GenerationState {
   error: string | null;
 }
 
+export interface ExamHistoryItem {
+  id: string;
+  createdAt: string;
+  title: string;
+  inputData: InputData;
+  matrixTemplate: MatrixTemplate;
+  selectedLessonIds: string[];
+  matrix: string;
+  specs: string;
+  exam: string;
+}
+
 export type Role = 'user' | 'model';
 
 export interface ChatMessage {
