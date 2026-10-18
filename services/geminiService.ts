@@ -4,6 +4,10 @@ import { SYSTEM_INSTRUCTION, MODEL_NAME, PROVIDER_FALLBACK_MODELS, GRADE_NO_ESSA
 import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate } from '../types';
 import { fetchTemplateHtml, buildMatrixPromptForCustomTemplate, buildSpecsPromptForCustomTemplate } from './matrixTemplates';
 import { FIGURE_JSON_HTML_INSTRUCTIONS, renderFiguresInHtml } from './figureEngine';
+import {
+  computeCv7991Layout, buildCv7991MatrixPrompt, buildCv7991SpecsPrompt,
+  buildCv7991MatrixThead, buildCv7991SpecsThead, cv7991MatrixColumnCount, cv7991SpecsColumnCount, applyCv7991Thead,
+} from './cv7991Template';
 
 // --- Dual AI Provider Management ---
 const GOOGLE_AI_PROVIDER_KEY = 'google_ai_provider';
@@ -690,18 +694,25 @@ export const generateStep1Matrix = async (
     });
   }
 
-  // --- TEMPLATE 1: Original prompt (default) ---
+  // --- TEMPLATE 1: Mẫu chuẩn CV 7991 (đúng Phụ lục CV 7991/BGDĐT-GDTrH) ---
+  const cvLayout = computeCv7991Layout(config, !isGradeNoEssay);
+  const useCv = cvLayout.types.length > 0;
+  const cvPrompt = useCv
+    ? buildCv7991MatrixPrompt({ data, layout: cvLayout, footnotes, selectedChapters, totalSelectedPeriods })
+    : prompt;
   return callWithFallback(async (ai, model) => {
     const response = await ai.models.generateContent({
       model,
-      contents: prompt,
+      contents: cvPrompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         temperature: 0.1,
       },
     });
-    const text = response.text || "Lỗi tạo ma trận.";
-    return text.replace(/```html/g, '').replace(/```/g, '');
+    const text = (response.text || "Lỗi tạo ma trận.").replace(/```html/g, '').replace(/```/g, '');
+    return useCv
+      ? applyCv7991Thead(text, buildCv7991MatrixThead(cvLayout), cv7991MatrixColumnCount(cvLayout))
+      : text;
   });
 };
 
@@ -844,18 +855,25 @@ export const generateStep2Specs = async (
     });
   }
 
-  // --- TEMPLATE 1: Original prompt (default) ---
+  // --- TEMPLATE 1: Mẫu chuẩn CV 7991 (đúng Phụ lục CV 7991/BGDĐT-GDTrH) ---
+  const cvLayout = computeCv7991Layout(config, !isGradeNoEssay);
+  const useCv = cvLayout.types.length > 0;
+  const cvPrompt = useCv
+    ? buildCv7991SpecsPrompt({ data, layout: cvLayout, footnotes, matrixContent, objectivesMap })
+    : prompt;
   return callWithFallback(async (ai, model) => {
     const response = await ai.models.generateContent({
       model,
-      contents: prompt,
+      contents: cvPrompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         temperature: 0.1,
       },
     });
-    const text = response.text || "Lỗi tạo đặc tả.";
-    return text.replace(/```html/g, '').replace(/```/g, '');
+    const text = (response.text || "Lỗi tạo đặc tả.").replace(/```html/g, '').replace(/```/g, '');
+    return useCv
+      ? applyCv7991Thead(text, buildCv7991SpecsThead(cvLayout), cv7991SpecsColumnCount(cvLayout))
+      : text;
   });
 };
 
