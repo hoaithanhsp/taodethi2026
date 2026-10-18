@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion, MatrixTemplate, ExamHistoryItem } from './types';
+import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion, MatrixTemplate, ExamHistoryItem, ReferenceUsageMode, ReferenceDocItem } from './types';
 import StepIndicator from './components/StepIndicator';
 import Button from './components/Button';
 import MarkdownView from './components/MarkdownView';
@@ -114,17 +114,22 @@ const App: React.FC = () => {
   const [comboSpecsFile, setComboSpecsFile] = useState<File | null>(null);
   const [isComboProcessing, setIsComboProcessing] = useState(false);
 
-  // -- Reference Document State --
-  const [referenceDoc, setReferenceDoc] = useState<{
-    text: string;
-    images: { base64: string; mimeType: string }[];
-    fileName: string;
-    method: string;
-    wmfCount: number;
-  } | null>(null);
+  // -- Reference Document State (Hỗ trợ nhiều file + 2 chế độ sử dụng) --
+  const [referenceDocs, setReferenceDocs] = useState<ReferenceDocItem[]>([]);
+  const [referenceMode, setReferenceMode] = useState<ReferenceUsageMode>('exact');
+  const [isDraggingReference, setIsDraggingReference] = useState(false);
   const [isParsingReference, setIsParsingReference] = useState(false);
   const [extractedQuestions, setExtractedQuestions] = useState<ExtractedQuestion[]>([]);
   const [isExtractingQuestions, setIsExtractingQuestions] = useState(false);
+
+  const getCombinedReferenceData = (docs: ReferenceDocItem[] = referenceDocs) => {
+    const text = docs
+      .filter(d => d.text && d.text.trim())
+      .map(d => `=== TÀI LIỆU: ${d.fileName} ===\n${d.text}`)
+      .join('\n\n');
+    const images = docs.flatMap(d => d.images);
+    return { text, images };
+  };
 
   // -- API Key State --
   const [apiKey, setApiKeyState] = useState<string>(getApiKey(getAiProvider()) || '');
@@ -634,14 +639,15 @@ const App: React.FC = () => {
         finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
       }
 
-      // Auto-extract questions from reference doc if not done yet
+      // Auto-extract questions from reference docs if not done yet
+      const combinedRef = getCombinedReferenceData();
       let questionsToUse = extractedQuestions;
-      if (referenceDoc && extractedQuestions.length === 0) {
-        console.log('[ExamCraft] Auto-extracting questions from reference doc before exam generation...');
+      if (referenceDocs.length > 0 && extractedQuestions.length === 0) {
+        console.log('[ExamCraft] Auto-extracting questions from reference docs before exam generation...');
         try {
           const extracted = await extractQuestionsFromReference(
-            referenceDoc.text,
-            referenceDoc.images,
+            combinedRef.text,
+            combinedRef.images,
             genState.specs,
             inputData.subject,
             inputData.grade
@@ -660,9 +666,10 @@ const App: React.FC = () => {
         genState.specs,
         finalQuestionConfig,
         inputData,
-        referenceDoc?.text,
-        referenceDoc?.images,
-        questionsToUse.length > 0 ? questionsToUse : undefined
+        combinedRef.text || undefined,
+        combinedRef.images.length > 0 ? combinedRef.images : undefined,
+        questionsToUse.length > 0 ? questionsToUse : undefined,
+        referenceMode
       );
       setGenState(prev => ({ ...prev, exam, isLoading: false }));
       setCurrentStep(AppStep.EXAM);
@@ -744,13 +751,15 @@ const App: React.FC = () => {
         finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
       }
 
+      const combinedRef = getCombinedReferenceData();
       const newExam = await generateStep3Exam(
         item.specs || item.matrix,
         finalQuestionConfig,
         item.inputData,
-        referenceDoc?.text,
-        referenceDoc?.images,
-        extractedQuestions.length > 0 ? extractedQuestions : undefined
+        combinedRef.text || undefined,
+        combinedRef.images.length > 0 ? combinedRef.images : undefined,
+        extractedQuestions.length > 0 ? extractedQuestions : undefined,
+        referenceMode
       );
 
       setGenState({
@@ -791,43 +800,100 @@ const App: React.FC = () => {
     persistExamHistory(updated);
   };
 
-  // -- Reference Document Upload Handler --
-  const handleReferenceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // -- Reference Document Upload Handler (Multi-file + Drag & Drop) --
+  const parseSingleReferenceFile = async (file: File): Promise<ReferenceDocItem> => {
+    const lowerName = file.name.toLowerCase();
+    const id = `ref_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-    setIsParsingReference(true);
-    setExtractedQuestions([]); // Reset previous extraction
-    try {
+    if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) {
       const arrayBuffer = await file.arrayBuffer();
       const result = await parseDocxWithMath(arrayBuffer);
-
-      setReferenceDoc({
+      return {
+        id,
+        fileName: file.name,
         text: result.text,
         images: result.images,
-        fileName: file.name,
         method: result.method,
         wmfCount: result.wmfCount,
-      });
+      };
+    }
 
-      console.log(`[Reference] Parsed: ${result.text.length} chars, ${result.images.length} images, method=${result.method}, wmf=${result.wmfCount}`);
+    if (lowerName.endsWith('.pdf') || file.type === 'application/pdf' || file.type.startsWith('image/')) {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const res = reader.result as string;
+          resolve(res.includes(',') ? res.split(',')[1] : res);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const mimeType = file.type || (lowerName.endsWith('.pdf') ? 'application/pdf' : 'image/png');
+      return {
+        id,
+        fileName: file.name,
+        text: `[Tài liệu PDF/Hình ảnh đính kèm: ${file.name}]`,
+        images: [{ base64, mimeType }],
+        method: 'pdf',
+        wmfCount: 0,
+      };
+    }
+
+    // Fallback for .txt / .html
+    const textContent = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve((e.target?.result as string) || '');
+      reader.onerror = reject;
+      reader.readAsText(file);
+    });
+    return {
+      id,
+      fileName: file.name,
+      text: textContent,
+      images: [],
+      method: 'text',
+      wmfCount: 0,
+    };
+  };
+
+  const processReferenceFiles = async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList);
+    if (files.length === 0) return;
+
+    setIsParsingReference(true);
+    setGenState(prev => ({ ...prev, error: null }));
+
+    try {
+      const parsedItems: ReferenceDocItem[] = [];
+      for (const file of files) {
+        const parsed = await parseSingleReferenceFile(file);
+        parsedItems.push(parsed);
+      }
+
+      const mergedDocs = [
+        ...referenceDocs.filter(existing => !parsedItems.some(p => p.fileName === existing.fileName)),
+        ...parsedItems,
+      ];
+      setReferenceDocs(mergedDocs);
+
+      const combined = getCombinedReferenceData(mergedDocs);
+      console.log(`[Reference] Parsed ${mergedDocs.length} files: ${combined.text.length} chars, ${combined.images.length} images/files`);
 
       // Auto-trigger AI extraction if specs are available
       if (genState.specs) {
         setIsExtractingQuestions(true);
         try {
           const questions = await extractQuestionsFromReference(
-            result.text,
-            result.images,
+            combined.text,
+            combined.images,
             genState.specs,
             inputData.subject,
             inputData.grade
           );
           setExtractedQuestions(questions);
-          console.log(`[Reference] Extracted ${questions.length} questions`);
+          console.log(`[Reference] Extracted ${questions.length} questions from ${mergedDocs.length} files`);
         } catch (extractErr: any) {
           console.warn('[Reference] Question extraction failed:', extractErr.message);
-          // Non-fatal: app still works with raw text fallback
         } finally {
           setIsExtractingQuestions(false);
         }
@@ -838,6 +904,34 @@ const App: React.FC = () => {
       setIsParsingReference(false);
       if (referenceUploadRef.current) referenceUploadRef.current.value = '';
     }
+  };
+
+  const handleReferenceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    await processReferenceFiles(e.target.files);
+  };
+
+  const handleReferenceDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingReference(false);
+    if (isParsingReference) return;
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await processReferenceFiles(e.dataTransfer.files);
+    }
+  };
+
+  const handleRemoveReferenceDoc = (id: string) => {
+    const remaining = referenceDocs.filter(doc => doc.id !== id);
+    setReferenceDocs(remaining);
+    if (remaining.length === 0) {
+      setExtractedQuestions([]);
+    }
+  };
+
+  const handleClearAllReferenceDocs = () => {
+    setReferenceDocs([]);
+    setExtractedQuestions([]);
   };
 
   const handleDownloadWord = async (content: string, fileName: string) => {
@@ -1454,85 +1548,185 @@ const App: React.FC = () => {
 
       {/* Reference Document Upload - Only for SPECS step */}
       {currentStep === AppStep.SPECS && (
-        <div className="mb-4 card-elevated p-4 flex-shrink-0">
-          <div className="flex items-center gap-2 mb-2">
-            <BookOpen className="w-4 h-4 text-teal-600" />
-            <span className="text-sm font-bold text-teal-800">Tài liệu tham khảo — Ngân hàng câu hỏi</span>
-            <span className="text-xs text-slate-400">(tùy chọn)</span>
+        <div className="mb-4 card-elevated p-4 flex-shrink-0 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-teal-600" />
+              <span className="text-sm font-bold text-teal-800">Tài liệu tham khảo — Ngân hàng câu hỏi</span>
+              <span className="text-xs text-slate-400">(tùy chọn)</span>
+            </div>
+            {referenceDocs.length > 0 && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => referenceUploadRef.current?.click()}
+                  disabled={isParsingReference}
+                  className="text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  Thêm file
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearAllReferenceDocs}
+                  className="text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Xóa tất cả ({referenceDocs.length})
+                </button>
+              </div>
+            )}
           </div>
-          <p className="text-xs text-slate-500 mb-3">
-            Upload đề mẫu hoặc ngân hàng câu hỏi (.docx) — AI sẽ <strong>trích xuất chính xác</strong> các câu hỏi và sử dụng nguyên văn vào đề thi (phù hợp với ma trận, đặc tả).
-          </p>
+
+          {/* 2 Options: Trích xuất chính xác vs Tham khảo dạng câu hỏi, thay số hoặc bối cảnh */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              onClick={() => setReferenceMode('exact')}
+              className={`flex items-start gap-2.5 p-2.5 rounded-xl border-2 text-left transition-all ${
+                referenceMode === 'exact'
+                  ? 'border-teal-500 bg-teal-50/80 shadow-sm'
+                  : 'border-slate-200 hover:border-teal-300 bg-white'
+              }`}
+            >
+              <div className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                referenceMode === 'exact' ? 'border-teal-600 bg-teal-600' : 'border-slate-300'
+              }`}>
+                {referenceMode === 'exact' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs sm:text-sm font-bold text-teal-900">Trích xuất chính xác</div>
+                <p className="text-[11px] text-slate-500 leading-snug mt-0.5">
+                  Sử dụng nguyên văn các câu hỏi trong tài liệu vào đề thi (phù hợp với ma trận, đặc tả).
+                </p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setReferenceMode('adapt')}
+              className={`flex items-start gap-2.5 p-2.5 rounded-xl border-2 text-left transition-all ${
+                referenceMode === 'adapt'
+                  ? 'border-teal-500 bg-teal-50/80 shadow-sm'
+                  : 'border-slate-200 hover:border-teal-300 bg-white'
+              }`}
+            >
+              <div className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                referenceMode === 'adapt' ? 'border-teal-600 bg-teal-600' : 'border-slate-300'
+              }`}>
+                {referenceMode === 'adapt' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs sm:text-sm font-bold text-teal-900">
+                  Tham khảo dạng câu hỏi, thay số hoặc bối cảnh cho phù hợp
+                </div>
+                <p className="text-[11px] text-slate-500 leading-snug mt-0.5">
+                  Giữ dạng bài từ tài liệu nhưng thay đổi số liệu, hàm số hoặc bối cảnh thực tế và giải lại đáp án.
+                </p>
+              </div>
+            </button>
+          </div>
 
           <input
             type="file"
+            multiple
             ref={referenceUploadRef}
             onChange={handleReferenceUpload}
             className="hidden"
-            accept=".docx,.doc,.pdf"
+            accept=".docx,.doc,.pdf,.txt,.html"
           />
 
-          {!referenceDoc ? (
-            <button
-              onClick={() => referenceUploadRef.current?.click()}
-              disabled={isParsingReference}
-              className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-teal-200 rounded-lg hover:border-teal-400 hover:bg-teal-50/50 transition-all text-sm text-teal-600 w-full justify-center"
-            >
-              {isParsingReference ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
-                  <span>Đang phân tích tài liệu...</span>
-                </>
-              ) : (
-                <>
-                  <Paperclip className="w-4 h-4" />
-                  <span>Chọn file đề mẫu / ngân hàng câu hỏi (.docx, .pdf)</span>
-                </>
-              )}
-            </button>
-          ) : (
-            <div className="space-y-3">
-              {/* File Info Row */}
-              <div className="flex items-center gap-3 px-4 py-2.5 bg-teal-50 border border-teal-200 rounded-lg">
-                <div className="w-8 h-8 bg-teal-100 rounded-lg flex items-center justify-center shrink-0">
-                  <FileText className="w-4 h-4 text-teal-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-teal-800 truncate">{referenceDoc.fileName}</p>
-                  <p className="text-xs text-slate-500">
-                    {referenceDoc.method === 'hybrid'
-                      ? `Hybrid: ${referenceDoc.wmfCount} công thức MathType + ${referenceDoc.images.length} hình`
-                      : referenceDoc.method === 'xml'
-                        ? `XML: ${referenceDoc.text.length} ký tự (OMML → LaTeX)`
-                        : `Mammoth: ${referenceDoc.images.length} hình ảnh`
-                    }
-                    {' · '}{Math.round(referenceDoc.text.length / 1000)}K ký tự
-                  </p>
-                </div>
-                <button
-                  onClick={() => { setReferenceDoc(null); setExtractedQuestions([]); }}
-                  className="shrink-0 p-1.5 rounded-md hover:bg-red-100 text-slate-400 hover:text-red-500 transition-colors"
-                  title="Xóa tài liệu tham khảo"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+          {/* Drag & Drop / Click Zone (always available to upload multiple files at once) */}
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!isParsingReference) setIsDraggingReference(true);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsDraggingReference(false);
+            }}
+            onDrop={handleReferenceDrop}
+            onClick={() => !isParsingReference && referenceUploadRef.current?.click()}
+            className={`cursor-pointer flex flex-col sm:flex-row items-center justify-center gap-2 px-4 py-3 border-2 border-dashed rounded-xl transition-all text-sm w-full ${
+              isDraggingReference
+                ? 'border-teal-500 bg-teal-50 text-teal-800 scale-[1.005]'
+                : 'border-teal-200 hover:border-teal-400 hover:bg-teal-50/50 text-teal-600'
+            } ${isParsingReference ? 'opacity-60 pointer-events-none' : ''}`}
+          >
+            {isParsingReference ? (
+              <>
+                <div className="w-4 h-4 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
+                <span className="font-medium">Đang phân tích các tài liệu tải lên...</span>
+              </>
+            ) : (
+              <>
+                <Paperclip className="w-4 h-4 shrink-0" />
+                <span className="font-medium text-center">
+                  Kéo thả nhiều file vào đây hoặc click để chọn file đề mẫu / ngân hàng câu hỏi (.docx, .pdf)
+                </span>
+              </>
+            )}
+          </div>
+
+          {/* Uploaded Files List & Extraction Summary */}
+          {referenceDocs.length > 0 && (
+            <div className="space-y-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-36 overflow-y-auto pr-1">
+                {referenceDocs.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className="flex items-center gap-2.5 px-3 py-2 bg-teal-50/70 border border-teal-200 rounded-lg"
+                  >
+                    <div className="w-7 h-7 bg-teal-100 rounded-md flex items-center justify-center shrink-0">
+                      <FileText className="w-3.5 h-3.5 text-teal-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-teal-900 truncate" title={doc.fileName}>
+                        {doc.fileName}
+                      </p>
+                      <p className="text-[11px] text-slate-500 truncate">
+                        {doc.method === 'hybrid'
+                          ? `Hybrid: ${doc.wmfCount} MathType + ${doc.images.length} hình`
+                          : doc.method === 'xml'
+                            ? `Word XML: ${Math.max(1, Math.round(doc.text.length / 1000))}K ký tự`
+                            : doc.method === 'pdf'
+                              ? 'PDF / Hình ảnh đính kèm'
+                              : `${Math.max(1, Math.round(doc.text.length / 1000))}K ký tự`
+                        }
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveReferenceDoc(doc.id)}
+                      className="shrink-0 p-1 rounded hover:bg-red-100 text-slate-400 hover:text-red-500 transition-colors"
+                      title="Xóa file này"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
               </div>
 
               {/* Extraction Status */}
               {isExtractingQuestions && (
-                <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg">
                   <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-sm text-amber-700 font-medium">Đang trích xuất câu hỏi bằng AI...</span>
+                  <span className="text-xs sm:text-sm text-amber-700 font-medium">
+                    Đang trích xuất câu hỏi từ {referenceDocs.length} tài liệu bằng AI...
+                  </span>
                 </div>
               )}
 
               {/* Extracted Questions Summary */}
               {extractedQuestions.length > 0 && !isExtractingQuestions && (
-                <div className="px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-lg">
-                  <div className="flex items-center gap-2 mb-2">
+                <div className="px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-lg">
+                  <div className="flex items-center gap-2 mb-1.5">
                     <Check className="w-4 h-4 text-emerald-600" />
-                    <span className="text-sm font-bold text-emerald-800">
-                      Đã trích xuất {extractedQuestions.length} câu hỏi
+                    <span className="text-xs sm:text-sm font-bold text-emerald-800">
+                      Đã trích xuất {extractedQuestions.length} câu hỏi từ {referenceDocs.length} file
                     </span>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
@@ -1553,16 +1747,18 @@ const App: React.FC = () => {
                       );
                     })()}
                   </div>
-                  <p className="text-xs text-emerald-600 mt-2 italic">
-                    ✅ Các câu hỏi này sẽ được sử dụng NGUYÊN VĂN trong đề thi (phù hợp ma trận + đặc tả).
+                  <p className="text-xs text-emerald-700 mt-1.5 italic">
+                    {referenceMode === 'exact'
+                      ? '✅ Chế độ Trích xuất chính xác: Các câu hỏi sẽ được sử dụng NGUYÊN VĂN trong đề thi (phù hợp ma trận + đặc tả).'
+                      : '🔄 Chế độ Tham khảo & Thay số: AI sẽ lấy dạng bài từ các câu hỏi này và thay đổi số liệu hoặc bối cảnh cho phù hợp.'}
                   </p>
                 </div>
               )}
 
-              {/* No questions extracted */}
-              {referenceDoc && !isExtractingQuestions && extractedQuestions.length === 0 && (
+              {/* No questions extracted yet */}
+              {referenceDocs.length > 0 && !isExtractingQuestions && extractedQuestions.length === 0 && (
                 <p className="text-xs text-slate-400 italic px-1">
-                  ⏳ Câu hỏi sẽ được trích xuất khi bạn nhấn "Tạo đề thi". Hoặc AI sẽ tham khảo nội dung trực tiếp.
+                  ⏳ Đã tải lên {referenceDocs.length} tài liệu. AI sẽ xử lý theo chế độ "{referenceMode === 'exact' ? 'Trích xuất chính xác' : 'Tham khảo dạng câu hỏi, thay số hoặc bối cảnh'}" khi bạn nhấn "Tiếp theo: Đề thi".
                 </p>
               )}
             </div>
@@ -1623,7 +1819,8 @@ const App: React.FC = () => {
       setSelectedLessonIds(new Set());
       setExpandedChapterIds(new Set());
       setMatrixTemplate('template1');
-      setReferenceDoc(null);
+      setReferenceDocs([]);
+      setReferenceMode('exact');
       setExtractedQuestions([]);
       setComboMatrixFile(null);
       setComboSpecsFile(null);

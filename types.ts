@@ -89,6 +89,17 @@ export interface ExtractedQuestion {
   subItems?: string[]; // Các ý a,b,c,d cho type2
 }
 
+export type ReferenceUsageMode = 'exact' | 'adapt';
+
+export interface ReferenceDocItem {
+  id: string;
+  fileName: string;
+  text: string;
+  images: { base64: string; mimeType: string }[];
+  method: string;
+  wmfCount: number;
+}
+
 // ============================================
 // NGÂN HÀNG CÂU HỎI — Types
 // ============================================

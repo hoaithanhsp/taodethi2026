@@ -1,7 +1,7 @@
 
 import { GoogleGenAI } from "@google/genai";
 import { SYSTEM_INSTRUCTION, MODEL_NAME, PROVIDER_FALLBACK_MODELS, GRADE_NO_ESSAY, getSubjectFootnotes, AiProvider } from '../constants';
-import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate } from '../types';
+import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate, ReferenceUsageMode } from '../types';
 import { fetchTemplateHtml, buildMatrixPromptForCustomTemplate, buildSpecsPromptForCustomTemplate } from './matrixTemplates';
 import { FIGURE_JSON_HTML_INSTRUCTIONS, renderFiguresInHtml } from './figureEngine';
 import {
@@ -989,7 +989,8 @@ export const generateStep3Exam = async (
   inputData: InputData,
   referenceText?: string,
   referenceImages?: { base64: string; mimeType: string }[],
-  extractedQuestions?: ExtractedQuestion[]
+  extractedQuestions?: ExtractedQuestion[],
+  referenceMode: ReferenceUsageMode = 'exact'
 ): Promise<string> => {
 
   const counts = {
@@ -1038,9 +1039,9 @@ export const generateStep3Exam = async (
   // Build reference section
   let referenceSection = '';
   const hasExtractedQuestions = extractedQuestions && extractedQuestions.length > 0;
+  const hasRawReference = (referenceText && referenceText.trim().length > 0) || (referenceImages && referenceImages.length > 0);
 
   if (hasExtractedQuestions) {
-    // === MODE 1: Có câu hỏi đã trích xuất → ƯU TIÊN DÙNG CHÍNH XÁC ===
     const questionsByType = {
       type1: extractedQuestions!.filter(q => q.type === 'type1'),
       type2: extractedQuestions!.filter(q => q.type === 'type2'),
@@ -1068,8 +1069,30 @@ export const generateStep3Exam = async (
       }
     }
 
-    referenceSection = `
-  **===== NGÂN HÀNG CÂU HỎI ĐÃ TRÍCH XUẤT (BẮT BUỘC SỬ DỤNG) =====**
+    if (referenceMode === 'adapt') {
+      referenceSection = `
+  **===== NGÂN HÀNG CÂU HỎI MẪU — CHẾ ĐỘ: THAM KHẢO DẠNG CÂU HỎI, THAY SỐ HOẶC BỐI CẢNH (BẮT BUỘC TUÂN THỦ) =====**
+  
+  Dưới đây là ${extractedQuestions!.length} câu hỏi mẫu từ tài liệu tham khảo của người dùng.
+  Phân bổ: Dạng I: ${questionsByType.type1.length}, Dạng II: ${questionsByType.type2.length}, Dạng III: ${questionsByType.type3.length}, Tự luận: ${questionsByType.essay.length}
+  
+  **CÁCH SỬ DỤNG NGÂN HÀNG CÂU HỎI MẪU (BẮT BUỘC TUÂN THỦ):**
+  1. **THAM KHẢO DẠNG CÂU HỎI:** Chọn các câu hỏi mẫu bên dưới có dạng toán/dạng bài phù hợp với từng yêu cầu trong Ma trận và Bảng đặc tả (đúng dạng câu hỏi, đúng mức độ Nhận biết / Thông hiểu / Vận dụng, đúng chủ đề).
+  2. **THAY SỐ LIỆU HOẶC BỐI CẢNH CHO PHÙ HỢP:**
+     - TUYỆT ĐỐI KHÔNG chép nguyên xi số liệu của câu hỏi gốc.
+     - Hãy **thay đổi số liệu, hệ số, hàm số, biểu thức toán học hoặc bối cảnh thực tế** dựa trên cấu trúc/dạng của câu hỏi mẫu để tạo thành câu hỏi mới tương đương về mức độ tư duy và phù hợp chặt chẽ với Bảng đặc tả.
+     - Tính toán lại chính xác **các phương án A, B, C, D, các mệnh đề Đúng/Sai a), b), c), d), đáp án trả lời ngắn và lời giải chi tiết** theo số liệu/bối cảnh mới.
+  3. Nếu ngân hàng mẫu chưa có câu hỏi cho một nội dung nào đó trong Bảng đặc tả → tự biên soạn câu hỏi mới bám sát Bảng đặc tả theo phong cách tương tự.
+  4. Sắp xếp lại số thứ tự câu hỏi (Câu 1, Câu 2...) cho liên tục.
+  
+  **DANH SÁCH CÂU HỎI MẪU THAM KHẢO:**
+  ${questionsListing}
+  
+  **===== HẾT NGÂN HÀNG CÂU HỎI MẪU =====**
+  `;
+    } else {
+      referenceSection = `
+  **===== NGÂN HÀNG CÂU HỎI ĐÃ TRÍCH XUẤT — CHẾ ĐỘ: TRÍCH XUẤT CHÍNH XÁC (BẮT BUỘC SỬ DỤNG) =====**
   
   Dưới đây là ${extractedQuestions!.length} câu hỏi đã được trích xuất CHÍNH XÁC từ tài liệu tham khảo của người dùng.
   Phân bổ: Dạng I: ${questionsByType.type1.length}, Dạng II: ${questionsByType.type2.length}, Dạng III: ${questionsByType.type3.length}, Tự luận: ${questionsByType.essay.length}
@@ -1087,26 +1110,47 @@ export const generateStep3Exam = async (
   
   **===== HẾT NGÂN HÀNG CÂU HỎI =====**
   `;
-  } else if (referenceText && referenceText.trim()) {
-    // === MODE 2: Có text tham khảo nhưng chưa trích xuất → tham khảo phong cách ===
+    }
+  } else if (hasRawReference) {
     const hasImages = referenceImages && referenceImages.length > 0;
-    referenceSection = `
-  **===== TÀI LIỆU THAM KHẢO (ĐỀ MẪU / NGÂN HÀNG CÂU HỎI) =====**
+    const safeText = referenceText || '';
+    if (referenceMode === 'adapt') {
+      referenceSection = `
+  **===== TÀI LIỆU THAM KHẢO — CHẾ ĐỘ: THAM KHẢO DẠNG CÂU HỎI, THAY SỐ HOẶC BỐI CẢNH =====**
   
-  Dưới đây là nội dung tài liệu tham khảo được người dùng upload. ${hasImages ? `Có ${referenceImages!.length} hình ảnh đính kèm (bao gồm công thức toán đã chuyển thành hình).` : ''}
+  Dưới đây là nội dung tài liệu tham khảo được người dùng tải lên. ${hasImages ? `Có ${referenceImages!.length} tệp/hình ảnh đính kèm (bao gồm PDF hoặc công thức toán).` : ''}
   
   **CÁCH SỬ DỤNG TÀI LIỆU THAM KHẢO:**
-  - Sử dụng CHÍNH XÁC các câu hỏi có sẵn trong tài liệu tham khảo nếu phù hợp với ma trận, đặc tả.
-  - Ưu tiên lấy nguyên văn câu hỏi thay vì tạo mới.
-  - Chỉ tạo câu hỏi MỚI khi tài liệu tham khảo không đủ câu cho một dạng/mức độ cụ thể.
-  ${hasImages ? '- Đọc KỸ các hình ảnh đính kèm — đặc biệt là hình công thức toán. Chuyển đổi nội dung hình sang LaTeX khi cần.' : ''}
+  - Tham khảo cấu trúc, dạng câu hỏi, dạng bài toán trong tài liệu tham khảo phù hợp với Ma trận và Bảng đặc tả.
+  - **THAY SỐ HOẶC BỐI CẢNH CHO PHÙ HỢP:** Không chép y nguyên câu hỏi gốc; hãy thay đổi số liệu, hàm số, dữ kiện hoặc bối cảnh thực tế và tính toán lại đáp án, lời giải chi tiết thật chính xác.
+  - Bổ sung câu hỏi mới nếu tài liệu tham khảo chưa có đủ dạng bài cho một mục trong Bảng đặc tả.
+  ${hasImages ? '- Đọc KỸ các tệp/hình ảnh đính kèm — chuyển đổi mọi công thức sang LaTeX chuẩn $...$.' : ''}
   
   **NỘI DUNG TÀI LIỆU THAM KHẢO:**
-  ${referenceText.substring(0, 15000)}
-  ${referenceText.length > 15000 ? '\n[... Nội dung đã được cắt ngắn do quá dài ...]' : ''}
+  ${safeText.substring(0, 15000)}
+  ${safeText.length > 15000 ? '\n[... Nội dung đã được cắt ngắn do quá dài ...]' : ''}
   
   **===== HẾT TÀI LIỆU THAM KHẢO =====**
   `;
+    } else {
+      referenceSection = `
+  **===== TÀI LIỆU THAM KHẢO (ĐỀ MẪU / NGÂN HÀNG CÂU HỎI) — CHẾ ĐỘ: TRÍCH XUẤT CHÍNH XÁC =====**
+  
+  Dưới đây là nội dung tài liệu tham khảo được người dùng tải lên. ${hasImages ? `Có ${referenceImages!.length} tệp/hình ảnh đính kèm (bao gồm PDF hoặc công thức toán).` : ''}
+  
+  **CÁCH SỬ DỤNG TÀI LIỆU THAM KHẢO:**
+  - Sử dụng CHÍNH XÁC NGUYÊN VĂN các câu hỏi có sẵn trong tài liệu tham khảo nếu phù hợp với ma trận, đặc tả.
+  - Ưu tiên lấy nguyên văn câu hỏi thay vì tạo mới.
+  - Chỉ tạo câu hỏi MỚI khi tài liệu tham khảo không đủ câu cho một dạng/mức độ cụ thể.
+  ${hasImages ? '- Đọc KỸ các tệp/hình ảnh đính kèm — đặc biệt là hình công thức toán. Chuyển đổi nội dung hình sang LaTeX khi cần.' : ''}
+  
+  **NỘI DUNG TÀI LIỆU THAM KHẢO:**
+  ${safeText.substring(0, 15000)}
+  ${safeText.length > 15000 ? '\n[... Nội dung đã được cắt ngắn do quá dài ...]' : ''}
+  
+  **===== HẾT TÀI LIỆU THAM KHẢO =====**
+  `;
+    }
   }
 
   const prompt = `
