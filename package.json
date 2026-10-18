@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node tests/engines.test.mjs",
     "test:cv7991": "node tests/cv7991.test.mjs",
     "preview": "vite preview"
   },
