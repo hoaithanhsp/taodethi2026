@@ -59,7 +59,7 @@ export const MATRIX_TEMPLATES: TemplateInfo[] = [
     {
         id: 'template1',
         name: 'Mẫu chuẩn CV 7991',
-        description: 'Ma trận đặc tả theo chuẩn Công văn 7991 (3 mức: Biết – Hiểu – VD)',
+        description: 'Đúng Phụ lục CV 7991: TNKQ (Nhiều lựa chọn, Đúng – Sai, Trả lời ngắn) + Tự luận; Biết – Hiểu – Vận dụng',
         icon: '📋',
         badge: 'Mặc định',
     },
