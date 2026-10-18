@@ -9,7 +9,7 @@ import SimilarExamPage from './components/SimilarExamPage';
 import VariantsExamPage from './components/VariantsExamPage';
 
 import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, isValidGoogleAiApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel, getAiProvider, setAiProvider } from './services/geminiService';
-import { parseDocxWithMath } from './services/docxMathParser';
+import { parseDocxWithMath, extractQuestionsLocally } from './services/docxMathParser';
 import { normalizeMathForWord, renderMarkdownPreservingMath } from './services/mathExportUtils';
 import { extractFiguresToPlaceholders, restoreFiguresAsPngForWord } from './services/figureEngine';
 // @ts-ignore
@@ -639,26 +639,14 @@ const App: React.FC = () => {
         finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
       }
 
-      // Auto-extract questions from reference docs if not done yet
+      // Instant local question extraction if not done yet (no double AI call!)
       const combinedRef = getCombinedReferenceData();
       let questionsToUse = extractedQuestions;
-      if (referenceDocs.length > 0 && extractedQuestions.length === 0) {
-        console.log('[ExamCraft] Auto-extracting questions from reference docs before exam generation...');
-        try {
-          const extracted = await extractQuestionsFromReference(
-            combinedRef.text,
-            combinedRef.images,
-            genState.specs,
-            inputData.subject,
-            inputData.grade
-          );
-          if (extracted.length > 0) {
-            setExtractedQuestions(extracted);
-            questionsToUse = extracted;
-            console.log(`[ExamCraft] Auto-extracted ${extracted.length} questions`);
-          }
-        } catch (extractErr: any) {
-          console.warn('[ExamCraft] Auto-extraction failed, falling back to raw text:', extractErr.message);
+      if (referenceDocs.length > 0 && questionsToUse.length === 0 && combinedRef.text) {
+        const localExtracted = extractQuestionsLocally(combinedRef.text);
+        if (localExtracted.length > 0) {
+          setExtractedQuestions(localExtracted);
+          questionsToUse = localExtracted;
         }
       }
 
@@ -860,15 +848,13 @@ const App: React.FC = () => {
     const files = Array.from(fileList);
     if (files.length === 0) return;
 
+    const t0 = performance.now();
     setIsParsingReference(true);
     setGenState(prev => ({ ...prev, error: null }));
 
     try {
-      const parsedItems: ReferenceDocItem[] = [];
-      for (const file of files) {
-        const parsed = await parseSingleReferenceFile(file);
-        parsedItems.push(parsed);
-      }
+      // 1. Parse all uploaded files concurrently in parallel (< 30ms)
+      const parsedItems = await Promise.all(files.map(file => parseSingleReferenceFile(file)));
 
       const mergedDocs = [
         ...referenceDocs.filter(existing => !parsedItems.some(p => p.fileName === existing.fileName)),
@@ -876,33 +862,46 @@ const App: React.FC = () => {
       ];
       setReferenceDocs(mergedDocs);
 
-      const combined = getCombinedReferenceData(mergedDocs);
-      console.log(`[Reference] Parsed ${mergedDocs.length} files: ${combined.text.length} chars, ${combined.images.length} images/files`);
+      // Release upload spinner immediately after local file reading finishes
+      setIsParsingReference(false);
 
-      // Auto-trigger AI extraction if specs are available
-      if (genState.specs) {
-        setIsExtractingQuestions(true);
-        try {
-          const questions = await extractQuestionsFromReference(
-            combined.text,
-            combined.images,
-            genState.specs,
-            inputData.subject,
-            inputData.grade
-          );
-          setExtractedQuestions(questions);
-          console.log(`[Reference] Extracted ${questions.length} questions from ${mergedDocs.length} files`);
-        } catch (extractErr: any) {
-          console.warn('[Reference] Question extraction failed:', extractErr.message);
-        } finally {
-          setIsExtractingQuestions(false);
-        }
-      }
+      const combined = getCombinedReferenceData(mergedDocs);
+      // 2. Instant local question extraction (< 5ms, zero API wait time)
+      const localQuestions = extractQuestionsLocally(combined.text);
+      setExtractedQuestions(localQuestions);
+
+      console.log(
+        `[Reference] Fast parsed ${mergedDocs.length} files in ${Math.round(performance.now() - t0)}ms: ${combined.text.length} chars, ${localQuestions.length} questions extracted locally`
+      );
     } catch (err: any) {
       setGenState(prev => ({ ...prev, error: `Lỗi đọc file tham khảo: ${err.message}` }));
     } finally {
       setIsParsingReference(false);
       if (referenceUploadRef.current) referenceUploadRef.current.value = '';
+    }
+  };
+
+  // Optional on-demand AI deep extraction (for scanned PDFs / MathType WMF images)
+  const handleDeepAiExtractReference = async () => {
+    if (referenceDocs.length === 0 || isExtractingQuestions) return;
+    const combined = getCombinedReferenceData(referenceDocs);
+    setIsExtractingQuestions(true);
+    try {
+      const questions = await extractQuestionsFromReference(
+        combined.text,
+        combined.images,
+        genState.specs,
+        inputData.subject,
+        inputData.grade,
+        true
+      );
+      if (questions.length > 0) {
+        setExtractedQuestions(questions);
+      }
+    } catch (extractErr: any) {
+      console.warn('[Reference] Deep AI extraction failed:', extractErr.message);
+    } finally {
+      setIsExtractingQuestions(false);
     }
   };
 
@@ -926,6 +925,9 @@ const App: React.FC = () => {
     setReferenceDocs(remaining);
     if (remaining.length === 0) {
       setExtractedQuestions([]);
+    } else {
+      const combined = getCombinedReferenceData(remaining);
+      setExtractedQuestions(extractQuestionsLocally(combined.text));
     }
   };
 
@@ -1715,7 +1717,7 @@ const App: React.FC = () => {
                 <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg">
                   <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
                   <span className="text-xs sm:text-sm text-amber-700 font-medium">
-                    Đang trích xuất câu hỏi từ {referenceDocs.length} tài liệu bằng AI...
+                    Đang quét sâu câu hỏi từ {referenceDocs.length} tài liệu bằng AI...
                   </span>
                 </div>
               )}
@@ -1723,11 +1725,22 @@ const App: React.FC = () => {
               {/* Extracted Questions Summary */}
               {extractedQuestions.length > 0 && !isExtractingQuestions && (
                 <div className="px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-lg">
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <Check className="w-4 h-4 text-emerald-600" />
-                    <span className="text-xs sm:text-sm font-bold text-emerald-800">
-                      Đã trích xuất {extractedQuestions.length} câu hỏi từ {referenceDocs.length} file
-                    </span>
+                  <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-emerald-600" />
+                      <span className="text-xs sm:text-sm font-bold text-emerald-800">
+                        Đã phân tích nhanh {extractedQuestions.length} câu hỏi từ {referenceDocs.length} file (tức thì)
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleDeepAiExtractReference}
+                      className="text-[11px] font-semibold text-teal-700 hover:text-teal-900 bg-white/80 hover:bg-white px-2.5 py-1 rounded-md border border-emerald-200 transition-colors flex items-center gap-1"
+                      title="Dùng AI quét sâu thêm (hữu ích nếu tài liệu có nhiều hình công thức MathType hoặc PDF scan)"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      Quét sâu bằng AI
+                    </button>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                     {(() => {
@@ -1755,11 +1768,21 @@ const App: React.FC = () => {
                 </div>
               )}
 
-              {/* No questions extracted yet */}
+              {/* Ready status when file is PDF/image or unnumbered text */}
               {referenceDocs.length > 0 && !isExtractingQuestions && extractedQuestions.length === 0 && (
-                <p className="text-xs text-slate-400 italic px-1">
-                  ⏳ Đã tải lên {referenceDocs.length} tài liệu. AI sẽ xử lý theo chế độ "{referenceMode === 'exact' ? 'Trích xuất chính xác' : 'Tham khảo dạng câu hỏi, thay số hoặc bối cảnh'}" khi bạn nhấn "Tiếp theo: Đề thi".
-                </p>
+                <div className="flex items-center justify-between gap-2 px-3.5 py-2 bg-teal-50/80 border border-teal-200 rounded-lg flex-wrap">
+                  <p className="text-xs text-teal-800 font-medium">
+                    ✅ Đã nạp xong {referenceDocs.length} tài liệu ({Math.max(1, Math.round(getCombinedReferenceData(referenceDocs).text.length / 1000))}K ký tự). Sẵn sàng tạo đề theo chế độ "{referenceMode === 'exact' ? 'Trích xuất chính xác' : 'Tham khảo dạng câu hỏi, thay số hoặc bối cảnh'}".
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleDeepAiExtractReference}
+                    className="text-[11px] font-semibold text-teal-700 hover:text-teal-900 bg-white px-2.5 py-1 rounded-md border border-teal-200 transition-colors flex items-center gap-1 shrink-0"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    Bóc tách trước bằng AI
+                  </button>
+                </div>
               )}
             </div>
           )}

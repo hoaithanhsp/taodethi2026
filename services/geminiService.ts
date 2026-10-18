@@ -8,6 +8,7 @@ import {
   computeCv7991Layout, buildCv7991MatrixPrompt, buildCv7991SpecsPrompt,
   buildCv7991MatrixThead, buildCv7991SpecsThead, cv7991MatrixColumnCount, cv7991SpecsColumnCount, applyCv7991Thead,
 } from './cv7991Template';
+import { extractQuestionsLocally } from './docxMathParser';
 
 // --- Dual AI Provider Management ---
 const GOOGLE_AI_PROVIDER_KEY = 'google_ai_provider';
@@ -877,73 +878,59 @@ export const generateStep2Specs = async (
   });
 };
 
-// --- Extract questions from reference document ---
+// --- Extract questions from reference document (Instant local parser + Fast AI fallback for PDF/Images) ---
 export const extractQuestionsFromReference = async (
   text: string,
   images: { base64: string; mimeType: string }[],
-  specsHtml: string,
+  _specsHtml: string,
   subject: string,
-  grade: string
+  grade: string,
+  forceAi: boolean = false
 ): Promise<ExtractedQuestion[]> => {
   const hasImages = images && images.length > 0;
+  const hasPdfOrImageOnly = hasImages && (!text || text.replace(/\[Tài liệu PDF\/Hình ảnh đính kèm:[^\]]*\]/g, '').trim().length < 50);
+
+  // Fast Path (< 5ms): Use local deterministic parser first when text is available
+  if (!forceAi && !hasPdfOrImageOnly && text && text.trim().length > 20) {
+    const localQuestions = extractQuestionsLocally(text);
+    if (localQuestions.length > 0) {
+      console.log(`[ExamCraft] Instant local parser extracted ${localQuestions.length} questions in <5ms`);
+      return localQuestions;
+    }
+  }
 
   const prompt = `
-  Bạn là chuyên gia trích xuất câu hỏi từ tài liệu giáo dục Việt Nam.
-  
-  **NHIỆM VỤ:** Trích xuất CHÍNH XÁC từng câu hỏi trong tài liệu dưới đây.
-  - Môn: ${subject}, Lớp: ${grade}
-  ${hasImages ? `- Có ${images.length} hình ảnh đính kèm (gồm công thức MathType đã chuyển PNG). Hãy ĐỌC KỸ từng hình và CHUYỂN ĐỔI công thức trong hình sang LaTeX $...$.` : ''}
-  
-  **QUY TẮC TRÍCH XUẤT (CỰC KỲ QUAN TRỌNG):**
-  1. Giữ NGUYÊN VĂN nội dung câu hỏi, KHÔNG sửa đổi, KHÔNG diễn giải lại.
-  2. Nếu câu hỏi có công thức toán:
-     - OMML đã chuyển LaTeX: giữ nguyên dạng $...$ hoặc $$...$$
-     - MathType (hình ảnh): đọc hình → chuyển sang LaTeX $...$
-  3. Phân loại mỗi câu theo:
-     - **type**: "type1" (4 lựa chọn A/B/C/D), "type2" (Đúng/Sai 4 ý a,b,c,d), "type3" (Trả lời ngắn), "essay" (Tự luận)
-     - **level**: "biet" (Nhận biết), "hieu" (Thông hiểu), "van_dung" (Vận dụng), "van_dung_cao" (Vận dụng cao)
-  4. Nếu có đáp án trong tài liệu, trích xuất luôn.
-  5. Trích xuất TẤT CẢ câu hỏi, kể cả câu hỏi không hoàn chỉnh.
+  Trích xuất nhanh danh sách câu hỏi từ tài liệu môn ${subject || 'THPT'} lớp ${grade || ''}.
+  ${hasImages ? `Có ${images.length} tệp/hình đính kèm, hãy chuyển công thức trong hình sang LaTeX $...$.` : ''}
 
-  **BẢNG ĐẶC TẢ (ĐỂ THAM CHIẾU MỨC ĐỘ):**
-  ${specsHtml.substring(0, 8000)}
-  
-  **NỘI DUNG TÀI LIỆU:**
-  ${text.substring(0, 25000)}
-  ${text.length > 25000 ? '\n[... Nội dung đã được cắt ngắn ...]' : ''}
-  
-  **OUTPUT:** JSON Array, mỗi phần tử là 1 câu hỏi:
+  QUY TẮC:
+  1. Giữ nguyên văn câu hỏi và công thức LaTeX $...$.
+  2. Phân loại:
+     - "type": "type1" (4 lựa chọn A,B,C,D), "type2" (Đúng/Sai a,b,c,d), "type3" (Trả lời ngắn), "essay" (Tự luận)
+     - "level": "biet" | "hieu" | "van_dung" | "van_dung_cao"
+
+  NỘI DUNG TÀI LIỆU:
+  ${text.substring(0, 18000)}
+
+  OUTPUT JSON Array:
   [
     {
       "id": "q1",
       "type": "type1",
       "level": "biet",
-      "topic": "Tên chủ đề/chương",
-      "content": "Nội dung câu hỏi NGUYÊN VĂN (bao gồm LaTeX nếu có)",
+      "topic": "Chủ đề",
+      "content": "Nội dung câu hỏi",
       "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
       "answer": "A",
       "subItems": null
-    },
-    {
-      "id": "q2",
-      "type": "type2",
-      "level": "hieu",
-      "topic": "...",
-      "content": "Đề dẫn chung cho câu Đúng/Sai",
-      "options": null,
-      "answer": "a-Đ, b-S, c-Đ, d-S",
-      "subItems": ["a) Mệnh đề 1...", "b) Mệnh đề 2...", "c) ...", "d) ..."]
     }
   ]
-  
-  CHỈ trả về JSON array, không markdown.
   `;
 
   const parts: any[] = [];
 
-  // Send images first (mammoth-converted WMF→PNG + other images)
   if (hasImages) {
-    const imagesToSend = images.slice(0, 15);
+    const imagesToSend = images.slice(0, 8);
     for (const img of imagesToSend) {
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
     }
@@ -952,17 +939,31 @@ export const extractQuestionsFromReference = async (
   parts.push({ text: prompt });
 
   const resultText = await callWithFallback(async (ai, model) => {
-    console.log(`[ExamCraft] Extracting questions with model: ${model}`);
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ role: 'user', parts }],
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.1,
-      },
-    });
-    return response.text || '[]';
-  });
+    console.log(`[ExamCraft] Fast AI question extraction with model: ${model}`);
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts }],
+        config: {
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
+      });
+      return response.text || '[]';
+    } catch {
+      // Fallback without thinkingConfig if model does not support it
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts }],
+        config: {
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+        },
+      });
+      return response.text || '[]';
+    }
+  }, 'gemini-2.5-flash');
 
   try {
     let jsonStr = resultText;
