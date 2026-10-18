@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 260" width="560" height="260">
+  <rect x="0" y="0" width="560" height="260" fill="#ffffff"/>
+  <rect x="20" y="20" width="520" height="220" fill="none" stroke="#000000" stroke-width="1.6"/>
+  <line x1="90" y1="20" x2="90" y2="240" stroke="#000000" stroke-width="1.5"/>
+  <line x1="20" y1="62" x2="540" y2="62" stroke="#000000" stroke-width="1.5"/>
+  <line x1="20" y1="104" x2="540" y2="104" stroke="#000000" stroke-width="1.5"/>
+
+  <!-- Cột nhãn trái -->
+  <text x="55.0" y="41.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="21" font-style="italic">x</text>
+  <text x="55.0" y="83.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="21" font-style="italic">y'</text>
+  <text x="55.0" y="172.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="21" font-style="italic">y</text>
+
+  <!-- Hàng x -->
+  <text x="123" y="41.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="20">−</text>
+  <text x="136" y="41.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="21">∞</text>
+  <text x="250" y="41.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="20">−1</text>
+  <text x="380" y="41.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="20">1</text>
+  <text x="493" y="41.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="20">+</text>
+  <text x="506" y="41.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="21">∞</text>
+
+  <!-- Hàng y' -->
+  <text x="190.0" y="83.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="20">+</text>
+  <text x="250" y="83.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="20">0</text>
+  <text x="315.0" y="83.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="20">−</text>
+  <text x="380" y="83.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="20">0</text>
+  <text x="440.0" y="83.0" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="20">+</text>
+
+  <!-- Hàng y: các giá trị -->
+  <text x="123" y="212" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="20">−</text>
+  <text x="136" y="212" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="21">∞</text>
+  <text x="250" y="132" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="20">2</text>
+  <text x="380" y="212" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="20">−2</text>
+  <text x="493" y="132" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="20">+</text>
+  <text x="506" y="132" text-anchor="middle" dominant-baseline="central" font-family="Times New Roman, serif" font-size="21">∞</text>
+
+  <!-- Mũi tên biến thiên -->
+  <line x1="149.97" y1="198.69" x2="230.86" y2="144.76" stroke="#000000" stroke-width="1.5"/>
+  <polygon points="233.36,143.09 226.95,152.41 226.45,147.70 222.29,145.42" fill="#000000"/>
+  <line x1="267.03" y1="142.48" x2="357.01" y2="197.85" stroke="#000000" stroke-width="1.5"/>
+  <polygon points="359.56,199.42 348.42,197.50 352.49,195.07 352.82,190.34" fill="#000000"/>
+  <line x1="399.97" y1="198.69" x2="477.53" y2="146.98" stroke="#000000" stroke-width="1.5"/>
+  <polygon points="480.03,145.31 473.62,154.63 473.12,149.92 468.96,147.64" fill="#000000"/>
+</svg>
