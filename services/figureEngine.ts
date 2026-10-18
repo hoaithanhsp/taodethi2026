@@ -534,11 +534,32 @@ export function sanitizeAndValidateFigureSpec(
 }
 
 /**
- * Chuyển đổi cấu hình JSON (chuỗi hoặc object) thành mã SVG chuẩn SGK
+ * Khung SVG nhỏ báo lỗi vẽ hình (chỉ dùng khi hiển thị trên màn hình, không đưa vào file xuất).
+ */
+export function figureErrorSvg(message: string): string {
+  const esc = (t: string) =>
+    t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const msg = String(message || 'Lỗi không xác định');
+  const short = msg.length > 70 ? msg.slice(0, 67) + '...' : msg;
+  return (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 64" width="440" height="64">' +
+    '<rect x="1" y="1" width="438" height="62" rx="6" fill="#fff7f7" stroke="#e57373" stroke-dasharray="5,3"/>' +
+    '<text x="220" y="26" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#c62828">' +
+    'Không vẽ được hình từ mô tả JSON</text>' +
+    `<text x="220" y="46" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#8d6e63">${esc(short)}</text>` +
+    '</svg>'
+  );
+}
+
+/**
+ * Chuyển đổi cấu hình JSON (chuỗi hoặc object) thành mã SVG chuẩn SGK.
+ * Mặc định trả về '' khi gặp lỗi (giữ hành vi cũ cho xuất Word/ảnh);
+ * truyền `{ showError: true }` để nhận khung SVG báo lỗi thay vì để hình biến mất.
  */
 export function renderFigureSpecToSvg(
   specInput: string | Record<string, any>,
-  contextHtml?: string
+  contextHtml?: string,
+  opts?: { showError?: boolean }
 ): string {
   try {
     let rawSpec: Record<string, any>;
@@ -614,7 +635,7 @@ export function renderFigureSpecToSvg(
     return '';
   } catch (err: any) {
     console.warn('[FigureEngine] Không thể vẽ hình từ JSON:', err?.message || err, specInput);
-    return '';
+    return opts?.showError ? figureErrorSvg(err?.message || String(err)) : '';
   }
 }
 
@@ -967,7 +988,7 @@ export const FIGURE_JSON_HTML_INSTRUCTIONS = `
         </script>
 
    4. **HÌNH HỌC KHÔNG GIAN 3D & KHỐI TRÒN XOAY (\`type: "geo3d"\` — CHỈ dùng khi đề bài nêu rõ Hình chóp, Lăng trụ, Hình hộp, Tứ diện, Nón, Trụ, Cầu, Nón cụt, Oxyz):**
-      - Các \`preset\` 3D: \`"pyramid-tri"\`, \`"pyramid-square"\`, \`"pyramid-rect"\` (thêm \`"apexOver": "A"\` nếu $SA \\perp$ đáy), \`"tetra-right"\`, \`"prism-tri"\`, \`"box"\`, \`"cube"\`, và các khối tròn xoay \`"cone"\` (hình nón), \`"cylinder"\` (hình trụ), \`"sphere"\` (mặt cầu/khối cầu), \`"frustum"\` (hình nón cụt).
+      - Các \`preset\` 3D: \`"pyramid-tri"\`, \`"pyramid-square"\`, \`"pyramid-rect"\` (thêm \`"apexOver": "A"\` nếu $SA \\perp$ đáy), \`"tetra-right"\`, \`"prism-tri"\`, \`"prism-quad"\` (lăng trụ tứ giác, đáy ABCD), \`"prism-hex"\` (lăng trụ lục giác đều ABCDEF.A'B'C'D'E'F'), \`"pyramid-hex"\` (chóp lục giác đều S.ABCDEF), \`"box"\`, \`"cube"\`, và các khối tròn xoay \`"cone"\` (hình nón), \`"cylinder"\` (hình trụ), \`"sphere"\` (mặt cầu/khối cầu), \`"frustum"\` (hình nón cụt).
         <script type="application/json" class="figure-json">
         {"type": "geo3d", "preset": "cone", "params": {"r": 1.6, "h": 2.6}}
         </script>

@@ -120,7 +120,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className 
               lang === 'figure-json' ||
               (lang === 'json' && /"type"\s*:\s*"(bbt|graph|geo2d|geo3d)"/i.test(rawText))
             ) {
-              const svg = renderFigureSpecToSvg(rawText);
+              const svg = renderFigureSpecToSvg(rawText, undefined, { showError: true });
               if (svg) {
                 return <FigureImageCard svg={svg} />;
               }

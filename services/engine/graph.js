@@ -17,7 +17,9 @@
   const B = global.BBT || {};
   const nice = B.niceNumber || ((v) => String(Math.round(v * 100) / 100));
 
+  // Chuẩn hoá biểu thức (LaTeX, ln, nhân ngầm...) bằng BBT nếu có; trả về hàm số thực (NaN khi không xác định).
   function compile(fnStr) {
+    if (B.makeFunction) return B.makeFunction(String(fnStr)).f;
     const c = M.parse(fnStr).compile();
     return (x) => { try { const v = c.evaluate({ x }); return typeof v === 'number' ? v : NaN; } catch (e) { return NaN; } };
   }
@@ -29,39 +31,95 @@
     return out;
   }
 
-  /** Tìm tiệm cận, cực trị, giao trục của một hàm. */
-  function analyzeGraph(fnStr, lo = -30, hi = 30) {
-    const f = compile(fnStr);
-    const df = compile(M.derivative(fnStr, 'x').toString());
-    let poles = [];
+  const round4 = (v) => Math.round(v * 1e4) / 1e4;
+  const dedupNum = (arr) => arr.sort((a, b) => a - b).filter((v, i, a) => i === 0 || Math.abs(v - a[i - 1]) > 1e-6 * Math.max(1, Math.abs(v)));
+
+  /** Tiệm cận đứng (fallback khi không có BBT mới): nghiệm mẫu số của phân thức. */
+  function polesLegacy(fnStr, f, lo, hi) {
     try {
       const r = M.rationalize(fnStr, {}, true);
       if (r.denominator) {
         const den = compile(r.denominator.toString());
-        // chỉ giữ điểm làm hàm thật sự tiến ra vô cực (loại điểm khử được)
-        poles = roots(den, lo, hi).filter((p) => Math.abs(f(p + 1e-6)) > 1e4 || Math.abs(f(p - 1e-6)) > 1e4);
+        return roots(den, lo, hi).filter((p) => Math.abs(f(p + 1e-6)) > 1e4 || Math.abs(f(p - 1e-6)) > 1e4);
       }
     } catch (e) { /* không phải phân thức */ }
-    // tiệm cận ngang / xiên
-    let hAsym = null, oblique = null;
-    const big = 1e6, yP = f(big), yN = f(-big);
-    if (isFinite(yP) && Math.abs(yP) < 1e5 && Math.abs(yP - yN) < 1e-3) hAsym = Math.round(yP * 1e4) / 1e4;
-    else if (poles.length) {
+    return [];
+  }
+
+  /** Tìm tiệm cận, cực trị, giao trục của một hàm. */
+  function analyzeGraph(fnStr, lo = -30, hi = 30) {
+    let f, df, node = null, normStr = fnStr;
+    if (B.makeFunction) {
+      const mf = B.makeFunction(String(fnStr));
+      f = mf.f; df = mf.df; node = mf.node; normStr = mf.fnStr;
+    } else {
+      f = compile(fnStr);
+      df = compile(M.derivative(fnStr, 'x').toString());
+    }
+    const R = Math.max(Math.abs(lo), Math.abs(hi));
+
+    // --- tiệm cận đứng: điểm gián đoạn vô cực trong TXĐ + đầu mút mở mà f → ±∞ (vd ln x tại 0)
+    let poles = [];
+    if (B.findDomain && B.findPoles && B.limitAt) {
+      try {
+        const intervals = B.findDomain(f, R);
+        poles = B.findPoles(node, f, df, R, intervals).filter((p) => {
+          const l = B.limitAt(f, p, -1), r = B.limitAt(f, p, 1);
+          return !isFinite(l) && !isNaN(l) || !isFinite(r) && !isNaN(r);
+        });
+        intervals.forEach((I) => {
+          [[I.a, I.aClosed, 1], [I.b, I.bClosed, -1]].forEach(([x, closed, side]) => {
+            if (!isFinite(x) || closed) return;
+            const L = B.limitAt(f, x, side);
+            if (L === Infinity || L === -Infinity) poles.push(x);
+          });
+        });
+        poles = dedupNum(poles.filter((p) => p >= lo && p <= hi));
+      } catch (e) { poles = polesLegacy(normStr, f, lo, hi); }
+    } else poles = polesLegacy(normStr, f, lo, hi);
+
+    // --- tiệm cận ngang: xét riêng từng phía (vd e^x chỉ có y = 0 khi x → −∞)
+    const limInf = (dir) => {
+      if (B.limitInf) return B.limitInf(f, dir);
+      const v = f(dir * 1e6);
+      return isFinite(v) && Math.abs(v - f(dir * 2e6)) < 1e-3 ? v : NaN;
+    };
+    const hL = limInf(-1), hR = limInf(1);
+    const hAsyms = dedupNum([hL, hR].filter((v) => isFinite(v) && Math.abs(v) < 1e5).map(round4));
+    // giữ trường cũ: một giá trị (ưu tiên khi hai phía trùng nhau)
+    const hAsym = hAsyms.length ? (isFinite(hR) && Math.abs(hR) < 1e5 ? round4(hR) : hAsyms[0]) : null;
+
+    // --- tiệm cận xiên (chỉ khi không có tiệm cận ngang ở phía tương ứng)
+    let oblique = null;
+    if (!hAsyms.length) {
+      const big = 1e6;
       const a = (f(2 * big) - f(big)) / big, b = f(big) - a * big;
       const a2 = (f(-2 * big) - f(-big)) / -big;
-      if (isFinite(a) && Math.abs(a - a2) < 1e-4 && Math.abs(a) > 1e-6 && Math.abs(b) < 1e5)
-        oblique = { a: Math.round(a * 1e4) / 1e4, b: Math.round(b * 1e4) / 1e4 };
+      if (isFinite(a) && Math.abs(a - a2) < 1e-4 && Math.abs(a) > 1e-6 && Math.abs(b) < 1e5) {
+        // kiểm tra f(x) − (ax+b) → 0 thật sự (loại x·ln x, x + sin x ...)
+        const gap = Math.abs(f(1e5) - (a * 1e5 + b));
+        if (gap < 1e-2) oblique = { a: round4(a), b: round4(b) };
+      }
     }
+
     const nearPole = (x) => poles.some((p) => Math.abs(x - p) < 1e-3);
     const crit = roots((x) => (nearPole(x) ? NaN : df(x)), lo, hi);
     const extrema = crit.map((x) => {
-      const l = df(x - 1e-3), r = df(x + 1e-3);
+      const h = 1e-3 * Math.max(1, Math.abs(x));
+      const l = df(x - h), r = df(x + h);
       const kind = l > 0 && r < 0 ? 'max' : l < 0 && r > 0 ? 'min' : 'flat';
       return { x, y: f(x), kind };
     }).filter((e) => e.kind !== 'flat' && isFinite(e.y));
-    const xIntercepts = roots((x) => (nearPole(x) ? NaN : f(x)), lo, hi).filter((x) => Math.abs(f(x)) < 1e-6);
+
+    // --- giao điểm với Ox: loại "nghiệm" giả khi f chỉ tiến sát 0 (vd e^x khi x → −∞)
+    const xIntercepts = roots((x) => (nearPole(x) ? NaN : f(x)), lo, hi).filter((x) => {
+      if (!(Math.abs(f(x)) < 1e-6)) return false;
+      const d = 0.05 * Math.max(1, Math.abs(x));
+      const around = Math.max(Math.abs(f(x - d)) || 0, Math.abs(f(x + d)) || 0);
+      return around > 1e-6;
+    });
     const y0 = f(0);
-    return { fn: fnStr, f, poles, hAsym, oblique, extrema, xIntercepts, yIntercept: isFinite(y0) && !nearPole(0) ? y0 : null };
+    return { fn: fnStr, f, poles, hAsym, hAsyms, oblique, extrema, xIntercepts, yIntercept: isFinite(y0) && !nearPole(0) ? y0 : null };
   }
 
   /** Vẽ đồ thị. */
@@ -175,7 +233,9 @@
     // tiệm cận
     if (spec.asymptotes !== false) infos.forEach((I) => {
       I.poles.forEach((p) => { if (p > x0 && p < x1) { out.push(`<line x1="${X(p)}" y1="${pad}" x2="${X(p)}" y2="${H - pad}" stroke="#000" stroke-dasharray="5,4"/>`); ticksX.add(p); } });
-      if (I.hAsym !== null && I.hAsym > y0 && I.hAsym < y1) { out.push(`<line x1="${pad}" y1="${Y(I.hAsym)}" x2="${W - pad}" y2="${Y(I.hAsym)}" stroke="#000" stroke-dasharray="5,4"/>`); ticksY.add(I.hAsym); }
+      (I.hAsyms || (I.hAsym !== null ? [I.hAsym] : [])).forEach((h) => {
+        if (h > y0 && h < y1) { out.push(`<line x1="${pad}" y1="${Y(h)}" x2="${W - pad}" y2="${Y(h)}" stroke="#000" stroke-dasharray="5,4"/>`); ticksY.add(h); }
+      });
       if (I.oblique) { const { a, b } = I.oblique; out.push(`<line x1="${X(x0)}" y1="${Y(a * x0 + b)}" x2="${X(x1)}" y2="${Y(a * x1 + b)}" stroke="#000" stroke-dasharray="5,4" clip-path="url(#gClip)"/>`); }
     });
 
@@ -236,8 +296,18 @@
   function autoY(infos, x0, x1) {
     let lo = Infinity, hi = -Infinity;
     infos.forEach((I) => {
-      [...I.extrema.map((e) => e.y), I.yIntercept ?? 0, I.hAsym ?? 0, 0].forEach((v) => { lo = Math.min(lo, v); hi = Math.max(hi, v); });
+      [...I.extrema.map((e) => e.y), I.yIntercept ?? 0, ...(I.hAsyms || [I.hAsym ?? 0]), 0].filter((v) => isFinite(v) && Math.abs(v) < 1e4).forEach((v) => { lo = Math.min(lo, v); hi = Math.max(hi, v); });
       if (!I.poles.length) [x0, x1].forEach((x) => { const v = I.f(x); if (isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
+      else if (B.makeFunction) {
+        // có tiệm cận đứng: lấy phân vị 10%–90% của giá trị hàm trên khung để thấy rõ nhánh đi ra vô cực (vd ln x)
+        const vals = [];
+        for (let k = 0; k <= 200; k++) { const v = I.f(x0 + ((x1 - x0) * k) / 200); if (isFinite(v)) vals.push(v); }
+        if (vals.length > 10) {
+          vals.sort((p, q) => p - q);
+          lo = Math.min(lo, vals[Math.floor(vals.length * 0.1)]);
+          hi = Math.max(hi, vals[Math.floor(vals.length * 0.9)]);
+        }
+      }
     });
     if (!isFinite(lo)) return [-5, 5];
     const m = Math.max(1, (hi - lo) * 0.25);

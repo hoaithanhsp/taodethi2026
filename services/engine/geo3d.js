@@ -47,6 +47,35 @@
         const up = (P) => [P[0] + s[0], P[1] + s[1], h];
         return { points: { A, B, C, "A'": up(A), "B'": up(B), "C'": up(C) }, round: null };
       }
+      case 'prism-quad':
+      case 'prism-rect':
+      case 'prism-square': {
+        // Lăng trụ tứ giác: đáy ABCD là hình chữ nhật a×b (skew ≠ 0 → hình bình hành), shift → lăng trụ xiên
+        const s = p.shift || [0, 0], k = p.skew || 0;
+        const A = [0, 0, 0], B = [a, 0, 0], C = [a + k, b, 0], D = [k, b, 0];
+        const up = (P) => [P[0] + s[0], P[1] + s[1], h];
+        return { points: { A, B, C, D, "A'": up(A), "B'": up(B), "C'": up(C), "D'": up(D) }, round: null };
+      }
+      case 'prism-hex':
+      case 'pyramid-hex': {
+        // Đáy lục giác đều ABCDEF cạnh a, tâm O
+        const r = ((p.rot ?? 20) * Math.PI) / 180; // 20° cho hình chiếu xiên dễ nhìn nhất
+        const names = ['A', 'B', 'C', 'D', 'E', 'F'];
+        const base = names.map((_, i) => {
+          const t = r + Math.PI + (i * Math.PI) / 3;
+          return [a * Math.cos(t), a * Math.sin(t), 0];
+        });
+        const pts = {};
+        names.forEach((n, i) => { pts[n] = base[i]; });
+        if (normName === 'pyramid-hex') {
+          const foot = p.apexOver === 'A' ? base[0] : [0, 0, 0];
+          pts.S = [foot[0], foot[1], h];
+        } else {
+          const s = p.shift || [0, 0];
+          names.forEach((n, i) => { pts[n + "'"] = [base[i][0] + s[0], base[i][1] + s[1], h]; });
+        }
+        return { points: pts, round: null };
+      }
       case 'box':
       case 'cube': {
         const bb = normName === 'cube' ? a : b, hh = normName === 'cube' ? a : h;

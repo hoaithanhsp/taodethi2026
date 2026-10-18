@@ -80,7 +80,7 @@ const MarkdownView: React.FC<Props> = ({ content }) => {
           const rawCode = codeBlockContent.join('\n');
           if (codeBlockLanguage.toLowerCase() === 'figure-json') {
             const precedingCtx = lines.slice(Math.max(0, index - 25), index).join('\n');
-            const svg = renderFigureSpecToSvg(rawCode, precedingCtx);
+            const svg = renderFigureSpecToSvg(rawCode, precedingCtx, { showError: true });
             if (svg) {
               const b64Svg =
                 typeof window !== 'undefined' && typeof window.btoa === 'function'

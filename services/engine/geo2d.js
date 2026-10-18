@@ -27,6 +27,14 @@
       1 / (ps.length || 1)
     );
 
+  /** Escape ký tự đặc biệt XML để nhãn chứa &, <, > không làm hỏng SVG. */
+  const escXml = (s) =>
+    String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
   function parseBearingDeg(bearingStr) {
     // Hỗ trợ: "N45E" (Đông Bắc 45°), "S30E" (Đông Nam tạo với Nam 30°), "N60W", "S45W", hoặc số độ lượng giác
     const s = String(bearingStr).trim().toUpperCase();
@@ -520,7 +528,7 @@
         const lx = mx + nrm[0] * 15;
         const ly = my - nrm[1] * 15;
         out.push(
-          `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" dominant-baseline="middle" ${fontNormal}>${s.label}</text>`
+          `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" dominant-baseline="middle" ${fontNormal}>${escXml(s.label)}</text>`
         );
       }
     });
@@ -571,7 +579,7 @@
       }
       out.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.2" fill="#000"/>`);
       out.push(
-        `<text x="${(x + dx * 15).toFixed(1)}" y="${(y - dy * 15).toFixed(1)}" text-anchor="middle" dominant-baseline="middle" ${fontItalic}>${name}</text>`
+        `<text x="${(x + dx * 15).toFixed(1)}" y="${(y - dy * 15).toFixed(1)}" text-anchor="middle" dominant-baseline="middle" ${fontItalic}>${escXml(name)}</text>`
       );
     });
 
