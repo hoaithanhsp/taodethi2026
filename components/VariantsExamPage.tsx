@@ -3,6 +3,7 @@ import { Download, Play, RefreshCw, AlertCircle, Loader2, FileCheck, ArrowRight 
 import { Chat } from "@google/genai";
 import FileUploadZone from './FileUploadZone';
 import MarkdownRenderer from './MarkdownRenderer';
+import BbtQuickGenerator from './BbtQuickGenerator';
 import { createVariantSession, generateVariantStep1, generateVariantNextStep, cloneVariantSession } from '../services/variantsExamService';
 import { exportToDoc } from '../services/exportUtils';
 import { VariantFileData, VariantState } from '../types';
@@ -300,6 +301,16 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
           <span className="break-all text-sm flex-1">{error}</span>
           <button onClick={reset} className="underline font-bold text-sm">Thử lại</button>
         </div>
+      )}
+
+      {(col1 || col2 || col3) && (
+        <BbtQuickGenerator
+          documents={[
+            { id: 'col1', label: 'Đề 1', content: col1, onUpdate: setCol1 },
+            { id: 'col2', label: 'Đề 2', content: col2, onUpdate: setCol2 },
+            { id: 'col3', label: 'Đề 3', content: col3, onUpdate: setCol3 },
+          ]}
+        />
       )}
 
       {/* 3 Column Grid */}

@@ -33,6 +33,7 @@
         const base = p.apexOver === 'A' ? A : avg([A, B, C]);
         return { points: { A, B, C, S: [base[0], base[1], h] }, round: null };
       }
+      case 'pyramid-quad':
       case 'pyramid-square':
       case 'pyramid-rect': {
         const A = [0, 0, 0], B = [a, 0, 0], C = [a, b, 0], D = [0, b, 0];
@@ -179,16 +180,43 @@
 
   /* ---------- dựng toàn bộ hình ---------- */
   function buildGeo3D(spec) {
-    const base = preset(spec.preset || 'custom', { ...(spec.params || {}), points: spec.points });
-    const view = { angle: base.round ? 90 : 30, ratio: base.round ? 0.33 : 0.5, ...(spec.view || {}) };
+    const presetName = spec.preset || spec.kind || (spec.points ? 'custom' : 'pyramid-tri');
+    const mergedParams = {
+      ...(spec.params || {}),
+      apexOver: spec.params?.apexOver ?? spec.apexOver ?? (spec.foot === 'A' ? 'A' : undefined),
+      points: spec.points,
+    };
+    const base = preset(presetName, mergedParams);
+    const defaultAngle = base.round
+      ? 90
+      : typeof spec.az === 'number'
+        ? Math.max(15, Math.min(75, Math.abs(spec.az)))
+        : 30;
+    const view = { angle: defaultAngle, ratio: base.round ? 0.33 : 0.5, ...(spec.view || {}) };
     const al = (view.angle * Math.PI) / 180, k = view.ratio;
     const pts = { ...base.points };
     const solidNames = Object.keys(pts);
     const segments = [], drawPts = new Set(solidNames);
-    const extra = spec.extra || [];
+    const extra = [...(spec.extra || [])];
+    // Nếu là chóp đều (foot = center) trên đáy tứ giác ABCD mà chưa khai báo tâm O, tự động dựng đường cao SO và hai đường chéo AC, BD
+    if (
+      (presetName === 'pyramid-quad' || presetName === 'pyramid-square' || presetName === 'pyramid-rect') &&
+      mergedParams.apexOver !== 'A' &&
+      spec.foot === 'center' &&
+      !extra.some((c) => /\bpoint\s+O\b/.test(c))
+    ) {
+      extra.push('point O center(ABCD)', 'segment A C', 'segment B D', 'segment S O');
+    }
     extra.forEach((cmd) => {
-      const [kw, ...rest] = cmd.trim().split(/\s+/);
-      if (kw === 'point') { pts[rest[0]] = evalPoint(rest.slice(1).join(' '), pts); drawPts.add(rest[0]); }
+      const [kw, ...rest] = String(cmd).trim().split(/\s+/);
+      if (kw === 'point' && rest[0]) {
+        try {
+          pts[rest[0]] = evalPoint(rest.slice(1).join(' '), pts);
+          drawPts.add(rest[0]);
+        } catch (_e) {
+          // Bỏ qua điểm phụ nếu biểu thức tham chiếu đỉnh chưa tồn tại
+        }
+      }
     });
     const view3 = [-k * Math.cos(al), 1, -k * Math.sin(al)];
     const proj = (p) => [p[0] + k * Math.cos(al) * p[1], p[2] + k * Math.sin(al) * p[1]];
@@ -338,7 +366,7 @@
             round.push({ pts: [G.P2["O'"], G.P2["A'"]], dashed: false });
           }
           const topName = kind === 'cone' ? 'S' : "O'";
-          if (!autoMarks.some((m) => m.includes('rightangle'))) {
+          if (!autoMarks.some((m) => String(m).toLowerCase().includes('rightangle'))) {
             autoMarks.push(`rightangle ${topName} O A`);
           }
         }
@@ -373,6 +401,7 @@
     }
 
     const xs = shapes2d.map((p) => p[0]), ys = shapes2d.map((p) => p[1]);
+    if (xs.length === 0) return '';
     const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
     const W = (maxX - minX) * sc + 2 * pad, H = (maxY - minY) * sc + 2 * pad;
     const T = (p) => [pad + (p[0] - minX) * sc, pad + (maxY - p[1]) * sc];
@@ -405,9 +434,24 @@
     });
 
     // Ký hiệu góc vuông: "rightangle A H B" (góc tại H)
+    const presetNameForRender = spec.preset || spec.kind || (spec.points ? 'custom' : 'pyramid-tri');
+    if (
+      (presetNameForRender === 'pyramid-tri' ||
+        presetNameForRender === 'pyramid-quad' ||
+        presetNameForRender === 'pyramid-square' ||
+        presetNameForRender === 'pyramid-rect') &&
+      (spec.params?.apexOver === 'A' || spec.apexOver === 'A' || spec.foot === 'A') &&
+      G.pts.S &&
+      G.pts.A &&
+      G.pts.B &&
+      !autoMarks.some((m) => String(m).toLowerCase().includes('rightangle'))
+    ) {
+      autoMarks.push('rightangle S A B');
+    }
+
     autoMarks.forEach((m) => {
-      const t = m.trim().split(/\s+/);
-      if (t[0] !== 'rightangle') return;
+      const t = String(m).trim().split(/\s+/);
+      if (t[0].toLowerCase() !== 'rightangle') return;
       const [A, O, Bn] = t.slice(1).map((n) => G.pts[n]);
       if (!A || !O || !Bn) return;
       const s = spec.markSize || 0.22;
@@ -424,12 +468,19 @@
       allP.reduce((s, p) => s + p[1], 0) / Math.max(1, allP.length),
     ];
     const font = 'font-family="Times New Roman, serif" font-size="18" font-style="italic"';
+    const basePtsKeys = Object.keys(
+      preset(presetNameForRender, {
+        ...(spec.params || {}),
+        apexOver: spec.params?.apexOver ?? spec.apexOver ?? (spec.foot === 'A' ? 'A' : undefined),
+        points: spec.points,
+      }).points
+    );
 
     G.drawPts.forEach((n) => {
       const p = G.P2[n];
       const [x, y] = T(p);
       // Chấm tròn tại các điểm của khối tròn xoay (O, O', S, A, A') hoặc điểm phụ
-      const shouldDot = G.round || !Object.keys(preset(spec.preset || 'custom', { ...(spec.params || {}), points: spec.points }).points).includes(n);
+      const shouldDot = G.round || !basePtsKeys.includes(n);
       if (shouldDot) {
         out.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.3" fill="#000000"/>`);
       }

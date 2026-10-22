@@ -308,16 +308,13 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
 
           {result && (activeTab === 'examContent' || activeTab === 'detailedSolution') && (
             <BbtQuickGenerator
-              examContent={activeTab === 'examContent' ? result.examContent : result.detailedSolution}
+              examContent={result.examContent}
               onUpdateExamContent={(newContent) =>
-                setResult((prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        [activeTab]: newContent,
-                      }
-                    : prev
-                )
+                setResult((prev) => (prev ? { ...prev, examContent: newContent } : prev))
+              }
+              solutionContent={result.detailedSolution}
+              onUpdateSolutionContent={(newContent) =>
+                setResult((prev) => (prev ? { ...prev, detailedSolution: newContent } : prev))
               }
             />
           )}

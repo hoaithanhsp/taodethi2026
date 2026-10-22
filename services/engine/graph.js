@@ -126,8 +126,26 @@
   function renderGraph(spec) {
     const fns = Array.isArray(spec.fn) ? spec.fn : [spec.fn];
     const infos = fns.map((s) => analyzeGraph(s));
-    let [x0, x1] = spec.xRange || [-5, 5];
-    let [y0, y1] = spec.yRange || autoY(infos, x0, x1);
+    let [x0, x1] =
+      Array.isArray(spec.xRange) && spec.xRange.length === 2
+        ? [Number(spec.xRange[0]), Number(spec.xRange[1])]
+        : spec.xmin !== undefined && spec.xmax !== undefined
+          ? [Number(spec.xmin), Number(spec.xmax)]
+          : autoX(infos);
+    if (!isFinite(x0) || !isFinite(x1) || x1 <= x0) {
+      x0 = -4;
+      x1 = 4;
+    }
+    let [y0, y1] =
+      Array.isArray(spec.yRange) && spec.yRange.length === 2
+        ? [Number(spec.yRange[0]), Number(spec.yRange[1])]
+        : spec.ymin !== undefined && spec.ymax !== undefined
+          ? [Number(spec.ymin), Number(spec.ymax)]
+          : autoY(infos, x0, x1);
+    if (!isFinite(y0) || !isFinite(y1) || y1 <= y0) {
+      y0 = -4;
+      y1 = 4;
+    }
     const u = spec.unit || Math.min(44, 520 / (x1 - x0), 440 / (y1 - y0));
     const pad = 22;
     const W = (x1 - x0) * u + 2 * pad, H = (y1 - y0) * u + 2 * pad;
@@ -145,10 +163,20 @@
     if (spec.grid) for (let i = Math.ceil(x0); i <= x1; i++) out.push(`<line x1="${X(i)}" y1="${pad}" x2="${X(i)}" y2="${H - pad}" stroke="#ddd"/>`);
     if (spec.grid) for (let j = Math.ceil(y0); j <= y1; j++) out.push(`<line x1="${pad}" y1="${Y(j)}" x2="${W - pad}" y2="${Y(j)}" stroke="#ddd"/>`);
 
-    // miền tô (tích phân / diện tích)
-    if (spec.shade) {
-      const g1 = compile(spec.shade.fn), g2 = compile(spec.shade.fn2 || '0');
-      const a = spec.shade.from, b = spec.shade.to, N = 200, pts = [];
+    // miền tô (tích phân / diện tích) — hỗ trợ cả spec.shade và spec.integral
+    const shadeSpec =
+      spec.shade ||
+      (spec.integral
+        ? {
+            fn: spec.integral.fn || fns[0],
+            fn2: spec.integral.fn2 || '0',
+            from: Number(spec.integral.a ?? spec.integral.from ?? 0),
+            to: Number(spec.integral.b ?? spec.integral.to ?? 1),
+          }
+        : null);
+    if (shadeSpec) {
+      const g1 = compile(shadeSpec.fn || fns[0]), g2 = compile(shadeSpec.fn2 || '0');
+      const a = Number(shadeSpec.from ?? shadeSpec.a ?? 0), b = Number(shadeSpec.to ?? shadeSpec.b ?? 1), N = 200, pts = [];
       for (let k = 0; k <= N; k++) { const x = a + (b - a) * k / N; pts.push(`${X(x).toFixed(1)},${Y(g1(x)).toFixed(1)}`); }
       for (let k = N; k >= 0; k--) { const x = a + (b - a) * k / N; pts.push(`${X(x).toFixed(1)},${Y(g2(x)).toFixed(1)}`); }
       out.push(`<polygon points="${pts.join(' ')}" fill="#9bb7e8" fill-opacity="0.45" stroke="none" clip-path="url(#gClip)"/>`);
@@ -221,9 +249,9 @@
       if (spec.revolve.from) ticksX.add(spec.revolve.from);
       if (spec.revolve.to) ticksX.add(spec.revolve.to);
     }
-    if (spec.shade) {
-      if (spec.shade.from) ticksX.add(spec.shade.from);
-      if (spec.shade.to) ticksX.add(spec.shade.to);
+    if (shadeSpec) {
+      if (isFinite(shadeSpec.from)) ticksX.add(shadeSpec.from);
+      if (isFinite(shadeSpec.to)) ticksX.add(shadeSpec.to);
     }
     if (spec.ticks === 'all' || spec.grid) {
       for (let i = Math.ceil(x0); i <= x1; i++) if (i) ticksX.add(i);
@@ -293,25 +321,80 @@
     return out.join('');
   }
 
+  function autoX(infos) {
+    const xs = [0];
+    infos.forEach((I) => {
+      I.poles.forEach((p) => { if (Math.abs(p) <= 10) xs.push(p); });
+      I.extrema.forEach((e) => { if (Math.abs(e.x) <= 10) xs.push(e.x); });
+      I.xIntercepts.forEach((x) => { if (Math.abs(x) <= 10) xs.push(x); });
+    });
+    if (xs.length <= 1) return [-4, 4];
+    const lo = Math.min(...xs), hi = Math.max(...xs);
+    const pad = Math.max(1.5, (hi - lo) * 0.45);
+    return [Math.min(-3, Math.floor(lo - pad)), Math.max(3, Math.ceil(hi + pad))];
+  }
+
   function autoY(infos, x0, x1) {
     let lo = Infinity, hi = -Infinity;
+    const dx = Math.max(2, x1 - x0);
+
     infos.forEach((I) => {
-      [...I.extrema.map((e) => e.y), I.yIntercept ?? 0, ...(I.hAsyms || [I.hAsym ?? 0]), 0].filter((v) => isFinite(v) && Math.abs(v) < 1e4).forEach((v) => { lo = Math.min(lo, v); hi = Math.max(hi, v); });
-      if (!I.poles.length) [x0, x1].forEach((x) => { const v = I.f(x); if (isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
-      else if (B.makeFunction) {
-        // có tiệm cận đứng: lấy phân vị 10%–90% của giá trị hàm trên khung để thấy rõ nhánh đi ra vô cực (vd ln x)
+      const keyYs = [
+        ...I.extrema.filter((e) => e.x >= x0 - 0.5 && e.x <= x1 + 0.5).map((e) => e.y),
+        I.yIntercept ?? 0,
+        ...(I.hAsyms || (I.hAsym !== null ? [I.hAsym] : [])),
+        0,
+      ].filter((v) => isFinite(v) && Math.abs(v) < 1e4);
+
+      keyYs.forEach((v) => {
+        lo = Math.min(lo, v);
+        hi = Math.max(hi, v);
+      });
+
+      const keyMid = isFinite(lo) && isFinite(hi) ? (lo + hi) / 2 : 0;
+      const maxHalfSpan = Math.max(4, dx * 0.8);
+
+      if (I.extrema.length > 0 && !I.poles.length) {
+        // Với hàm đa thức có cực trị (bậc 2, bậc 3, bậc 4 trùng phương):
+        // Kiểm tra hướng nhánh ngoài cùng để chừa khoảng trống vừa đủ (2..3 đơn vị) mà không bị kéo giãn bởi f(x0), f(x1) quá lớn
+        const extXs = I.extrema.map((e) => e.x);
+        const minExtX = Math.min(...extXs);
+        const maxExtX = Math.max(...extXs);
+        const probeLeft = I.f(minExtX - 0.85);
+        const probeRight = I.f(maxExtX + 0.85);
+        [probeLeft, probeRight].forEach((v) => {
+          if (isFinite(v)) {
+            const clamped = Math.max(keyMid - maxHalfSpan, Math.min(keyMid + maxHalfSpan, v));
+            lo = Math.min(lo, clamped);
+            hi = Math.max(hi, clamped);
+          }
+        });
+      } else {
+        // Hàm phân thức, hàm đơn điệu hoặc lượng giác: lấy phân vị 12%–88% trong khung nhưng giới hạn tỷ lệ khung nhìn
         const vals = [];
-        for (let k = 0; k <= 200; k++) { const v = I.f(x0 + ((x1 - x0) * k) / 200); if (isFinite(v)) vals.push(v); }
-        if (vals.length > 10) {
+        for (let k = 0; k <= 200; k++) {
+          const v = I.f(x0 + (dx * k) / 200);
+          if (isFinite(v)) vals.push(v);
+        }
+        if (vals.length > 6) {
           vals.sort((p, q) => p - q);
-          lo = Math.min(lo, vals[Math.floor(vals.length * 0.1)]);
-          hi = Math.max(hi, vals[Math.floor(vals.length * 0.9)]);
+          const qLo = Math.max(keyMid - maxHalfSpan, vals[Math.floor(vals.length * 0.12)]);
+          const qHi = Math.min(keyMid + maxHalfSpan, vals[Math.floor(vals.length * 0.88)]);
+          lo = Math.min(lo, qLo);
+          hi = Math.max(hi, qHi);
         }
       }
     });
-    if (!isFinite(lo)) return [-5, 5];
-    const m = Math.max(1, (hi - lo) * 0.25);
-    return [Math.floor(lo - m), Math.ceil(hi + m)];
+
+    if (!isFinite(lo) || !isFinite(hi)) return [-4, 4];
+    const m = Math.max(1.2, (hi - lo) * 0.25);
+    let y0 = Math.floor(lo - m);
+    let y1 = Math.ceil(hi + m);
+    if (y1 - y0 < 4) {
+      y0 -= 1;
+      y1 += 1;
+    }
+    return [y0, y1];
   }
 
   global.Graph = { analyzeGraph, renderGraph };

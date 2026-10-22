@@ -147,6 +147,40 @@ check('Geo2D nhãn chứa & và <', () => {
   const s = Geo2D.renderGeo2D({ type: 'geo2d', preset: 'triangle', params: {}, edgeLabels: { AB: 'a < b & c' } });
   return svgOk(s) && !/a < b & c/.test(s) && /&lt;/.test(s);
 });
+check('Graph hàm bậc 3 và trùng phương có tỉ lệ khung hình cân đối (không bị bẹp ngang)', () => {
+  for (const fn of ['x^3 - 3*x + 1', 'x^4 - 2*x^2', '-x^3 + 3*x', '-x^4 + 4*x^2 - 1']) {
+    const svg = Graph.renderGraph({ type: 'graph', fn, xRange: [-3, 3] });
+    if (!svgOk(svg)) throw new Error(`SVG lỗi cho ${fn}`);
+    const m = svg.match(/width="(\d+(?:\.\d+)?)"\s+height="(\d+(?:\.\d+)?)"/);
+    if (!m) throw new Error(`Thiếu width/height cho ${fn}`);
+    const w = Number(m[1]), h = Number(m[2]);
+    if (w < 180 || h < 180 || w / h < 0.45 || w / h > 2.2) {
+      throw new Error(`Tỉ lệ khung hình bất thường cho ${fn}: ${w}x${h}`);
+    }
+  }
+});
+check('Geo3D hỗ trợ cả kind lẫn preset (pyramid-quad, pyramid-tri)', () => {
+  const s1 = Geo3D.renderGeo3D({ type: 'geo3d', kind: 'pyramid-tri', foot: 'A' });
+  const s2 = Geo3D.renderGeo3D({ type: 'geo3d', kind: 'pyramid-quad', foot: 'O', extra: ['point O center(ABCD)', 'segment S O'], marks: ['rightAngle S O A'] });
+  return svgOk(s1) && svgOk(s2) && /<path/.test(s1) && /<path/.test(s2) && /<text/.test(s2);
+});
+check('Geo2D hỗ trợ mảng points + polygons + vectors + rightAngles + angles', () => {
+  const s = Geo2D.renderGeo2D({
+    type: 'geo2d',
+    points: [
+      { id: 'A', x: 0, y: 3, label: 'A' },
+      { id: 'B', x: 0, y: 0, label: 'B' },
+      { id: 'C', x: 4, y: 0, label: 'C' },
+      { id: 'M', x: 2, y: 1.5, label: 'M' },
+    ],
+    polygons: [['A', 'B', 'C']],
+    segments: [['B', 'M', 'solid']],
+    vectors: [['B', 'A']],
+    rightAngles: [['A', 'B', 'C']],
+    angles: [{ pts: ['B', 'C', 'A'], label: '\\alpha' }],
+  });
+  return svgOk(s) && /<line/.test(s) && /<circle/.test(s);
+});
 
 console.log(`\n${pass} đạt, ${fail} lỗi`);
 process.exit(fail ? 1 : 0);

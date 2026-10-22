@@ -7,6 +7,7 @@ import {
   renderFigureSpecToSvg,
   downloadSvgAsPng,
   sanitizeAndValidateFigureSpec,
+  extractPrecedingQuestionContext,
   svgToDataUrl,
   svgToPngDataUrl,
   copySvgAsPngToClipboard,
@@ -18,7 +19,7 @@ interface MarkdownRendererProps {
   className?: string;
 }
 
-const FigureImageCard: React.FC<{ svg: string }> = ({ svg }) => {
+const FigureImageCard: React.FC<{ svg: string; figureType?: string }> = ({ svg, figureType }) => {
   const [imgSrc, setImgSrc] = useState<string>(() => svgToDataUrl(svg));
   const [copied, setCopied] = useState(false);
 
@@ -41,28 +42,39 @@ const FigureImageCard: React.FC<{ svg: string }> = ({ svg }) => {
     }
   };
 
+  const labelMap: Record<string, string> = {
+    bbt: 'Bảng biến thiên (300 DPI)',
+    graph: 'Đồ thị hàm số (300 DPI)',
+    geo2d: 'Hình học phẳng 2D (300 DPI)',
+    geo3d: 'Hình học không gian 3D (300 DPI)',
+  };
+
+  const badgeLabel = (figureType && labelMap[figureType]) || 'Hình minh hoạ (300 DPI)';
+  const filePrefix = figureType || 'hinh-minh-hoa';
+
   return (
-    <div className="my-4 p-3 bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col items-center">
-      <div className="overflow-x-auto max-w-full flex justify-center">
+    <div className="my-4 p-3.5 bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col items-center">
+      <div className="overflow-x-auto max-w-full flex justify-center bg-white p-1.5 rounded-lg">
         <img
           src={imgSrc}
-          alt="Bảng biến thiên / Hình minh họa"
+          alt={badgeLabel}
           className="max-w-full h-auto"
-          style={{ maxHeight: '280px' }}
+          style={{ maxHeight: '300px' }}
         />
       </div>
-      <div className="mt-2 flex items-center gap-2">
+      <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+        <span className="text-[11px] font-medium text-slate-400 mr-1">{badgeLabel}</span>
         <button
           type="button"
           onClick={handleCopy}
-          className="text-xs px-2.5 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors"
+          className="text-xs px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors cursor-pointer"
         >
           {copied ? '✓ Đã copy ảnh' : '📋 Copy ảnh'}
         </button>
         <button
           type="button"
-          onClick={() => downloadSvgAsPng(svg, 'bang-bien-thien.png')}
-          className="text-xs px-2.5 py-1 rounded bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200 transition-colors"
+          onClick={() => downloadSvgAsPng(svg, `${filePrefix}-300dpi.png`)}
+          className="text-xs px-2.5 py-1 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200 transition-colors cursor-pointer"
         >
           ⬇ Tải ảnh PNG (300 DPI)
         </button>
@@ -72,11 +84,15 @@ const FigureImageCard: React.FC<{ svg: string }> = ({ svg }) => {
 };
 
 const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className }) => {
-  // Chuyển các thẻ <script class="figure-json">...</script> và <table class="bbt-table"> sang khối ```figure-json
+  // Chuyển các thẻ <script class="figure-json">...</script>, :::figure...::: và <table class="bbt-table"> sang khối ```figure-json
   const normalizedContent = React.useMemo(() => {
     if (!content) return '';
     let withFences = content.replace(
       /<script[^>]*class=["'][^"']*figure-json[^"']*["'][^>]*>([\s\S]*?)<\/script>/gi,
+      (_m, body) => `\n\`\`\`figure-json\n${String(body).trim()}\n\`\`\`\n`
+    );
+    withFences = withFences.replace(
+      /:::figure\s*([\s\S]*?):::/gi,
       (_m, body) => `\n\`\`\`figure-json\n${String(body).trim()}\n\`\`\`\n`
     );
     withFences = withFences.replace(
@@ -93,7 +109,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className 
       /```figure-json\s*([\s\S]*?)```/gi,
       (full, jsonBody, offset) => {
         try {
-          const before = withFences.slice(Math.max(0, Number(offset) - 600), Number(offset));
+          const before = extractPrecedingQuestionContext(withFences, Number(offset) || 0);
           const parsed = JSON.parse(String(jsonBody).trim());
           const fixed = sanitizeAndValidateFigureSpec(parsed, before);
           if (!fixed) return '';
@@ -111,6 +127,9 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className 
         remarkPlugins={[remarkMath, remarkGfm]}
         rehypePlugins={[rehypeKatex]}
         components={{
+          pre({ children }) {
+            return <>{children}</>;
+          },
           code({ className: codeClassName, children, ...props }) {
             const match = /language-([\w-]+)/.exec(codeClassName || '');
             const lang = match ? match[1].toLowerCase() : '';
@@ -120,9 +139,15 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className 
               lang === 'figure-json' ||
               (lang === 'json' && /"type"\s*:\s*"(bbt|graph|geo2d|geo3d)"/i.test(rawText))
             ) {
+              let figureType: string | undefined;
+              try {
+                figureType = JSON.parse(rawText)?.type;
+              } catch {
+                // ignore
+              }
               const svg = renderFigureSpecToSvg(rawText, undefined, { showError: true });
               if (svg) {
-                return <FigureImageCard svg={svg} />;
+                return <FigureImageCard svg={svg} figureType={figureType} />;
               }
             }
 

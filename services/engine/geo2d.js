@@ -68,7 +68,6 @@
         const angle = ((p.angle ?? 62) * Math.PI) / 180;
         const dx = b * Math.cos(angle);
         const dy = b * Math.sin(angle);
-        // Đặt A dưới-trái, D trên-trái, C trên-phải, B dưới-phải (hoặc A trên-trái, B trên-phải, C dưới-phải, D dưới-trái)
         pts.A = [0, 0];
         pts.B = [a, 0];
         pts.C = [a + dx, dy];
@@ -354,17 +353,50 @@
     }
   }
 
+  function normalizePointsMap2D(rawPoints) {
+    const out = {};
+    const labels = {};
+    if (!rawPoints) return { out, labels };
+    if (Array.isArray(rawPoints)) {
+      rawPoints.forEach((pt, idx) => {
+        if (pt && typeof pt === 'object' && !Array.isArray(pt)) {
+          const id = String(pt.id || pt.name || pt.label || `P${idx + 1}`).trim();
+          const x = Number(pt.x ?? pt[0] ?? 0);
+          const y = Number(pt.y ?? pt[1] ?? 0);
+          if (isFinite(x) && isFinite(y)) {
+            out[id] = [x, y];
+            if (pt.label) labels[id] = String(pt.label);
+          }
+        }
+      });
+    } else if (typeof rawPoints === 'object') {
+      Object.entries(rawPoints).forEach(([k, v]) => {
+        if (Array.isArray(v) && v.length >= 2) {
+          out[k] = [Number(v[0]), Number(v[1])];
+        } else if (v && typeof v === 'object') {
+          out[k] = [Number(v.x ?? 0), Number(v.y ?? 0)];
+          if (v.label) labels[k] = String(v.label);
+        }
+      });
+    }
+    return { out, labels };
+  }
+
   function buildGeo2D(spec) {
-    const base = buildPreset2D(spec.preset || 'triangle', {
+    const { out: customPts, labels: ptLabels } = normalizePointsMap2D(spec.points);
+    const hasCustomPts = Object.keys(customPts).length > 0;
+    const presetName = spec.preset || (hasCustomPts ? 'custom' : 'triangle');
+    const base = buildPreset2D(presetName, {
       ...(spec.params || {}),
-      points: spec.points,
+      points: customPts,
     });
-    const pts = { ...base.pts, ...(spec.points || {}) };
+    const pts = { ...base.pts, ...customPts };
     const segs = [...base.segs];
     const vectors = [...base.vectors];
     const circles = [...base.circles];
     const marks = [...base.marks, ...(spec.marks || [])];
     const compassNodes = [...base.compassNodes];
+    const angles = [];
 
     const addSeg = (a, b, dashed = false, label = '') => {
       if (!pts[a] || !pts[b]) return;
@@ -379,6 +411,108 @@
       segs.push({ a, b, dashed, label });
     };
 
+    // Hỗ trợ mảng polygons: [{ points: ['A', 'B', 'C'] }] hoặc [['A','B','C']]
+    if (Array.isArray(spec.polygons)) {
+      spec.polygons.forEach((poly) => {
+        const pList = Array.isArray(poly) ? poly : Array.isArray(poly?.points) ? poly.points : [];
+        for (let i = 0; i < pList.length; i++) {
+          addSeg(String(pList[i]), String(pList[(i + 1) % pList.length]), false);
+        }
+      });
+    }
+
+    // Hỗ trợ mảng segments: [{ from: 'A', to: 'H', style: 'dashed', label: '' }] hoặc [['A','H','dashed']]
+    if (Array.isArray(spec.segments)) {
+      spec.segments.forEach((seg) => {
+        if (!seg) return;
+        if (Array.isArray(seg)) {
+          const a = String(seg[0] || '');
+          const b = String(seg[1] || '');
+          const style = String(seg[2] || '').toLowerCase();
+          const dashed = style === 'dashed' || style === 'dotted' || seg[2] === true;
+          const label = seg[3] ? String(seg[3]) : '';
+          addSeg(a, b, dashed, label);
+          return;
+        }
+        const a = String(seg.from || seg.a || '');
+        const b = String(seg.to || seg.b || '');
+        const dashed = Boolean(seg.dashed || seg.style === 'dashed' || seg.style === 'dotted');
+        const label = seg.label ? String(seg.label) : '';
+        addSeg(a, b, dashed, label);
+      });
+    }
+
+    // Hỗ trợ mảng vectors: [{ from: 'O', to: 'F1', color: '#2563eb', label: '' }] hoặc [['B','A']]
+    if (Array.isArray(spec.vectors)) {
+      spec.vectors.forEach((vec) => {
+        if (!vec) return;
+        if (Array.isArray(vec)) {
+          const a = String(vec[0] || '');
+          const b = String(vec[1] || '');
+          if (pts[a] && pts[b]) {
+            vectors.push({ a, b, color: vec[2] || '#000', label: vec[3] ? String(vec[3]) : '' });
+          }
+          return;
+        }
+        const a = String(vec.from || vec.a || '');
+        const b = String(vec.to || vec.b || '');
+        if (pts[a] && pts[b]) {
+          vectors.push({ a, b, color: vec.color || '#000', label: vec.label ? String(vec.label) : '' });
+        }
+      });
+    }
+
+    // Hỗ trợ mảng circles: [{ center: 'O', radius: 3 }]
+    if (Array.isArray(spec.circles)) {
+      spec.circles.forEach((c) => {
+        if (!c) return;
+        const center = String(c.center || 'O');
+        const r = Number(c.radius ?? c.r ?? 2);
+        if (pts[center] && isFinite(r) && r > 0) {
+          circles.push({ center, r });
+        }
+      });
+    }
+
+    // Hỗ trợ mảng rightAngles: [{ at: 'H', p1: 'A', p2: 'C' }] hoặc [['A','B','C']] (góc vuông tại B)
+    if (Array.isArray(spec.rightAngles)) {
+      spec.rightAngles.forEach((ra) => {
+        if (!ra) return;
+        if (Array.isArray(ra) && ra.length >= 3) {
+          marks.push(`rightangle ${ra[0]} ${ra[1]} ${ra[2]}`);
+          return;
+        }
+        const at = String(ra.at || ra.vertex || '');
+        const p1 = String(ra.p1 || ra.a || '');
+        const p2 = String(ra.p2 || ra.b || '');
+        if (at && p1 && p2) {
+          marks.push(`rightangle ${p1} ${at} ${p2}`);
+        }
+      });
+    }
+
+    // Hỗ trợ mảng angles: [{ at: 'O', p1: 'F1', p2: 'F2', label: 'α' }] hoặc [{ pts: ['B','C','A'], label: 'α' }]
+    if (Array.isArray(spec.angles)) {
+      spec.angles.forEach((ang) => {
+        if (!ang) return;
+        if (Array.isArray(ang.pts) && ang.pts.length >= 3) {
+          const p1 = String(ang.pts[0]);
+          const at = String(ang.pts[1]);
+          const p2 = String(ang.pts[2]);
+          if (pts[at] && pts[p1] && pts[p2]) {
+            angles.push({ at, p1, p2, label: ang.label ? String(ang.label) : '' });
+          }
+          return;
+        }
+        const at = String(ang.at || ang.vertex || '');
+        const p1 = String(ang.p1 || ang.a || '');
+        const p2 = String(ang.p2 || ang.b || '');
+        if (pts[at] && pts[p1] && pts[p2]) {
+          angles.push({ at, p1, p2, label: ang.label ? String(ang.label) : '' });
+        }
+      });
+    }
+
     (spec.extra || []).forEach((cmd) => {
       const str = String(cmd).trim();
       const parts = str.split(/\s+/);
@@ -386,7 +520,13 @@
       if (kw === 'point') {
         const ptName = parts[1];
         const expr = parts.slice(2).join(' ');
-        pts[ptName] = evalPoint2D(expr, pts);
+        if (ptName) {
+          try {
+            pts[ptName] = evalPoint2D(expr, pts);
+          } catch (_e) {
+            // Bỏ qua điểm phụ nếu tham chiếu tới đỉnh không tồn tại
+          }
+        }
       } else if (kw === 'segment') {
         const a = parts[1];
         const b = parts[2];
@@ -427,7 +567,7 @@
       });
     }
 
-    return { pts, segs, vectors, circles, marks, compassNodes };
+    return { pts, ptLabels, segs, vectors, circles, marks, compassNodes, angles };
   }
 
   function renderGeo2D(spec) {
@@ -545,7 +685,7 @@
       );
     });
 
-    // 5. Ký hiệu góc vuông
+    // 5. Ký hiệu góc vuông & Cung góc
     G.marks.forEach((m) => {
       const t = String(m).trim().split(/\s+/);
       if (t[0].toLowerCase() !== 'rightangle') return;
@@ -564,6 +704,35 @@
       );
     });
 
+    (G.angles || []).forEach((ang) => {
+      const O = G.pts[ang.at];
+      const A = G.pts[ang.p1];
+      const B = G.pts[ang.p2];
+      if (!O || !A || !B) return;
+      const rArc = 0.45;
+      const a1 = Math.atan2(A[1] - O[1], A[0] - O[0]);
+      let a2 = Math.atan2(B[1] - O[1], B[0] - O[0]);
+      let diff = a2 - a1;
+      while (diff <= -Math.PI) diff += 2 * Math.PI;
+      while (diff > Math.PI) diff -= 2 * Math.PI;
+      const steps = 20;
+      const arcPts = [];
+      for (let i = 0; i <= steps; i++) {
+        const th = a1 + (diff * i) / steps;
+        arcPts.push(T([O[0] + rArc * Math.cos(th), O[1] + rArc * Math.sin(th)]));
+      }
+      out.push(
+        `<polyline points="${arcPts.map((p) => p.map((v) => v.toFixed(1)).join(',')).join(' ')}" fill="none" stroke="#000" stroke-width="1"/>`
+      );
+      if (ang.label) {
+        const midTh = a1 + diff / 2;
+        const [lx, ly] = T([O[0] + rArc * 1.45 * Math.cos(midTh), O[1] + rArc * 1.45 * Math.sin(midTh)]);
+        out.push(
+          `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" dominant-baseline="middle" ${fontItalic}>${escXml(ang.label)}</text>`
+        );
+      }
+    });
+
     // 6. Đỉnh & Nhãn điểm
     Object.entries(G.pts).forEach(([name, p]) => {
       const [x, y] = T(p);
@@ -577,9 +746,10 @@
         dx /= L;
         dy /= L;
       }
+      const dispLabel = (G.ptLabels && G.ptLabels[name]) || name;
       out.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.2" fill="#000"/>`);
       out.push(
-        `<text x="${(x + dx * 15).toFixed(1)}" y="${(y - dy * 15).toFixed(1)}" text-anchor="middle" dominant-baseline="middle" ${fontItalic}>${escXml(name)}</text>`
+        `<text x="${(x + dx * 15).toFixed(1)}" y="${(y - dy * 15).toFixed(1)}" text-anchor="middle" dominant-baseline="middle" ${fontItalic}>${escXml(dispLabel)}</text>`
       );
     });
 

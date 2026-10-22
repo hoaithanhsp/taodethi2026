@@ -294,24 +294,26 @@ function filterExtraByContext(
     return { extra: extra || [], marks: marks || [] };
   }
 
+  const validPoints = new Set<string>(allowedPoints);
+
   const cleanExtra = (extra || []).filter((cmd) => {
     const parts = String(cmd).trim().split(/\s+/);
     const kw = parts[0]?.toLowerCase();
     if (kw === 'point') {
       const ptName = parts[1];
-      if (!allowedPoints.has(ptName)) return false;
       const upperTokens = String(cmd)
         .slice(parts[0].length + parts[1].length + 1)
         .match(/\b[A-Z]'?\b/g);
-      if (upperTokens && upperTokens.some((tok) => !allowedPoints.has(tok))) {
+      if (upperTokens && upperTokens.some((tok) => !validPoints.has(tok))) {
         return false;
       }
+      if (ptName) validPoints.add(ptName);
       return true;
     }
     if (kw === 'segment' || kw === 'vector') {
       const p1 = parts[1];
       const p2 = parts[2];
-      return allowedPoints.has(p1) && allowedPoints.has(p2);
+      return validPoints.has(p1) && validPoints.has(p2);
     }
     return true;
   });
@@ -320,9 +322,9 @@ function filterExtraByContext(
     const parts = String(m).trim().split(/\s+/);
     if (parts[0]?.toLowerCase() === 'rightangle') {
       return (
-        allowedPoints.has(parts[1]) &&
-        allowedPoints.has(parts[2]) &&
-        allowedPoints.has(parts[3])
+        validPoints.has(parts[1]) &&
+        validPoints.has(parts[2]) &&
+        validPoints.has(parts[3])
       );
     }
     return true;
@@ -373,6 +375,28 @@ function extractNavigationParamsFromText(ctx: string): Record<string, any> | nul
   };
 }
 
+function getPresetBasePoints(preset: string): string[] {
+  const p = String(preset || '').toLowerCase();
+  if (p === 'pyramid-tri') return ['S', 'A', 'B', 'C'];
+  if (p === 'pyramid-quad' || p === 'pyramid-square' || p === 'pyramid-rect') return ['S', 'A', 'B', 'C', 'D', 'O'];
+  if (p === 'pyramid-hex') return ['S', 'A', 'B', 'C', 'D', 'E', 'F', 'O'];
+  if (p === 'tetra-right') return ['O', 'A', 'B', 'C'];
+  if (p === 'prism-tri') return ['A', 'B', 'C', "A'", "B'", "C'"];
+  if (p === 'prism-quad' || p === 'prism-rect' || p === 'prism-square' || p === 'box' || p === 'cube') {
+    return ['A', 'B', 'C', 'D', "A'", "B'", "C'", "D'", 'O', "O'"];
+  }
+  if (p === 'prism-hex') return ['A', 'B', 'C', 'D', 'E', 'F', "A'", "B'", "C'", "D'", "E'", "F'"];
+  if (p === 'cone') return ['S', 'O', 'A', 'B'];
+  if (p === 'cylinder' || p === 'frustum' || p === 'cone-frustum') return ['O', "O'", 'A', "A'", 'B', "B'"];
+  if (p === 'sphere') return ['O', 'A', 'B'];
+  if (p.startsWith('triangle') || p === 'navigation') return ['A', 'B', 'C', 'H', 'M', 'G', 'I'];
+  if (p === 'parallelogram' || p === 'rectangle' || p === 'square' || p === 'rhombus' || p.startsWith('trapezoid')) {
+    return ['A', 'B', 'C', 'D', 'O', 'H', 'M', 'N', 'I'];
+  }
+  if (p === 'circle') return ['O', 'A', 'B', 'C', 'D', 'M', 'N', 'I'];
+  return [];
+}
+
 /**
  * Kiểm tra ngữ nghĩa và tự động sửa lỗi khi AI sinh nhầm hình
  */
@@ -383,15 +407,21 @@ export function sanitizeAndValidateFigureSpec(
   if (!rawSpec || typeof rawSpec !== 'object') return null;
 
   const spec = { ...rawSpec };
-  const ctx = contextHtml ? stripHtmlTags(contextHtml) : '';
+  if (!spec.preset && spec.kind) {
+    spec.preset = spec.kind;
+  }
+  const rawCtx = contextHtml ? stripHtmlTags(contextHtml) : '';
+  // Loại bỏ nhãn phương án trắc nghiệm A. B. C. D. để không nhận nhầm là đỉnh hình học
+  const ctx = rawCtx.replace(/(?:^|\s)[A-D]\.\s+/g, ' ');
 
   const pointsInContext = new Set<string>();
   if (ctx.length > 10) {
-    const pointGroups: string[] = ctx.match(/\b(?:[A-Z]'?\.?)+\b/g) || [];
-    pointGroups.forEach((grp: string) => {
+    const unicodePointRegex = /(?:^|[^\p{L}\p{N}_])([A-Z]'?(?:\.[A-Z]'?)*)(?=$|[^\p{L}\p{N}_])/gu;
+    for (const m of ctx.matchAll(unicodePointRegex)) {
+      const grp = m[1] || '';
       const tokens: string[] = grp.match(/[A-Z]'?/g) || [];
       tokens.forEach((t: string) => pointsInContext.add(t));
-    });
+    }
   }
 
   const is3DContext =
@@ -431,8 +461,11 @@ export function sanitizeAndValidateFigureSpec(
       }
 
       const hasCenterO = /\btâm\s+O\b/i.test(ctx) || pointsInContext.has('O');
+      const quadAllowed = new Set<string>([...pointsInContext, 'A', 'B', 'C', 'D', 'O', 'H', 'M', 'N', 'I']);
+      const triAllowed = new Set<string>([...pointsInContext, 'A', 'B', 'C', 'H', 'M', 'G', 'I']);
+
       if (/hình\s+bình\s+hành/i.test(ctx)) {
-        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, pointsInContext);
+        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, quadAllowed);
         return {
           type: 'geo2d',
           preset: 'parallelogram',
@@ -442,7 +475,7 @@ export function sanitizeAndValidateFigureSpec(
         };
       }
       if (/hình\s+chữ\s+nhật/i.test(ctx)) {
-        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, pointsInContext);
+        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, quadAllowed);
         return {
           type: 'geo2d',
           preset: 'rectangle',
@@ -452,7 +485,7 @@ export function sanitizeAndValidateFigureSpec(
         };
       }
       if (/hình\s+vuông/i.test(ctx)) {
-        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, pointsInContext);
+        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, quadAllowed);
         return {
           type: 'geo2d',
           preset: 'square',
@@ -462,7 +495,7 @@ export function sanitizeAndValidateFigureSpec(
         };
       }
       if (/hình\s+thoi/i.test(ctx)) {
-        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, pointsInContext);
+        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, quadAllowed);
         return {
           type: 'geo2d',
           preset: 'rhombus',
@@ -472,17 +505,17 @@ export function sanitizeAndValidateFigureSpec(
         };
       }
       if (/hình\s+thang\s+vuông/i.test(ctx)) {
-        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, pointsInContext);
+        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, quadAllowed);
         return { type: 'geo2d', preset: 'trapezoid-right', params: spec.params || {}, extra, marks };
       }
       if (/hình\s+thang/i.test(ctx)) {
-        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, pointsInContext);
+        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, quadAllowed);
         return { type: 'geo2d', preset: 'trapezoid', params: spec.params || {}, extra, marks };
       }
 
       if (/tam\s+giác\s+vuông/i.test(ctx)) {
         const rightMatch = ctx.match(/vuông\s+tại\s+\$?([A-C])\$?/i);
-        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, pointsInContext);
+        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, triAllowed);
         return {
           type: 'geo2d',
           preset: 'triangle-right',
@@ -492,23 +525,24 @@ export function sanitizeAndValidateFigureSpec(
         };
       }
       if (/tam\s+giác\s+đều/i.test(ctx)) {
-        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, pointsInContext);
+        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, triAllowed);
         return { type: 'geo2d', preset: 'triangle-equil', params: spec.params || {}, extra, marks };
       }
       if (/tam\s+giác\s+cân/i.test(ctx)) {
-        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, pointsInContext);
+        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, triAllowed);
         return { type: 'geo2d', preset: 'triangle-iso', params: spec.params || {}, extra, marks };
       }
-      if (/tam\s+giác/i.test(ctx) || (pointsInContext.has('A') && pointsInContext.has('B') && pointsInContext.has('C') && !pointsInContext.has('D'))) {
-        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, pointsInContext);
+      if (/tam\s+giác/i.test(ctx)) {
+        const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, triAllowed);
         return { type: 'geo2d', preset: 'triangle', params: spec.params || {}, extra, marks };
       }
 
-      return null;
+      return spec;
     }
 
     if (pointsInContext.size >= 3 && !isRevolutionPreset) {
-      const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, pointsInContext);
+      const allowed3D = new Set<string>([...pointsInContext, ...getPresetBasePoints(preset)]);
+      const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, allowed3D);
       spec.extra = extra;
       spec.marks = marks;
     }
@@ -516,15 +550,16 @@ export function sanitizeAndValidateFigureSpec(
 
   if (type === 'geo2d' && ctx.length > 10) {
     const navParams = extractNavigationParamsFromText(ctx);
-    if (navParams && (!spec.preset || spec.preset === 'triangle')) {
+    if (navParams && (!spec.preset || spec.preset === 'triangle') && !spec.points) {
       return {
         type: 'geo2d',
         preset: 'navigation',
         params: { ...navParams, ...(spec.params || {}) },
       };
     }
-    if (pointsInContext.size >= 3) {
-      const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, pointsInContext);
+    if (pointsInContext.size >= 3 && !spec.points) {
+      const allowed2D = new Set<string>([...pointsInContext, ...getPresetBasePoints(spec.preset)]);
+      const { extra, marks } = filterExtraByContext(spec.extra, spec.marks, allowed2D);
       spec.extra = extra;
       spec.marks = marks;
     }
@@ -642,7 +677,7 @@ export function renderFigureSpecToSvg(
 /**
  * Lấy ngữ cảnh câu hỏi nằm ngay trước khối hình vẽ để đối chiếu tính hợp lệ
  */
-function extractPrecedingQuestionContext(fullText: string, matchOffset: number): string {
+export function extractPrecedingQuestionContext(fullText: string, matchOffset: number): string {
   const before = fullText.slice(Math.max(0, matchOffset - 600), matchOffset);
   const cauMatches = [...before.matchAll(/(?:Câu\s+\d+|Bài\s+\d+)/gi)];
   if (cauMatches.length > 0) {
@@ -667,7 +702,7 @@ function wrapSvgAsImageInQuestion(svg: string): string {
 }
 
 /**
- * Tìm và thay thế mọi khối cấu hình hình vẽ (`figure-json`) VÀ bảng `<table class="bbt-table">`
+ * Tìm và thay thế mọi khối cấu hình hình vẽ (`figure-json`, `:::figure`) VÀ bảng `<table class="bbt-table">`
  * trong chuỗi HTML/Markdown bằng ảnh Bảng biến thiên / Hình vẽ chuẩn SGK gắn thẳng vào câu hỏi.
  */
 export function renderFiguresInHtml(content: string): string {
@@ -705,8 +740,14 @@ export function renderFiguresInHtml(content: string): string {
     }
   );
 
-  // 4. Khối ```figure-json ... ``` còn sót trong HTML/text
+  // 4. Khối ```figure-json ... ``` hoặc :::figure ... ::: còn sót trong HTML/text
   out = out.replace(/```figure-json\s*([\s\S]*?)```/gi, (_full, jsonBody, offset) => {
+    const ctx = extractPrecedingQuestionContext(out, Number(offset) || 0);
+    const svg = renderFigureSpecToSvg(jsonBody, ctx);
+    return svg ? wrapSvgAsImageInQuestion(svg) : '';
+  });
+
+  out = out.replace(/:::figure\s*([\s\S]*?):::/gi, (_full, jsonBody, offset) => {
     const ctx = extractPrecedingQuestionContext(out, Number(offset) || 0);
     const svg = renderFigureSpecToSvg(jsonBody, ctx);
     return svg ? wrapSvgAsImageInQuestion(svg) : '';
@@ -868,8 +909,11 @@ export function extractFiguresToPlaceholders(content: string): {
     (_full, jsonBody, offset) => makePh('json', jsonBody, Number(offset) || 0, out)
   );
 
-  // 2. ```figure-json ... ```
+  // 2. ```figure-json ... ``` hoặc :::figure ... :::
   out = out.replace(/```figure-json\s*([\s\S]*?)```/gi, (_full, jsonBody, offset) =>
+    makePh('json', jsonBody, Number(offset) || 0, out)
+  );
+  out = out.replace(/:::figure\s*([\s\S]*?):::/gi, (_full, jsonBody, offset) =>
     makePh('json', jsonBody, Number(offset) || 0, out)
   );
 
@@ -1025,4 +1069,3 @@ Khi câu hỏi cần Bảng biến thiên hoặc Hình minh họa trực quan, B
 {"type": "geo3d", "preset": "pyramid-square", "params": {"a": 2, "h": 2.6}, "extra": ["point O center(ABCD)", "segment S O", "segment A C", "segment B D"], "marks": ["rightangle S O B"]}
 \`\`\`
 `;
-

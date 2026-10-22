@@ -136,12 +136,12 @@ export const generateSimilarExam = async (
   if (options) {
     if (options.diagramMode === 'detailed') {
       customInstructions += `\n\n### YÊU CẦU NÂNG CAO VỀ HÌNH VẼ (High Detail):
-- BẮT BUỘC vẽ hình trực quan bằng khối \`\`\`figure-json ... \`\`\` cho mọi câu có Bảng biến thiên (type: "bbt"), Đồ thị hàm số / Diện tích hình phẳng (type: "graph"), và Hình không gian 3D (type: "geo3d").
-- Với hình không gian: Khai báo đầy đủ các điểm phụ (extra) và ký hiệu góc vuông (marks).
+- BẮT BUỘC vẽ hình trực quan bằng khối \`\`\`figure-json ... \`\`\` cho mọi câu có Bảng biến thiên (type: "bbt"), Đồ thị hàm số / Diện tích hình phẳng (type: "graph"), Hình không gian 3D (type: "geo3d"), và Hình phẳng 2D (type: "geo2d").
+- Với hình không gian 3D và hình phẳng 2D: Khai báo đầy đủ các điểm phụ (extra) và ký hiệu góc vuông (marks).
 - Với đồ thị: Hiển thị đầy đủ tiệm cận, điểm cực trị và miền tô tích phân nếu có.`;
     } else {
       customInstructions += `\n\n### YÊU CẦU VỀ HÌNH VẼ (Standard):
-- Sử dụng khối \`\`\`figure-json ... \`\`\` để vẽ tự động Bảng biến thiên, Đồ thị hàm số và Hình không gian 3D.`;
+- Sử dụng khối \`\`\`figure-json ... \`\`\` để vẽ tự động Bảng biến thiên (bbt), Đồ thị hàm số (graph), Hình không gian 3D (geo3d) và Hình phẳng 2D (geo2d).`;
     }
 
     if (options.solutionMode === 'concise') {
