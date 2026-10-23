@@ -842,9 +842,9 @@ export const generateStep1Matrix = async (
     + Cấu hình đề yêu cầu **${type2QuestionsCount} câu** Dạng II.
     + Theo quy định chuẩn CV 7991 của Bộ GD&ĐT: Mỗi câu Dạng II gồm **4 lệnh hỏi/ý (a, b, c, d)**.
     + Tổng số lệnh hỏi/ý Dạng II trong ma trận là **${type2SubItemsTotal} ý** (gồm các mã từ II.1a -> II.${type2QuestionsCount}d).
+    + Các ý a, b, c, d được phân bổ vào các mức độ Biết, Hiểu, VD của các bài học tương ứng (thông thường ý a, b ở Nhận biết, ý c ở Thông hiểu, ý d ở Vận dụng).
     + ${describeDungSaiLevels(config)}
   ${MATRIX_FULL_COLUMNS_RULE}
-    + Các ý a, b, c, d được phân bổ vào các mức độ Biết, Hiểu, VD của các bài học tương ứng (thông thường ý a, b ở Nhận biết, ý c ở Thông hiểu, ý d ở Vận dụng).
 
   | Dạng câu hỏi | Số câu | Số lệnh hỏi (ý) | Quy cách chi tiết |
   |---|---|---|---|
@@ -1034,9 +1034,9 @@ export const generateStep2Specs = async (
   - **QUY ƯỚC DẠNG II (Đúng/Sai):**
     + Gồm **${type2QuestionsCount} câu** Đúng/Sai. Mỗi câu gồm **4 ý lệnh hỏi (a, b, c, d)**.
     + Tổng số ý Dạng II cần đặc tả là **${type2SubItemsTotal} ý** (tương ứng các mã từ II.1a -> II.${type2QuestionsCount}d).
+    + Mỗi dòng đặc tả (NB, TH, VD) gắn với các ý tương ứng theo đúng ô của Ma trận đầu vào.
     + ${describeDungSaiLevels(config)}
   ${MATRIX_FULL_COLUMNS_RULE}
-    + Mỗi dòng đặc tả (NB, TH, VD) gắn với các ý tương ứng theo đúng ô của Ma trận đầu vào.
 
   | Dạng câu hỏi | Số câu | Số lệnh hỏi (ý) | Quy cách |
   |---|---|---|---|
