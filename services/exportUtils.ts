@@ -58,7 +58,7 @@ export const exportToDoc = async (content: string, fileName: string) => {
         h2 { font-size: 14pt; font-weight: bold; margin: 10pt 0 4pt; page-break-after: avoid; }
         h3 { font-size: 13pt; font-weight: bold; margin: 8pt 0 4pt; page-break-after: avoid; }
         h4 { font-size: 13pt; font-weight: bold; font-style: italic; margin: 6pt 0 3pt; page-break-after: avoid; }
-        p { margin: 0 0 6pt; text-align: justify; page-break-inside: avoid; }
+        p { margin: 0 0 6pt; text-align: left; page-break-inside: avoid; }
         table { 
           border-collapse: collapse; 
           width: 100%; 
@@ -107,8 +107,8 @@ export const exportToDoc = async (content: string, fileName: string) => {
   // Chuẩn hoá LaTeX cho Word/MathType (áp dụng cho cả nhánh HTML lẫn Markdown)
   fullHtml = normalizeMathForWord(fullHtml);
 
-  // Chuyển các hình vẽ (BBT, đồ thị, hình 3D) thành ảnh PNG 300 DPI nhúng vào Word
-  fullHtml = await restoreFiguresAsPngForWord(fullHtml, figures, 300);
+  // Chuyển các hình vẽ (BBT, đồ thị, hình 3D) thành ảnh PNG 200 DPI nhúng vào Word
+  fullHtml = await restoreFiguresAsPngForWord(fullHtml, figures, 200);
 
   try {
     const blob = await asBlob(fullHtml, {

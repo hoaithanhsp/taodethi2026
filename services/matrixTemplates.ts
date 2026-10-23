@@ -1,4 +1,4 @@
-import { MatrixTemplate, InputData, QuestionConfig, describeDungSaiLevels, MATRIX_FULL_COLUMNS_RULE } from '../types';
+import { MatrixTemplate, InputData, QuestionConfig, describeDungSaiLevels, MATRIX_FULL_COLUMNS_RULE, getDungSaiQuestionCount, getDungSaiLevelTotals } from '../types';
 import { SYSTEM_INSTRUCTION, GRADE_NO_ESSAY, getSubjectFootnotes } from '../constants';
 import { extractDocxTablesAndHtml } from './docxMathParser';
 
@@ -115,9 +115,10 @@ export const buildMatrixPromptForCustomTemplate = (
     void isGradeNoEssay;
 
     const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
-    const type2QuestionsCount = config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao;
+    const type2QuestionsCount = getDungSaiQuestionCount(config);
     const type2SubItemsTotal = type2QuestionsCount * 4;
-    const type2Total = { biet: config.type2.biet, hieu: config.type2.hieu, vd: config.type2.van_dung + config.type2.van_dung_cao };
+    const type2LevelTotals = getDungSaiLevelTotals(config);
+    const type2Total = { biet: type2LevelTotals.biet, hieu: type2LevelTotals.hieu, vd: type2LevelTotals.van_dung };
     const type3Total = { biet: config.type3.biet, hieu: config.type3.hieu, vd: config.type3.van_dung + config.type3.van_dung_cao };
     const essayTotal = { biet: config.essay.biet, hieu: config.essay.hieu, vd: config.essay.van_dung + config.essay.van_dung_cao };
 
@@ -230,7 +231,7 @@ export const buildSpecsPromptForCustomTemplate = (
     void isGradeNoEssay;
 
     const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
-    const type2QuestionsCount = config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao;
+    const type2QuestionsCount = getDungSaiQuestionCount(config);
     const type2SubItemsTotal = type2QuestionsCount * 4;
     const type3Total = { biet: config.type3.biet, hieu: config.type3.hieu, vd: config.type3.van_dung + config.type3.van_dung_cao };
     const essayTotal = { biet: config.essay.biet, hieu: config.essay.hieu, vd: config.essay.van_dung + config.essay.van_dung_cao };

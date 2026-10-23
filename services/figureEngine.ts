@@ -963,11 +963,11 @@ export async function restoreFiguresAsPngForWord(
       try {
         const { blob, width, height } = await g.FigExport.svgToPngBlob(svgStr, dpi);
         const dataUrl = await blobToDataUrl(blob);
-        const maxDocWidth = 440;
-        const scale = width > maxDocWidth ? maxDocWidth / width : 0.82;
+        const maxDocWidth = 500;
+        const scale = width > maxDocWidth ? maxDocWidth / width : 0.85;
         const dispW = Math.round(width * scale);
         const dispH = Math.round(height * scale);
-        replacement = `<div style="text-align: center; margin: 8pt auto; page-break-inside: avoid;"><img src="${dataUrl}" width="${dispW}" height="${dispH}" style="display: block; margin: 0 auto; max-width: 100%;" alt="Bảng biến thiên / Hình minh họa" /></div>`;
+        replacement = `<div style="text-align: center; margin: 6pt auto; page-break-inside: avoid;"><img src="${dataUrl}" width="${dispW}" height="${dispH}" style="display: block; margin: 0 auto; max-width: 100%;" alt="Bảng biến thiên / Hình minh họa" /></div>`;
       } catch (err) {
         console.warn('[FigureEngine] Lỗi chuyển SVG sang PNG cho Word:', err);
         replacement = `<div style="text-align: center; margin: 8pt auto;">${svgStr}</div>`;

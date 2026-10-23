@@ -13,6 +13,7 @@
  *
  * Header/footer được sinh bằng code (không để AI tự vẽ) và được áp lại lên output.
  */
+import { getDungSaiQuestionCount, getDungSaiLevelTotals } from '../types';
 import type { InputData, QuestionConfig } from '../types';
 
 export type Cv7991TypeKey = 'type1' | 'type2' | 'type3' | 'essay';
@@ -68,11 +69,12 @@ const fmtPct = (n: number): string => fmtVN(n, 0);
 export const computeCv7991Layout = (config: QuestionConfig, allowEssay: boolean): Cv7991Layout => {
     const counts: Record<Cv7991TypeKey, number> = {
         type1: sumLevels(config.type1),
-        type2: sumLevels(config.type2),
+        type2: getDungSaiQuestionCount(config),
         type3: sumLevels(config.type3),
         essay: allowEssay ? sumLevels(config.essay) : 0,
     };
     const hasEssay = counts.essay > 0;
+    const type2LevelTotals = getDungSaiLevelTotals(config);
     const target: Record<Cv7991TypeKey, number> = hasEssay
         ? { type1: 3, type2: 2, type3: 2, essay: 3 }
         : { type1: 3, type2: 4, type3: 3, essay: 0 };
@@ -95,7 +97,9 @@ export const computeCv7991Layout = (config: QuestionConfig, allowEssay: boolean)
                 ...TYPE_META[k],
                 questions: counts[k],
                 commands,
-                levels: { biet: c.biet || 0, hieu: c.hieu || 0, vd: (c.van_dung || 0) + (c.van_dung_cao || 0) },
+                levels: k === 'type2'
+                ? { biet: type2LevelTotals.biet, hieu: type2LevelTotals.hieu, vd: type2LevelTotals.van_dung }
+                : { biet: c.biet || 0, hieu: c.hieu || 0, vd: (c.van_dung || 0) + (c.van_dung_cao || 0) },
                 points: target[k],
                 pointPerCommand: target[k] / commands,
             };

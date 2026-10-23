@@ -14,7 +14,7 @@ import {
   getSubjectFootnotes,
   AiProvider,
 } from '../constants';
-import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate, ReferenceUsageMode, describeDungSaiLevels, MATRIX_FULL_COLUMNS_RULE } from '../types';
+import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate, ReferenceUsageMode, describeDungSaiLevels, MATRIX_FULL_COLUMNS_RULE, getDungSaiQuestionCount, getDungSaiLevelTotals } from '../types';
 import { fetchTemplateHtml, buildMatrixPromptForCustomTemplate, buildSpecsPromptForCustomTemplate } from './matrixTemplates';
 import { FIGURE_JSON_HTML_INSTRUCTIONS, renderFiguresInHtml } from './figureEngine';
 import {
@@ -796,9 +796,10 @@ export const generateStep1Matrix = async (
 
   // Gộp VD + VDC thành 3 mức: Biết, Hiểu, VD (theo chuẩn CV 7991)
   const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
-  const type2QuestionsCount = config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao;
+  const type2QuestionsCount = getDungSaiQuestionCount(config);
   const type2SubItemsTotal = type2QuestionsCount * 4; // Mỗi câu Dạng II gồm 4 ý/lệnh hỏi (a, b, c, d)
-  const type2Total = { biet: config.type2.biet, hieu: config.type2.hieu, vd: config.type2.van_dung + config.type2.van_dung_cao };
+  const type2LevelTotals = getDungSaiLevelTotals(config);
+  const type2Total = { biet: type2LevelTotals.biet, hieu: type2LevelTotals.hieu, vd: type2LevelTotals.van_dung };
   const type3Total = { biet: config.type3.biet, hieu: config.type3.hieu, vd: config.type3.van_dung + config.type3.van_dung_cao };
   const essayTotal = { biet: config.essay.biet, hieu: config.essay.hieu, vd: config.essay.van_dung + config.essay.van_dung_cao };
 
@@ -1010,7 +1011,7 @@ export const generateStep2Specs = async (
   const hasEssay = allowEssay && totalEssayQuestions > 0;
 
   const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
-  const type2QuestionsCount = config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao;
+  const type2QuestionsCount = getDungSaiQuestionCount(config);
   const type2SubItemsTotal = type2QuestionsCount * 4; // Mỗi câu Dạng II gồm 4 ý/lệnh hỏi (a, b, c, d)
   const type3Total = { biet: config.type3.biet, hieu: config.type3.hieu, vd: config.type3.van_dung + config.type3.van_dung_cao };
   const essayTotal = { biet: config.essay.biet, hieu: config.essay.hieu, vd: config.essay.van_dung + config.essay.van_dung_cao };
@@ -1244,7 +1245,7 @@ export const generateStep3Exam = async (
 
   const counts = {
     type1: questionConfig.type1.biet + questionConfig.type1.hieu + questionConfig.type1.van_dung + questionConfig.type1.van_dung_cao,
-    type2: questionConfig.type2.biet + questionConfig.type2.hieu + questionConfig.type2.van_dung + questionConfig.type2.van_dung_cao,
+    type2: getDungSaiQuestionCount(questionConfig),
     type3: questionConfig.type3.biet + questionConfig.type3.hieu + questionConfig.type3.van_dung + questionConfig.type3.van_dung_cao,
     essay: questionConfig.essay.biet + questionConfig.essay.hieu + questionConfig.essay.van_dung + questionConfig.essay.van_dung_cao,
   };
