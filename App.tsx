@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion, MatrixTemplate, ExamHistoryItem, ReferenceUsageMode, ReferenceDocItem } from './types';
+import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion, MatrixTemplate, ExamHistoryItem, ReferenceUsageMode, ReferenceDocItem, DungSaiLevel, DEFAULT_DUNG_SAI_LEVELS } from './types';
 import StepIndicator from './components/StepIndicator';
 import Button from './components/Button';
 import MarkdownView from './components/MarkdownView';
@@ -680,10 +680,9 @@ const App: React.FC = () => {
             essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
           }
         }));
-      } else {
-        // Sync essay config: nếu matrix sinh ra không có tự luận, reset essay = 0
-        syncEssayConfigFromMatrix(matrix);
       }
+      // Người dùng đã nhập số câu Tự luận > 0 ở bất kỳ cột nào → GIỮ NGUYÊN cấu hình,
+      // không reset theo kết quả dò từ khóa trong HTML (nguyên nhân Tự luận "lúc có lúc không").
       setGenState(prev => ({ ...prev, matrix, isLoading: false }));
       setCurrentStep(AppStep.MATRIX);
       setCompletedSteps(Math.max(completedSteps, 1));
@@ -1580,6 +1579,34 @@ const App: React.FC = () => {
         <div className="config-table">
           {renderQuestionConfigRow("Dạng I (4 lựa chọn)", "type1", 8, 4, 0)}
           {renderQuestionConfigRow("Dạng II (Đúng/Sai)", "type2", 1, 1, 0)}
+          <div className="py-3 border-b border-teal-50">
+            <span className="block text-xs font-semibold text-teal-700 mb-2">Cấu hình cấp độ từng ý (áp dụng cho mỗi câu Đúng/Sai)</span>
+            <div className="grid grid-cols-4 gap-3">
+              {(['yA', 'yB', 'yC', 'yD'] as const).map((key, idx) => (
+                <div key={key} className="flex flex-col">
+                  <span className="text-xs text-teal-500 mb-1">Ý {'abcd'[idx]}</span>
+                  <select
+                    className="w-full p-2 input-elevated text-sm"
+                    value={(inputData.questionConfig.dungSaiLevelConfig || DEFAULT_DUNG_SAI_LEVELS)[key]}
+                    onChange={e => {
+                      const v = e.target.value as DungSaiLevel;
+                      setInputData(prev => ({
+                        ...prev,
+                        questionConfig: {
+                          ...prev.questionConfig,
+                          dungSaiLevelConfig: { ...(prev.questionConfig.dungSaiLevelConfig || DEFAULT_DUNG_SAI_LEVELS), [key]: v },
+                        },
+                      }));
+                    }}
+                  >
+                    <option value="nhan_biet">Nhận biết</option>
+                    <option value="thong_hieu">Thông hiểu</option>
+                    <option value="van_dung">Vận dụng</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+          </div>
           {renderQuestionConfigRow("Dạng III (Trả lời ngắn)", "type3", 1, 1, 2)}
           {renderQuestionConfigRow("Tự luận", "essay", 0, 1, 2)}
         </div>

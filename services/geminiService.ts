@@ -14,7 +14,7 @@ import {
   getSubjectFootnotes,
   AiProvider,
 } from '../constants';
-import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate, ReferenceUsageMode } from '../types';
+import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate, ReferenceUsageMode, describeDungSaiLevels, MATRIX_FULL_COLUMNS_RULE } from '../types';
 import { fetchTemplateHtml, buildMatrixPromptForCustomTemplate, buildSpecsPromptForCustomTemplate } from './matrixTemplates';
 import { FIGURE_JSON_HTML_INSTRUCTIONS, renderFiguresInHtml } from './figureEngine';
 import {
@@ -791,7 +791,8 @@ export const generateStep1Matrix = async (
 
   const totalEssayQuestions = config.essay.biet + config.essay.hieu + config.essay.van_dung + config.essay.van_dung_cao;
   const isGradeNoEssay = GRADE_NO_ESSAY.includes(data.grade);
-  const hasEssay = !isGradeNoEssay && totalEssayQuestions > 0;
+  const hasEssay = totalEssayQuestions > 0; // Tự luận luôn được tính khi người dùng nhập > 0
+  void isGradeNoEssay;
 
   // Gộp VD + VDC thành 3 mức: Biết, Hiểu, VD (theo chuẩn CV 7991)
   const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
@@ -841,6 +842,8 @@ export const generateStep1Matrix = async (
     + Cấu hình đề yêu cầu **${type2QuestionsCount} câu** Dạng II.
     + Theo quy định chuẩn CV 7991 của Bộ GD&ĐT: Mỗi câu Dạng II gồm **4 lệnh hỏi/ý (a, b, c, d)**.
     + Tổng số lệnh hỏi/ý Dạng II trong ma trận là **${type2SubItemsTotal} ý** (gồm các mã từ II.1a -> II.${type2QuestionsCount}d).
+    + ${describeDungSaiLevels(config)}
+  ${MATRIX_FULL_COLUMNS_RULE}
     + Các ý a, b, c, d được phân bổ vào các mức độ Biết, Hiểu, VD của các bài học tương ứng (thông thường ý a, b ở Nhận biết, ý c ở Thông hiểu, ý d ở Vận dụng).
 
   | Dạng câu hỏi | Số câu | Số lệnh hỏi (ý) | Quy cách chi tiết |
@@ -958,7 +961,7 @@ export const generateStep1Matrix = async (
   }
 
   // --- TEMPLATE 1: Mẫu chuẩn CV 7991 (đúng Phụ lục CV 7991/BGDĐT-GDTrH) ---
-  const cvLayout = computeCv7991Layout(config, !isGradeNoEssay);
+  const cvLayout = computeCv7991Layout(config, true);
   const useCv = cvLayout.types.length > 0;
   const cvPrompt = useCv
     ? buildCv7991MatrixPrompt({ data, layout: cvLayout, footnotes, selectedChapters, totalSelectedPeriods })
@@ -1003,7 +1006,7 @@ export const generateStep2Specs = async (
   const config = data.questionConfig;
   const totalEssayQuestions = config.essay.biet + config.essay.hieu + config.essay.van_dung + config.essay.van_dung_cao;
   const isGradeNoEssay = GRADE_NO_ESSAY.includes(data.grade);
-  const allowEssay = isUploadedMatrix ? totalEssayQuestions > 0 : !isGradeNoEssay;
+  const allowEssay = totalEssayQuestions > 0; void isGradeNoEssay;
   const hasEssay = allowEssay && totalEssayQuestions > 0;
 
   const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
@@ -1031,6 +1034,8 @@ export const generateStep2Specs = async (
   - **QUY ƯỚC DẠNG II (Đúng/Sai):**
     + Gồm **${type2QuestionsCount} câu** Đúng/Sai. Mỗi câu gồm **4 ý lệnh hỏi (a, b, c, d)**.
     + Tổng số ý Dạng II cần đặc tả là **${type2SubItemsTotal} ý** (tương ứng các mã từ II.1a -> II.${type2QuestionsCount}d).
+    + ${describeDungSaiLevels(config)}
+  ${MATRIX_FULL_COLUMNS_RULE}
     + Mỗi dòng đặc tả (NB, TH, VD) gắn với các ý tương ứng theo đúng ô của Ma trận đầu vào.
 
   | Dạng câu hỏi | Số câu | Số lệnh hỏi (ý) | Quy cách |
@@ -1261,6 +1266,8 @@ export const generateStep3Exam = async (
 
   if (counts.type2 > 0) {
     structureInstructions += `- **PHẦN II (Đúng/Sai):** Tạo đúng ${counts.type2} câu hỏi (mỗi câu 4 ý a,b,c,d) và Đáp án Phần II (BẮT BUỘC có bảng thông tin hướng dẫn giải chi tiết và đủ 4 đáp án a, b, c, d cho mỗi câu).\n`;
+    const dsLevels = describeDungSaiLevels(questionConfig);
+    if (dsLevels) structureInstructions += `  ${dsLevels}\n`;
   } else {
     structureInstructions += `- **PHẦN II:** KHÔNG ĐƯỢC TẠO (Số câu = 0). Bỏ qua hoàn toàn.\n`;
   }
