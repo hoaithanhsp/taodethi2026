@@ -1056,7 +1056,7 @@ export const parseMatrixMetadataAndConfig = (htmlOrText: string): ParsedMatrixMe
   if (!htmlOrText || !htmlOrText.trim()) return result;
 
   const plainText = htmlOrText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-  const headerArea = plainText.slice(0, 1500);
+  const headerArea = plainText.slice(0, 3000); // Tăng từ 1500 lên 3000 để capture môn học trong ma trận lớn
 
   // 1. Detect Subject (from header first, then fallback to content keywords)
   for (const s of KNOWN_SUBJECTS) {
@@ -1065,17 +1065,20 @@ export const parseMatrixMetadataAndConfig = (htmlOrText: string): ParsedMatrixMe
       break;
     }
   }
+  
+  // 2. Fallback: kiểm tra full plainText với logic ưu tiên các môn không phải Toán trước (vì Toán keywords dễ appear everywhere)
   if (!result.subject) {
-    if (/\b(hàm\s*số|đạo\s*hàm|nguyên\s*hàm|tích\s*phân|phương\s*trình|vectơ|toạ\s*độ|cấp\s*số|lượng\s*giác|đa\s*thức|tam\s*giác|xác\s*suất)\b/i.test(plainText)) {
-      result.subject = 'Toán học';
-    } else if (/\b(điện\s*trường|từ\s*trường|dao\s*động|sóng\s*cơ|quang\s*học|nhiệt\s*học|động\s*lực\s*học|con\s*lắc)\b/i.test(plainText)) {
+    // Ưu tiên Vật lí trước vì từ khóa Toán dễ xuất hiện trong nhiều đề
+    if (/\b(điện\s*trường|từ\s*trường|dao\s*động|sóng\s*cơ|quang\s*học|nhiệt\s*học|động\s*lực\s*học|con\s*lắc|công\s*cơ\s*học|cơ\s*năng|biến\s*dạng|ứng\s*suất|tần\s*số|bước\s*sóng|cộng\s*hưởng|khúc\s*xạ|phản\s*xạ|thấu\s*kính)\b/i.test(plainText)) {
       result.subject = 'Vật lí';
-    } else if (/\b(nguyên\s*tử|bảng\s*tuần\s*hoàn|liên\s*kết\s*hóa\s*học|oxi\s*hóa|este|cacbohidrat|polime|hidrocacbon|kim\s*loại)\b/i.test(plainText)) {
+    } else if (/\b(nguyên\s*tử|bảng\s*tuần\s*hoàn|liên\s*kết\s*hóa\s*học|oxi\s*hóa|este|cacbohidrat|polime|hidrocacbon|kim\s*loại|chất\s*oxid|chất\s*khử|phản\s*ứng\s*trao\s*đổi|kiềm\s*tính|axít)\b/i.test(plainText)) {
       result.subject = 'Hóa học';
-    } else if (/\b(tế\s*bào|di\s*truyền|nhiễm\s*sắc\s*thể|sinh\s*thái|tiến\s*hóa|quang\s*hợp|hô\s*hấp)\b/i.test(plainText)) {
+    } else if (/\b(tế\s*bào|di\s*truyền|nhiễm\s*sắc\s*thể|sinh\s*thái|tiến\s*hóa|quang\s*hợp|hô\s*hấp|enzyme|chuyển\s*hóa|phân\s*lập)\b/i.test(plainText)) {
       result.subject = 'Sinh học';
-    } else if (/\b(thuật\s*toán|lập\s*trình|cơ\s*sở\s*dữ\s*liệu|mạng\s*máy\s*tính|python)\b/i.test(plainText)) {
+    } else if (/\b(thuật\s*toán|lập\s*trình|cơ\s*sở\s*dữ\s*liệu|mạng\s*máy\s*tính|python|c\+\+|java)\b/i.test(plainText)) {
       result.subject = 'Tin học';
+    } else if (/\b(hàm\s*số|đạo\s*hàm|nguyên\s*hàm|tích\s*phân|phương\s*trình|vectơ|toạ\s*độ|cấp\s*số|lượng\s*giác|đa\s*thức|tam\s*giác|xác\s*suất|thống\s*kê)\b/i.test(plainText)) {
+      result.subject = 'Toán học'; // Toán là fallback cuối cùng vì keywords có thể xuất hiện ở nhiều đề khác
     }
   }
 
