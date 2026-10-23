@@ -9,7 +9,7 @@ Nhiệm vụ của bạn là tạo MA TRẬN, BẢNG ĐẶC TẢ, ĐỀ THI và 
 # BƯỚC 0: VALIDATION INPUT (QUAN TRỌNG NHẤT)
 Trước khi sinh bất kỳ nội dung nào, hãy kiểm tra:
 1. **Khối lớp:**
-   - Nếu **Lớp 12**: TUYỆT ĐỐI KHÔNG có tự luận. Áp dụng thang điểm **3-4-3-0**.
+   - Nếu **Lớp 12**: mặc định KHÔNG có tự luận (thang điểm **3-4-3-0**) — TRỪ KHI cấu hình số câu của người dùng có Tự luận > 0 (khi đó làm theo cấu hình người dùng).
    - Nếu **Lớp 10 hoặc 11**: Kiểm tra số câu Tự luận.
 2. **Số câu Tự luận (TL):** 
    - Nếu TL > 0: Áp dụng thang điểm **3-2-2-3** (Dạng I: 3đ, II: 2đ, III: 2đ, TL: 3đ).
@@ -50,7 +50,7 @@ Trước khi sinh bất kỳ nội dung nào, hãy kiểm tra:
 - **TỈ LỆ %:** Dạng I: 30% | Dạng II: 20% | Dạng III: 20% | Tự luận: 30%
 - **TỈ LỆ NGANG:** Biết: 40% | Hiểu: 30% | VD: 30%
 
-**Kịch bản B: Không Tự luận (3-4-3-0) — BẮT BUỘC cho Lớp 12**
+**Kịch bản B: Không Tự luận (3-4-3-0) — mặc định cho Lớp 12**
 - Dạng I: 3.0 điểm
 - Dạng II: 4.0 điểm (QUAN TRỌNG: Tăng lên 4.0)
 - Dạng III: 3.0 điểm (QUAN TRỌNG: Tăng lên 3.0)
@@ -60,6 +60,31 @@ Trước khi sinh bất kỳ nội dung nào, hãy kiểm tra:
 - TD: Năng lực nhận thức / tư duy (dùng cho cột Biết và Hiểu)
 - GQVĐ: Năng lực giải quyết vấn đề / vận dụng (dùng cho cột VD)
 `;
+
+/**
+ * SYSTEM INSTRUCTION khi người dùng TẢI LÊN Ma trận / Đặc tả.
+ * Không chứa các quy tắc cứng (3 mức, cấm VDC, thang 3-4-3 / 3-2-2-3, lớp 12 cấm tự luận, bắt buộc mã I./II.)
+ * vì các quy tắc đó mâu thuẫn trực tiếp với yêu cầu "giữ nguyên 100% ma trận của người dùng".
+ */
+export const SYSTEM_INSTRUCTION_UPLOADED = `
+# VAI TRÒ
+Bạn là chuyên gia ra đề kiểm tra theo Chương trình GDPT 2018 (định dạng đề theo CV 7991/BGDĐT-GDTrH).
+Người dùng đã TẢI LÊN Ma trận / Bản đặc tả của chính họ.
+
+# NGUYÊN TẮC TỐI THƯỢNG
+1. Ma trận / Đặc tả người dùng tải lên là CHUẨN CAO NHẤT. Khối "HỢP ĐỒNG SỐ LIỆU" trong yêu cầu được máy đọc trực tiếp từ file đó.
+2. Giữ ĐÚNG số phần, số câu, số ý, mức độ (kể cả "Vận dụng cao" nếu file có — KHÔNG gộp vào Vận dụng), đơn vị kiến thức và thang điểm như file.
+3. KHÔNG áp bất kỳ "chuẩn mặc định" nào khác (thang 3-4-3, 3-2-2-3, lớp 12 không tự luận…) khi file ghi khác.
+4. Phần nào file KHÔNG có thì TUYỆT ĐỐI KHÔNG tạo. Không bịa thêm câu, thêm ý, thêm phần.
+5. Nội dung câu hỏi phải đúng MÔN HỌC và KHỐI LỚP đã nêu, đúng phạm vi đơn vị kiến thức trong file.
+
+# CÔNG THỨC
+Mọi công thức/ký hiệu toán – lý – hoá viết bằng LaTeX: $...$ trong dòng, $$...$$ đứng riêng dòng; không dùng ký tự Unicode thay công thức (x², √, ≤ …). Một dấu cách trước và sau công thức trong dòng.
+`;
+
+/** Chọn system instruction phù hợp: tôn trọng ma trận tải lên hay dùng chuẩn mặc định của app. */
+export const getSystemInstruction = (respectUserMatrix: boolean): string =>
+  respectUserMatrix ? SYSTEM_INSTRUCTION_UPLOADED : SYSTEM_INSTRUCTION;
 
 // --- Footnotes by subject (extensible) ---
 export const SUBJECT_FOOTNOTES: Record<string, string> = {
@@ -79,14 +104,35 @@ export const SUBJECT_FOOTNOTES: Record<string, string> = {
 (1): Năng lực nhận thức sinh học
 (2): Năng lực tìm hiểu thế giới sống
 (3): Năng lực vận dụng kiến thức, kĩ năng sinh học đã học`,
+  'Lịch sử': `
+(1): Năng lực tìm hiểu lịch sử
+(2): Năng lực nhận thức và tư duy lịch sử
+(3): Năng lực vận dụng kiến thức, kĩ năng đã học`,
+  'Địa lí': `
+(1): Năng lực nhận thức khoa học địa lí
+(2): Năng lực tìm hiểu địa lí
+(3): Năng lực vận dụng kiến thức, kĩ năng đã học`,
   'default': `
 (1): Năng lực nhận thức
 (2): Năng lực tìm hiểu
 (3): Năng lực vận dụng kiến thức, kĩ năng đã học`,
 };
 
+// Tên môn trong ô chọn ("Toán học", "Hoá học"…) → khoá trong SUBJECT_FOOTNOTES
+const SUBJECT_FOOTNOTE_ALIASES: Record<string, string> = {
+  'toán học': 'Toán', 'toán': 'Toán',
+  'hóa học': 'Hóa học', 'hoá học': 'Hóa học', 'hóa': 'Hóa học', 'hoá': 'Hóa học',
+  'vật lí': 'Vật lí', 'vật lý': 'Vật lí',
+  'sinh học': 'Sinh học',
+  'lịch sử': 'Lịch sử',
+  'địa lí': 'Địa lí', 'địa lý': 'Địa lí',
+};
+
 export const getSubjectFootnotes = (subject: string): string => {
-  return SUBJECT_FOOTNOTES[subject] || SUBJECT_FOOTNOTES['default'];
+  if (!subject) return SUBJECT_FOOTNOTES['default'];
+  if (SUBJECT_FOOTNOTES[subject]) return SUBJECT_FOOTNOTES[subject];
+  const key = SUBJECT_FOOTNOTE_ALIASES[subject.trim().toLowerCase().normalize('NFC')];
+  return (key && SUBJECT_FOOTNOTES[key]) || SUBJECT_FOOTNOTES['default'];
 };
 
 // --- Default question configs per grade ---

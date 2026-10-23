@@ -200,6 +200,7 @@ export interface CompetencyItem { code: string; name: string }
 
 const SUBJECT_COMPETENCY_CODES: Record<string, string[]> = {
     'Toán': ['TD', 'MH', 'GQ'],
+    'Toán học': ['TD', 'MH', 'GQ'],
 };
 
 export const getCv7991Competencies = (subject: string, footnotes: string): CompetencyItem[] => {

@@ -113,6 +113,8 @@ export interface ExamHistoryItem {
   matrix: string;
   specs: string;
   exam: string;
+  /** Ma trận do người dùng tải lên (ma trận là chuẩn cao nhất khi sinh lại đề) */
+  isUploadedMatrix?: boolean;
 }
 
 export type Role = 'user' | 'model';

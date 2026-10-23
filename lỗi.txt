@@ -1,0 +1,503 @@
+1. CẤU TRÚC DỰ ÁN & TECH STACK
+Cấu trúc thư mục
+
+C:\Users\admin\Downloads\taodethi2026-main/
+├── App.tsx                          [Main React component - 3500+ dòng]
+├── package.json                     [Dependencies]
+├── components/
+│   ├── BbtQuickGenerator.tsx
+│   ├── FileUploadZone.tsx
+│   ├── MarkdownRenderer.tsx
+│   ├── SimilarExamPage.tsx
+│   ├── StepIndicator.tsx
+│   ├── VariantsExamPage.tsx
+│   └── [6 components khác]
+├── services/
+│   ├── geminiService.ts            [1500+ dòng - Core AI logic]
+│   ├── docxMathParser.ts           [1387 dòng - DOCX parsing]
+│   ├── matrixTemplates.ts
+│   ├── cv7991Template.ts
+│   ├── figureEngine.ts
+│   ├── exportUtils.ts
+│   ├── mathExportUtils.ts
+│   └── [4 files engine khác]
+├── types.ts
+├── constants.ts
+├── index.tsx
+└── vite.config.ts
+Build & Run Commands
+json
+
+
+{
+  "dev": "vite",
+  "build": "vite build",
+  "test": "node tests/engines.test.mjs",
+  "test:cv7991": "node tests/cv7991.test.mjs",
+  "preview": "vite preview"
+}
+Tech Stack
+Frontend Framework: React 19.2.0, TypeScript 5.8.2
+Build Tool: Vite 6.2.0
+UI: Lucide React icons, custom CSS (index.css)
+AI API: Google Gemini (@google/genai ^1.30.0)
+DOCX Parsing:
+mammoth ^1.12.0 (fallback)
+Custom JSZip XML parser (primary)
+Math:
+mathjs ^15.2.0
+katex ^0.16.45 (rendering)
+remark-math ^6.0.0 + rehype-katex ^7.0.1
+File Export: file-saver ^2.0.5, html-docx-js-typescript ^0.1.5
+Markdown: markdown-it ^14.1.1, react-markdown ^10.1.0
+AGENTS.md: Không tồn tại
+
+2. QUY TRÌNH PARSE MA TRẬN & ĐẶC TẢ
+2.1 Entry Points (Nơi user upload file)
+File: C:\Users\admin\Downloads\taodethi2026-main\App.tsx
+
+Dòng 280-329: handleFileUpload — Upload PPCT (Kế hoạch dạy học)
+typescript
+
+
+const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const file = e.target.files?.[0];
+  // ...
+  const extracted = await extractInfoFromDocument(file, inputData.subject, inputData.grade);
+  // Trích xuất chapters, subject, grade, topics
+  setInputData(prev => ({
+    ...prev,
+    subject: prev.subject || extracted.subject || '',
+    grade: prev.grade || extracted.grade || '',
+    topics: extracted.topics || prev.topics,
+    chapters: extracted.chapters || [],
+  }));
+};
+Gọi extractInfoFromDocument() từ geminiService.ts
+Định dạng hỗ trợ: .docx, .doc, .pdf
+Xử lý: Gửi file → Gemini AI → Phân tích cấu trúc → Trích xuất chapters
+Dòng 442-498: processMatrixUpload — Upload Ma trận & Đặc tả
+typescript
+
+
+const processMatrixUpload = async (file: File) => {
+  let content = "";
+  let extractedSpecsFromSameFile: string | null = null;
+  const lowerName = file.name.toLowerCase();
+
+  if (lowerName.endsWith(".docx") || lowerName.endsWith(".doc")) {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const directTable = await extractDocxTablesAndHtml(arrayBuffer);
+      if (directTable.hasTable && directTable.matrixHtml) {
+        content = directTable.matrixHtml;
+        extractedSpecsFromSameFile = directTable.specsHtml;
+        console.log(`[MatrixUpload] Direct DOCX table extracted 100% verbatim`);
+      } else {
+        const parsed = await parseDocxWithMath(arrayBuffer);
+        content = await convertMatrixTextToHtml(parsed.text, parsed.images);
+      }
+    } catch (docxErr: any) {
+      content = await convertMatrixFileToHtml(file); // AI fallback
+    }
+  } else {
+    content = await convertMatrixFileToHtml(file); // PDF/others → AI
+  }
+
+  syncConfigFromUploadedMatrix(content);
+  setIsUploadedMatrix(true);
+  setGenState(prev => ({...prev, matrix: content, specs: extractedSpecsFromSameFile || prev.specs}));
+  return true;
+};
+Định dạng hỗ trợ:
+
+.docx / .doc — XML table extraction (fast path < 20ms)
+.html / .txt — Direct text read
+.pdf — Gemini Vision AI conversion
+2.2 Core Parsing Functions
+File: C:\Users\admin\Downloads\taodethi2026-main\services\docxMathParser.ts
+
+Line 917-1013: extractDocxTablesAndHtml()
+typescript
+
+
+export const extractDocxTablesAndHtml = async (arrayBuffer: ArrayBuffer): Promise<{
+  fullHtml: string;
+  matrixHtml: string;
+  specsHtml: string | null;
+  hasTable: boolean;
+}> {
+  const zip = await JSZip.loadAsync(arrayBuffer);
+  const docXmlFile = zip.file('word/document.xml');
+  
+  if (docXmlFile) {
+    const xmlContent = await docXmlFile.async('string');
+    const bodyMatch = xmlContent.match(/<w:body[^>]*>([\s\S]*?)<\/w:body>/);
+    
+    // Extract <w:tbl> (tables) and <w:p> (paragraphs) in order
+    const blockRegex = /<w:tbl(?=[ >])[^>]*>[\s\S]*?<\/w:tbl>|<w:p(?=[ >])[^>]*>[\s\S]*?<\/w:p>/g;
+    
+    for (const m of bodyXml.matchAll(blockRegex)) {
+      if (block.startsWith('<w:tbl')) {
+        const tblHtml = convertWordTableXmlToHtml(block);  // Parse table XML
+        htmlBlocks.push(tblHtml);
+      }
+    }
+    
+    // Split ma trận and bản đặc tả if both tables exist
+    const { matrixHtml, specsHtml } = splitMatrixAndSpecsHtml(fullHtml);
+    return { fullHtml, matrixHtml, specsHtml, hasTable: true };
+  }
+};
+Chiến lược:
+
+JSZip unzip → word/document.xml (fast path)
+Regex match <w:tbl>...</w:tbl> blocks
+Gọi convertWordTableXmlToHtml() để parse XML table sang HTML
+Fallback: Nếu không tìm được table XML → Mammoth parser → convertMatrixTextToHtml() (AI)
+Line 723-915: convertWordTableXmlToHtml()
+typescript
+
+
+const convertWordTableXmlToHtml = (tblXml: string): string => {
+  // Parse <w:tr> (rows) và <w:tc> (cells)
+  const trMatches = Array.from(tblXml.matchAll(/<w:tr(?=[ >])[^>]*>([\s\S]*?)<\/w:tr>/g));
+  
+  for (const trMatch of trMatches) {
+    const tcMatches = Array.from(trXml.matchAll(/<w:tc(?=[ >])[^>]*>([\s\S]*?)<\/w:tc>/g));
+    
+    for (const tcMatch of tcMatches) {
+      // Extracting: colspan (gridSpan), rowspan (vMerge), bold, centered, text
+      const gridSpanMatch = tcPr.match(/<w:gridSpan[^>]*w:val="(\d+)"/i);
+      const colspan = gridSpanMatch ? parseInt(gridSpanMatch[1], 10) : 1;
+      
+      const vMergeMatch = tcPr.match(/<w:vMerge(?:\s+[^>]*w:val="([^"]*)")?\s*\/?>/i);
+      if (vMergeMatch) {
+        vMerge = vMergeMatch[1] === 'restart' ? 'restart' : 'continue';
+      }
+      
+      // Extract text + OMML math
+      const paras = Array.from(tcXml.matchAll(/<w:p(?=[ >])[^>]*>([\s\S]*?)<\/w:p>/g));
+      for (const p of paras) {
+        const { html, isBold, isCentered } = extractParagraphHtml(p[0]);
+      }
+    }
+  }
+  
+  // Resolve vMerge across 2D grid, determine thead rows, render HTML table
+  return `<table border="1" cellspacing="0"...>...`;
+};
+Xử lý merged cells:
+
+Horizontal merge: <w:gridSpan w:val="2"/> → colspan="2"
+Vertical merge: <w:vMerge/> (restart) + <w:vMerge/> (continue) → track with activeOriginByCol Map
+Header detection: Rows 0-4 có keywords "tt", "chương", "mức độ", "biết", "hiểu" → auto-detect <thead>
+Math handling: OMML → LaTeX (lines 51-104)
+
+Line 529-567: convertMatrixFileToHtml() — AI Fallback
+typescript
+
+
+export const convertMatrixFileToHtml = async (file: File): Promise<string> => {
+  const base64Data = await fileToBase64(file);
+  
+  const prompt = `
+    Bạn là chuyên gia chuyển đổi dữ liệu.
+    Tài liệu đính kèm là MA TRẬN ĐỀ THI.
+    Chuyển đổi thành bảng HTML Table chuẩn.
+    - Giữ nguyên merge cells (rowspan, colspan)
+    - Output: CHỈ HTML table, KHÔNG markdown
+  `;
+  
+  const response = await ai.models.generateContent({
+    model,
+    contents: {
+      parts: [
+        { inlineData: { mimeType: file.type, data: base64Data } },
+        { text: prompt }
+      ]
+    },
+    config: { maxOutputTokens: 16384 }
+  });
+  
+  return response.text.replace(/```html/g, '').replace(/```/g, '');
+};
+File types: PDF, ảnh (PNG/JPG) → Gemini Vision
+
+Line 1054-1387: parseMatrixMetadataAndConfig() — Extract Config từ HTML
+typescript
+
+
+export const parseMatrixMetadataAndConfig = (htmlOrText: string): ParsedMatrixMetadata => {
+  const plainText = htmlOrText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  
+  // 1. Detect subject (KNOWN_SUBJECTS regex list)
+  for (const s of KNOWN_SUBJECTS) {
+    if (s.pattern.test(plainText.slice(0, 3000))) {
+      result.subject = s.name;
+      break;
+    }
+  }
+  
+  // 2. Detect grade
+  const gradeMatch = plainText.match(/\b(?:LỚP|KHỐI)\s*[:\-]?\s*(1[0-2]|[1-9])\b/i);
+  if (gradeMatch) result.grade = gradeMatch[1];
+  
+  // 3. Parse DOMParser HTML table → 2D grid (expanding rowSpan/colSpan)
+  const doc = new DOMParser().parseFromString(htmlOrText, 'text/html');
+  const table = doc.querySelector('table');
+  
+  // Build 2D grid
+  const grid: GridCell[][] = [];
+  for (let r = 0; r < trList.length; r++) {
+    for (const cell of trList[r].cells) {
+      const rs = cell.rowSpan || 1;
+      const cs = cell.colSpan || 1;
+      for (let dr = 0; dr < rs; dr++) {
+        for (let dc = 0; dc < cs; dc++) {
+          grid[r + dr][cCursor + dc] = { text: cellText };
+        }
+      }
+    }
+  }
+  
+  // 4. Identify header rows (rows 0-4 with keywords)
+  let headerRows = 1;
+  for (let r = 0; r < Math.min(5, numRows); r++) {
+    if (/\b(tt|chương|mức độ|biết|hiểu|vận dụng)\b/i.test(grid[r].join(' '))) {
+      headerRows = r + 1;
+    }
+  }
+  
+  // 5. Map columns: question type (type1/type2/type3/essay) + level (biet/hieu/van_dung/van_dung_cao)
+  const colMapping = new Map<number, { type: QTypeKey; level: LevelKey }>();
+  for (let c = 0; c < numCols; c++) {
+    const fullHeader = grid.slice(0, headerRows).map(row => row[c]?.text).join(' | ');
+    
+    let qType: QTypeKey | null = null;
+    if (/nhiều\s*lựa\s*chọn|phần\s*i\b|dạng\s*i\b/i.test(fullHeader)) qType = 'type1';
+    else if (/đúng\s*sai|phần\s*ii\b|dạng\s*ii\b/i.test(fullHeader)) qType = 'type2';
+    else if (/trả\s*lời\s*ngắn|phần\s*iii\b|dạng\s*iii\b/i.test(fullHeader)) qType = 'type3';
+    else if (/tự\s*luận|phần\s*iv\b|dạng\s*iv\b/i.test(fullHeader)) qType = 'essay';
+    
+    let level: LevelKey | null = null;
+    if (/vận\s*dụng\s*cao|\bvdc\b/i.test(fullHeader)) level = 'van_dung_cao';
+    else if (/vận\s*dụng|\bvd\b/i.test(fullHeader)) level = 'van_dung';
+    else if (/thông\s*hiểu|\bth\b/i.test(fullHeader)) level = 'hieu';
+    else if (/nhận\s*biết|\bnb\b/i.test(fullHeader)) level = 'biet';
+    
+    if (qType && level) colMapping.set(c, { type: qType, level });
+  }
+  
+  // 6. Count questions per cell (regex: "I.1", "Câu 1", integer numbers)
+  for (let r = headerRows; r < numRows; r++) {
+    for (const [c, mapInfo] of colMapping.entries()) {
+      const txt = grid[r][c]?.text || '';
+      
+      // Check for Roman codes: I.1, II.1a, III.2, IV.1
+      const romanCodes = Array.from(txt.matchAll(/\b(?:I|II|III|IV)\.\d+[a-d]?\b/gi));
+      bodyCounts[mapInfo.type][mapInfo.level] += romanCodes.length;
+      
+      // Check for "Câu X" codes
+      const cauCodes = Array.from(txt.matchAll(/\b(?:Câu|C)\s*\d+[a-d]?\b/gi));
+      bodyCounts[mapInfo.type][mapInfo.level] += cauCodes.length;
+      
+      // Check for integer: "2", "4 (1,0đ)"
+      const numMatch = txt.match(/^(\d{1,2})(?![.,]\d)/);
+      if (numMatch) bodyCounts[mapInfo.type][mapInfo.level] += parseInt(numMatch[1], 10);
+    }
+  }
+  
+  return { subject, grade, questionConfig, examType, duration };
+};
+2.3 Exam Generation (LLM Prompt)
+File: C:\Users\admin\Downloads\taodethi2026-main\services\geminiService.ts
+
+Line 1234-1550: generateStep3Exam()
+
+Nhận: specsContent (HTML bảng đặc tả), questionConfig, inputData, referenceText
+Xây dựng prompt bao gồm:
+Metadata: Môn học, khối lớp, loại đề, thời gian
+Ma trận & Đặc tả: HTML tables
+Whitelist phần được phép tạo: PHẦN I/II/III/IV (tuỳ số câu)
+Ngân hàng câu hỏi: Nếu user upload tài liệu tham khảo
+Định dạng output: HTML với LaTeX math, bảng đáp án
+Output format:
+
+HTML document (NOT markdown)
+Phần I: <span class="question-number">Câu 1.</span> ... <div class="option-item">A. ...</div>
+Phần II: Bảng đáp án Đúng/Sai + bảng hướng dẫn giải chi tiết
+Phần III/IV: Tương tự
+Math: $...$ (inline), $$...$$ (block) — LaTeX ONLY, NO Unicode symbols
+Bảng biến thiên: <script type="application/json" class="figure-json">{"type": "bbt", "fn": "..."}</script>
+Return: Promise (HTML)
+
+3. BUG & CÁC ĐIỂM YẾU TRONG PARSING
+3.1 DOCX Parsing (docxMathParser.ts)
+#	Bug/Weakness	Location	Severity	Details
+1	Merged cells ambiguity	Line 760-780 (vMerge resolution)	⚠️ MEDIUM	Orphan vMerge: Nếu cell có vMerge="continue" nhưng không tìm thấy restart ở dòng trên → chỉ log warning, coi như normal cell. Kết quả: Mất dữ liệu hoặc sai vị trí cell.
+
+Test case: Ma trận có cột bị merge từ dòng 5 lên dòng 1, nhưng dòng 1 bị xóa → vMerge orphan.
+
+Code:
+typescript<br>if (cell.vMerge === 'continue') {<br> const origin = activeOriginByCol.get(colCursor);<br> if (origin) {<br> cell.skip = true;<br> rows[origin.r][origin.cIdx].rowspan += 1;<br> } else {<br> // ⚠️ No restart found — treat as normal cell (SILENT FAIL)<br> cell.vMerge = null;<br> }<br>}<br>
+2	Column index tracking bug	Line 766 (colCursor increment)	⚠️ HIGH	Problem: Khi cell có colspan > 1, colCursor được increment bằng cell.colspan. Nhưng nếu cell sau đó bị skip do vMerge, colCursor sẽ nhảy sai vị trí.
+
+Result: Các cột từ sau bị sai index, dẫn đến map sai question type/level.
+
+Ví dụ:
+- Row 1: Cell(colspan=2) + Cell → colCursor đúng
+- Row 2: Cell(vMerge="continue", colspan=2, skip=true) → colCursor chỉ += 2 thay vì tracking merged region
+- Row 2: Cell tiếp theo → index lệch 2 vị trí
+3	Header row detection fragility	Line 784-798	⚠️ MEDIUM	Regex patterns:
+typescript<br>if (/\b(tt|stt|chương|chủ đề|...|biết|hiểu)\b/i.test(rowText))<br>
+- Chỉ check dòng đầu (r=0) hoặc dòng có keywords → bỏ qua nếu keywords viết hoa/thường không match
+- Hard stop: Nếu dòng đầu có chữ "1." coi như hết header → sai nếu ma trận có mục "1. Chương 1"
+
+Fix: Cần case-insensitive + flexible spacing
+4	Unicode normalization	Line 50 (decodeXmlEntities)	⚠️ LOW	Chỉ decode &amp;, &lt;, &#123; → bỏ qua &#xa0; (non-breaking space) và các entity khác. Ma trận có thể chứa &#8211; (en-dash) được chuyển thành "–" → parseMatrixMetadataAndConfig() regex có thể miss
+5	OMML → LaTeX regex depth limit	Line 73-122 (ommlToLatex)	⚠️ MEDIUM	Loop chỉ 4 passes:
+typescript<br>for (let pass = 0; pass < 4; pass++) { /* regex replacements */ }<br>
+Problem: Nested fractions/radicals sâu hơn 4 level sẽ bị cắt ngắn, output LaTeX sai.
+
+Example: 
+a
+b
+c
+c
+b
+a
+​
+ 
+​
+  có 2 levels nesting OK, nhưng 
+x
+y
+3
+3
+  
+y
+x
+​
+ 
+​
+ 
+​
+  (4 levels) có thể fail
+
+Fix: Dùng recursive function instead of loop
+6	Image extraction limit	Line 188 (images.slice(0, 10))	⚠️ LOW	Chỉ extract 10 images tối đa. Ma trận có 15+ công thức/hình → bỏ qua phần còn lại. Không log warning
+7	Paragraph concatenation loss	Line 697-708	⚠️ MEDIUM	Khi table cell chứa nhiều paragraphs:
+typescript<br>const paraStrings: string[] = [];<br>for (const p of paras) {<br> const { html, isBold } = extractParagraphHtml(p[0]);<br> paraStrings.push(html);<br>}\nreturn paraStrings.join('<br>'); // ⚠️ No <p> wrapper\n
+Result: Nếu paragraph 1 có bold, paragraph 2 có underline → mất formatting info
+8	Empty cell filtering	Line 1165	⚠️ MEDIUM	Code:\ntypescript\nconst txt = cell.text.trim();\nif (!txt || txt === '-' || txt === '–') continue;\n\nSkips cells chứa only dash. Nhưng nếu cell chứa "– 2 – 3" (dashes + numbers) → parse sai
+3.2 Metadata Parsing (parseMatrixMetadataAndConfig)
+#	Bug/Weakness	Location	Severity	Details
+9	Subject detection collision	Line 1100-1125	⚠️ HIGH	Keyword patterns overlap:
+- Toán: /hàm\s*số|đạo\s*hàm|tích\s*phân/
+- Vật lí: /dao\s*động|sóng|tần\s*số/
+
+Problem: Đề Vật lí có "Tính dao động của hàm số f(t)" → detect as Toán
+
+Current fix: Ưu tiên Vật lí/Hóa trước, Toán last. Nhưng fallback logic chỉ check plainText.slice(0, 3000) → bỏ qua context đầy đủ
+10	DOMParser unavailable in Node.js	Line 1134	⚠️ HIGH	Code: if (typeof DOMParser !== 'undefined' && /<table/i.test(htmlOrText))
+
+Chỉ chạy ở browser. Nếu gọi từ Node.js (test/CLI) → bỏ qua toàn bộ table parsing, return empty questionConfig
+11	Column mapping ignores rowSpan	Line 1185-1220	⚠️ MEDIUM	Grid expansion chỉ track rOrigin (dòng gốc của merged cell).
+
+Problem: Nếu header row có rowSpan=2:
+- Row 0 Col 3: "Biết" (rowSpan=2)
+- Row 1 Col 3: Empty (merged from row 0)
+
+Bug: grid[1][3]?.text = "Biết" (expanded), nhưng code chỉ lấy bottomHeader = grid[headerRows-1][c]?.text → có thể skip col 3 nếu headerRows=1
+
+Fix: Track và expand header stack correctly
+12	Type2 (Đúng-Sai) count heuristic	Line 1345-1365	⚠️ MEDIUM	Code tries to detect if cell content = "4 ý" (4 sub-items):
+typescript\nif (type2UniqueQuestionNums.size > 0 && t2Sum > type2UniqueQuestionNums.size) {\n const totalQ = type2UniqueQuestionNums.size;\n // Normalize: divide total ý count by 4 to get question count\n}\nelse if (t2Sum >= 8 && t2Sum % 4 === 0) {\n const totalQ = t2Sum / 4;\n}\n
+Problem: Heuristic assumes "mỗi câu II có 4 ý". Nhưng nếu ma trận ghi "8" không phải "8 (2 câu x 4)" → nhân sai
+
+Example: "8" → assume 2 questions, nhưng thực tế là 8 ý = 1 câu có 8 sub-parts (rare) → output: 2 câu sai
+13	Truncation of specs	Line 1346 (in convertMatrixTextToHtml)	⚠️ LOW	text.substring(0, 20000) cắt text nếu > 20KB. Spec tables to to lớn (5000+ rows) → bỏ sót cột cuối
+3.3 AI Fallback (geminiService.ts)
+#	Bug/Weakness	Location	Severity	Details
+14	JSON parsing of LLM response	Line 1550+ (generateStep3Exam return)	⚠️ CRITICAL	LLM returns HTML string, not JSON. App expects HTML to render markdown → markdown-it parses.
+
+But: If Gemini returns ``` markdown blocks or malformed HTML (e.g., <table><tr without closing tags) → React crashes or renders broken
+
+No validation: No regex check for valid HTML before setting to state
+
+Fix: Add HTML validator, strip invalid tags
+15	Math formula extraction fragility	Line 1462-1500 (prompt)	⚠️ HIGH	Prompt says "use LaTeX 
+.
+.
+.
+... ONLY", but:
+- If Gemini outputs Unicode: "x²" instead of "
+x
+2
+x 
+2
+ " → renders wrong in Word export
+- If Gemini forgets delimiter: x^2 without → **treated as plain text**<br>- If malformed: `$$x^2` (1 $) → render engine breaks
+
+No post-processing: Code doesn't normalize Gemini output math
+16	Figure JSON parse	Line 1462 (figure-json script)	⚠️ MEDIUM	App embeds <script type="application/json" class="figure-json">{"type":"bbt"...}</script> expecting client-side parser.
+
+Problem:
+- If JSON invalid (syntax error) → script tag silently fails
+- If "fn": "x^3 - 3*x" uses wrong syntax → mathjs evaluation fails
+- No error handling in render phase
+
+Example: {"type":"bbt", "fn": "sin(x) - 2*x + a"} → if a undefined → output NaN for all points
+17	Whitelist enforcement missing	Line 1250-1280 (structureInstructions)	⚠️ HIGH	Prompt lists: "PHẦN I/II/III/IV based on allowedParts whitelist"
+
+But: No post-processing validation. If Gemini still outputs "PHẦN IV (Tự luận)" when essay.count = 0:
+- Code assumes Gemini obeys instruction → doesn't validate
+- Output sent to user with extra phần → violates spec
+
+Fix: Regex filter output to remove disallowed sections
+3.4 Format & Export Issues
+#	Bug/Weakness	Location	Severity	Details
+18	HTML table inconsistency	exportUtils.ts	⚠️ MEDIUM	Word export via html-docx-js-typescript has table rendering bugs:
+- Merged cells (rowspan/colspan) sometimes lose borders
+- Large tables (50+ rows) → page break handling broken
+- Color/background-color in CSS → ignored by Word
+
+Workaround: Add inline style="border: 1px solid black" — but not automatic
+19	LaTeX to MathType conversion	mathExportUtils.ts	⚠️ MEDIUM	Export to Word needs MathType or Office Math. App uses html-docx-js which has limited math support:
+- Simple: $x^2$ OK
+- Complex: $\frac{a+b}{c-d}$ sometimes renders as plain text
+- Macros: $\newcommand$ NOT supported
+
+No validation: Doesn't check if LaTeX is convertible
+3.5 Reference Files Handling
+#	Bug/Weakness	Location	Severity	Details
+20	Question extraction edge case	Line 573-650 (extractQuestionsLocally)	⚠️ MEDIUM	Regex to detect question start:
+typescript\nconst questionStartPattern = /^(?:\*\*|__)?(?:Câu|Bài|Question)\s*(\d+)\s*(?:[.:)\-]|(?=\s|(|[)\])/)\/i;\n
+Misses:
+- "Bài 1:" (with colon) ✓
+- "Question 1)" (English) ✓
+- "1) Nội dung..." (no "Câu" prefix) ✗
+- "I.1 (Roman numeral style)" ✗
+
+Result: Questions without prefix skipped
+21	Answer extraction regex	Line 594-598	⚠️ MEDIUM	Regex to extract inline answer: /(?:Đáp\s*án|Đáp\s*số)\s*[:.]?\s*([A-D]|...)/i
+
+Problem:
+- Only matches A-D (multi-choice) → misses true/false answers "Đ" or "S"
+- Doesn't handle "Đáp án: 3.14" (numeric) → treated as invalid
+- Case sensitive for Vietnamese: "ĐÁP ÁN" vs "đáp án" — regex is case-insensitive ✓ but still fragile
+22	Image handling in reference	Line 1350 (referenceImages.slice(0, 15))	⚠️ LOW	Reference images limit 15. Large reference docs (textbooks with 50+ diagrams) → silently truncated
+4. FILE PATH SUMMARY
+Core Parsing Files:
+
+C:\Users\admin\Downloads\taodethi2026-main\services\docxMathParser.ts (1387 lines)
+C:\Users\admin\Downloads\taodethi2026-main\services\geminiService.ts (1500+ lines)
+C:\Users\admin\Downloads\taodethi2026-main\App.tsx (3500+ lines)
+Supporting Files:
+
+C:\Users\admin\Downloads\taodethi2026-main\types.ts (Type definitions)
+C:\Users\admin\Downloads\taodethi2026-main\constants.ts (Config, AI models, subjects)
+C:\Users\admin\Downloads\taodethi2026-main\services\matrixTemplates.ts (Custom matrix templates)
+C:\Users\admin\Downloads\taodethi2026-main\services\exportUtils.ts (Word export)
+C:\Users\admin\Downloads\taodethi2026-main\services\figureEngine.ts (BBT graph rendering)

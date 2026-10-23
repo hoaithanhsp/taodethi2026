@@ -8,6 +8,7 @@
     "build": "vite build",
     "test": "node tests/engines.test.mjs",
     "test:cv7991": "node tests/cv7991.test.mjs",
+    "test:matrix": "node tests/matrixContract.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
