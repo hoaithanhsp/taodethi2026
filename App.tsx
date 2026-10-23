@@ -427,8 +427,9 @@ const App: React.FC = () => {
 
       return {
         ...prev,
-        subject: meta.subject || prev.subject || 'Toán học',
-        grade: meta.grade || prev.grade || '12',
+        // 🔴 FIX: Ưu tiên môn/lớp người dùng đã chọn thủ công (nếu có) > auto-detect từ ma trận > fallback
+        subject: prev.subject || meta.subject || 'Toán học',
+        grade: prev.grade || meta.grade || '12',
         examType: meta.examType || prev.examType,
         duration: meta.duration || prev.duration,
         topics: meta.topicsSummary || prev.topics,
@@ -708,7 +709,7 @@ const App: React.FC = () => {
         }
         effectiveData = {
           ...inputData,
-          subject: inputData.subject || meta.subject || 'Toán học',
+          subject: inputData.subject || meta.subject || 'Toán học', // 🔴 FIX: Ưu tiên người dùng chọn > auto-detect từ ma trận
           grade: inputData.grade || meta.grade || '12',
           examType: meta.examType || inputData.examType,
           duration: meta.duration || inputData.duration,
@@ -717,7 +718,7 @@ const App: React.FC = () => {
         };
         setInputData(effectiveData);
       }
-
+      setGenState(prev => ({ ...prev, specs: '', exam: '', isLoading: true, error: null }));
       const specs = await generateStep2Specs(
         genState.matrix,
         effectiveData,
@@ -748,7 +749,7 @@ const App: React.FC = () => {
         }
         effectiveData = {
           ...inputData,
-          subject: inputData.subject || meta.subject || 'Toán học',
+          subject: inputData.subject || meta.subject || 'Toán học', // 🔴 FIX: Ưu tiên người dùng chọn > auto-detect từ ma trận
           grade: inputData.grade || meta.grade || '12',
           examType: meta.examType || inputData.examType,
           duration: meta.duration || inputData.duration,
@@ -1265,35 +1266,111 @@ const App: React.FC = () => {
       <div className="animate-fade-in-up">
         <div className="space-y-4">
           {/* Shortcut 1: Có file Ma trận */}
-          <div className="shortcut-box p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div>
-              <h3 className="text-lg font-bold text-blue-800">⚡ Lối tắt: Bạn đã có file Ma trận?</h3>
-              <p className="text-sm text-blue-600">Tải lên file Ma trận (HTML, Word, PDF) để bỏ qua các bước cấu hình và sinh ngay Bảng đặc tả.</p>
+          <div className="shortcut-box p-5">
+            <div className="flex flex-col gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-blue-800">⚡ Lối tắt: Bạn đã có file Ma trận?</h3>
+                <p className="text-sm text-blue-600">Tải lên file Ma trận (HTML, Word, PDF) để bỏ qua các bước cấu hình và sinh ngay Bảng đặc tả.</p>
+              </div>
+              
+              {/* 🔴 KHAI BÁO MÔN & LỚP TRƯỚC KHI UPLOAD (Tránh nhầm lẫn) */}
+              <div className="grid grid-cols-2 gap-3 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
+                <div>
+                  <label className="block text-xs font-semibold text-blue-700 mb-1">Môn học <span className="text-red-500">*</span></label>
+                  <select
+                    value={isCustomSubject ? '__custom__' : inputData.subject}
+                    onChange={e => {
+                      if (e.target.value === '__custom__') {
+                        setIsCustomSubject(true);
+                        setInputData(prev => ({ ...prev, subject: '' }));
+                      } else {
+                        setIsCustomSubject(false);
+                        setInputData(prev => ({ ...prev, subject: e.target.value }));
+                      }
+                    }}
+                    className="w-full px-2.5 py-2 input-elevated text-sm"
+                  >
+                    <option value="">-- Chọn môn học --</option>
+                    {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+                    <option value="__custom__">Môn khác...</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-blue-700 mb-1">Khối lớp <span className="text-red-500">*</span></label>
+                  <select
+                    value={inputData.grade}
+                    onChange={e => setInputData(prev => ({ ...prev, grade: e.target.value }))}
+                    className="w-full px-2.5 py-2 input-elevated text-sm"
+                  >
+                    <option value="">-- Chọn khối --</option>
+                    {GRADES.map(g => <option key={g} value={g}>Lớp {g}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-blue-500">✓ Khai báo môn/lớp trước để hệ thống nhận diện chính xác</p>
+                <input
+                  type="file"
+                  ref={matrixDirectUploadRef}
+                  onChange={handleMatrixSkipUpload}
+                  className="hidden"
+                  accept=".html,.txt,.pdf,.docx,.doc"
+                />
+                <Button
+                  variant="secondary"
+                  onClick={() => matrixDirectUploadRef.current?.click()}
+                  icon={<FileUp className="w-4 h-4" />}
+                  className="whitespace-nowrap"
+                  isLoading={genState.isLoading && currentStep === AppStep.INPUT && !isComboProcessing}
+                >
+                  Upload Ma trận & Đi tiếp
+                </Button>
+              </div>
             </div>
-            <input
-              type="file"
-              ref={matrixDirectUploadRef}
-              onChange={handleMatrixSkipUpload}
-              className="hidden"
-              accept=".html,.txt,.pdf,.docx,.doc"
-            />
-            <Button
-              variant="secondary"
-              onClick={() => matrixDirectUploadRef.current?.click()}
-              icon={<FileUp className="w-4 h-4" />}
-              className="whitespace-nowrap"
-              isLoading={genState.isLoading && currentStep === AppStep.INPUT && !isComboProcessing}
-            >
-              Upload Ma trận & Đi tiếp
-            </Button>
           </div>
 
           {/* Shortcut 2: Có cả Ma trận + Đặc tả */}
           <div className="shortcut-box p-5" style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 50%, #f0f9ff 100%)' }}>
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+            <div className="flex flex-col gap-4 mb-4">
               <div>
                 <h3 className="text-lg font-bold text-emerald-800">🚀 Lối tắt: Bạn đã có file Ma trận + Đặc tả?</h3>
                 <p className="text-sm text-emerald-600">Tải lên cả 2 file để nhảy thẳng sang bước tạo đề thi!</p>
+              </div>
+              
+              {/* 🔴 KHAI BÁO MÔN & LỚP TRƯỚC KHI UPLOAD (Tránh nhầm lẫn) */}
+              <div className="grid grid-cols-2 gap-3 bg-emerald-50/50 p-3 rounded-lg border border-emerald-100">
+                <div>
+                  <label className="block text-xs font-semibold text-emerald-700 mb-1">Môn học <span className="text-red-500">*</span></label>
+                  <select
+                    value={isCustomSubject ? '__custom__' : inputData.subject}
+                    onChange={e => {
+                      if (e.target.value === '__custom__') {
+                        setIsCustomSubject(true);
+                        setInputData(prev => ({ ...prev, subject: '' }));
+                      } else {
+                        setIsCustomSubject(false);
+                        setInputData(prev => ({ ...prev, subject: e.target.value }));
+                      }
+                    }}
+                    className="w-full px-2.5 py-2 input-elevated text-sm"
+                  >
+                    <option value="">-- Chọn môn học --</option>
+                    {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+                    <option value="__custom__">Môn khác...</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-emerald-700 mb-1">Khối lớp <span className="text-red-500">*</span></label>
+                  <select
+                    value={inputData.grade}
+                    onChange={e => setInputData(prev => ({ ...prev, grade: e.target.value }))}
+                    className="w-full px-2.5 py-2 input-elevated text-sm"
+                  >
+                    <option value="">-- Chọn khối --</option>
+                    {GRADES.map(g => <option key={g} value={g}>Lớp {g}</option>)}
+                  </select>
+                </div>
               </div>
             </div>
 
