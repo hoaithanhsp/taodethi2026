@@ -1291,7 +1291,17 @@ const App: React.FC = () => {
                     className="w-full px-2.5 py-2 input-elevated text-sm"
                   >
                     <option value="">-- Chọn môn học --</option>
-                    {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+                    <option value="Toán học">Toán học</option>
+                    <option value="Ngữ văn">Ngữ văn</option>
+                    <option value="Tiếng Anh">Tiếng Anh</option>
+                    <option value="Vật lí">Vật lí</option>
+                    <option value="Hóa học">Hóa học</option>
+                    <option value="Sinh học">Sinh học</option>
+                    <option value="Lịch sử">Lịch sử</option>
+                    <option value="Địa lí">Địa lí</option>
+                    <option value="Tin học">Tin học</option>
+                    <option value="Công nghệ">Công nghệ</option>
+                    <option value="Giáo dục công dân">Giáo dục công dân (GD KT&PL)</option>
                     <option value="__custom__">Môn khác...</option>
                   </select>
                 </div>
@@ -1303,7 +1313,18 @@ const App: React.FC = () => {
                     className="w-full px-2.5 py-2 input-elevated text-sm"
                   >
                     <option value="">-- Chọn khối --</option>
-                    {GRADES.map(g => <option key={g} value={g}>Lớp {g}</option>)}
+                    <option value="1">Lớp 1</option>
+                    <option value="2">Lớp 2</option>
+                    <option value="3">Lớp 3</option>
+                    <option value="4">Lớp 4</option>
+                    <option value="5">Lớp 5</option>
+                    <option value="6">Lớp 6</option>
+                    <option value="7">Lớp 7</option>
+                    <option value="8">Lớp 8</option>
+                    <option value="9">Lớp 9</option>
+                    <option value="10">Lớp 10</option>
+                    <option value="11">Lớp 11</option>
+                    <option value="12">Lớp 12</option>
                   </select>
                 </div>
               </div>
@@ -1356,7 +1377,17 @@ const App: React.FC = () => {
                     className="w-full px-2.5 py-2 input-elevated text-sm"
                   >
                     <option value="">-- Chọn môn học --</option>
-                    {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+                    <option value="Toán học">Toán học</option>
+                    <option value="Ngữ văn">Ngữ văn</option>
+                    <option value="Tiếng Anh">Tiếng Anh</option>
+                    <option value="Vật lí">Vật lí</option>
+                    <option value="Hóa học">Hóa học</option>
+                    <option value="Sinh học">Sinh học</option>
+                    <option value="Lịch sử">Lịch sử</option>
+                    <option value="Địa lí">Địa lí</option>
+                    <option value="Tin học">Tin học</option>
+                    <option value="Công nghệ">Công nghệ</option>
+                    <option value="Giáo dục công dân">Giáo dục công dân (GD KT&PL)</option>
                     <option value="__custom__">Môn khác...</option>
                   </select>
                 </div>
@@ -1368,7 +1399,18 @@ const App: React.FC = () => {
                     className="w-full px-2.5 py-2 input-elevated text-sm"
                   >
                     <option value="">-- Chọn khối --</option>
-                    {GRADES.map(g => <option key={g} value={g}>Lớp {g}</option>)}
+                    <option value="1">Lớp 1</option>
+                    <option value="2">Lớp 2</option>
+                    <option value="3">Lớp 3</option>
+                    <option value="4">Lớp 4</option>
+                    <option value="5">Lớp 5</option>
+                    <option value="6">Lớp 6</option>
+                    <option value="7">Lớp 7</option>
+                    <option value="8">Lớp 8</option>
+                    <option value="9">Lớp 9</option>
+                    <option value="10">Lớp 10</option>
+                    <option value="11">Lớp 11</option>
+                    <option value="12">Lớp 12</option>
                   </select>
                 </div>
               </div>

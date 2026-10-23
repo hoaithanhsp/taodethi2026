@@ -1,11 +1,8 @@
 {
-  "name": "taodethi7991",
+  "name": "tạo-ma-trận,-đề,-đáp-án-version-15",
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "engines": {
-    "node": ">=20.0.0"
-  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",

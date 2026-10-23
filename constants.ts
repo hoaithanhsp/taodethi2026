@@ -96,18 +96,30 @@ export const DEFAULT_QUESTION_CONFIG: Record<string, QuestionConfig> = {
   '10': {
     type1: { biet: 8, hieu: 2, van_dung: 2, van_dung_cao: 0 },
     type2: { biet: 4, hieu: 2, van_dung: 2, van_dung_cao: 0 },
+    type2QuestionCount: 2,
+    dungSaiLevelConfigs: [
+      { yA: 'nhan_biet', yB: 'nhan_biet', yC: 'thong_hieu', yD: 'van_dung' },
+      { yA: 'nhan_biet', yB: 'nhan_biet', yC: 'thong_hieu', yD: 'van_dung' },
+    ],
     type3: { biet: 1, hieu: 2, van_dung: 1, van_dung_cao: 0 },
     essay: { biet: 1, hieu: 2, van_dung: 3, van_dung_cao: 0 },
   },
   '11': {
     type1: { biet: 8, hieu: 2, van_dung: 2, van_dung_cao: 0 },
     type2: { biet: 4, hieu: 2, van_dung: 2, van_dung_cao: 0 },
+    type2QuestionCount: 2,
+    dungSaiLevelConfigs: [
+      { yA: 'nhan_biet', yB: 'nhan_biet', yC: 'thong_hieu', yD: 'van_dung' },
+      { yA: 'nhan_biet', yB: 'nhan_biet', yC: 'thong_hieu', yD: 'van_dung' },
+    ],
     type3: { biet: 1, hieu: 2, van_dung: 1, van_dung_cao: 0 },
     essay: { biet: 1, hieu: 2, van_dung: 3, van_dung_cao: 0 },
   },
   '12': {
     type1: { biet: 10, hieu: 4, van_dung: 4, van_dung_cao: 0 },
     type2: { biet: 4, hieu: 6, van_dung: 6, van_dung_cao: 0 },
+    type2QuestionCount: 4,
+    dungSaiLevelConfigs: Array.from({ length: 4 }, () => ({ yA: 'nhan_biet', yB: 'nhan_biet', yC: 'thong_hieu', yD: 'van_dung' })),
     type3: { biet: 0, hieu: 4, van_dung: 2, van_dung_cao: 0 },
     essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 }, // Khối 12 KHÔNG có tự luận
   },
