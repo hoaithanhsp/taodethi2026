@@ -35,7 +35,9 @@ export interface QuestionConfig {
   type2: { biet: number; hieu: number; van_dung: number; van_dung_cao: number }; // Đúng/Sai
   type3: { biet: number; hieu: number; van_dung: number; van_dung_cao: number }; // Trả lời ngắn
   essay: { biet: number; hieu: number; van_dung: number; van_dung_cao: number }; // Tự luận
-  dungSaiLevelConfig?: DungSaiLevelConfig; // Cấp độ tư duy cho từng ý a,b,c,d của câu Đúng/Sai
+  type2QuestionCount?: number; // Số câu Dạng II
+  dungSaiLevelConfigs?: DungSaiLevelConfig[]; // Cấp độ a,b,c,d riêng cho từng câu
+  dungSaiLevelConfig?: DungSaiLevelConfig; // Dữ liệu cũ: một cấu hình áp dụng cho mọi câu
 }
 
 export type DungSaiLevel = 'nhan_biet' | 'thong_hieu' | 'van_dung';
@@ -43,14 +45,38 @@ export interface DungSaiLevelConfig { yA: DungSaiLevel; yB: DungSaiLevel; yC: Du
 export const DEFAULT_DUNG_SAI_LEVELS: DungSaiLevelConfig = { yA: 'nhan_biet', yB: 'nhan_biet', yC: 'thong_hieu', yD: 'van_dung' };
 export const DUNG_SAI_LEVEL_LABELS: Record<DungSaiLevel, string> = { nhan_biet: 'Nhận biết', thong_hieu: 'Thông hiểu', van_dung: 'Vận dụng' };
 
+export const getDungSaiQuestionCount = (config: QuestionConfig): number => {
+  if (Number.isFinite(config.type2QuestionCount)) return Math.max(0, Math.floor(config.type2QuestionCount || 0));
+  return Math.max(0, (config.type2?.biet || 0) + (config.type2?.hieu || 0) + (config.type2?.van_dung || 0) + (config.type2?.van_dung_cao || 0));
+};
+
+export const getDungSaiLevelConfigs = (config: QuestionConfig): DungSaiLevelConfig[] => {
+  const count = getDungSaiQuestionCount(config);
+  const saved = config.dungSaiLevelConfigs || [];
+  const fallback = config.dungSaiLevelConfig || DEFAULT_DUNG_SAI_LEVELS;
+  return Array.from({ length: count }, (_, index) => ({ ...(saved[index] || fallback) }));
+};
+
+export const getDungSaiLevelTotals = (config: QuestionConfig) => {
+  const totals = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
+  getDungSaiLevelConfigs(config).forEach(question => {
+    [question.yA, question.yB, question.yC, question.yD].forEach(level => {
+      if (level === 'nhan_biet') totals.biet += 1;
+      else if (level === 'thong_hieu') totals.hieu += 1;
+      else totals.van_dung += 1;
+    });
+  });
+  return totals;
+};
+
 /** Mô tả cấu hình cấp độ ý a,b,c,d để chèn vào prompt AI */
 export const describeDungSaiLevels = (config: QuestionConfig): string => {
-  const c = config.dungSaiLevelConfig || DEFAULT_DUNG_SAI_LEVELS;
+  const questions = getDungSaiLevelConfigs(config);
+  if (questions.length === 0) return '';
   const L = DUNG_SAI_LEVEL_LABELS;
-  const n = config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao;
-  if (n <= 0) return '';
-  const count = (lv: DungSaiLevel) => [c.yA, c.yB, c.yC, c.yD].filter(x => x === lv).length * n;
-  return `**CẤU HÌNH CẤP ĐỘ TỪNG Ý CÂU ĐÚNG/SAI (BẮT BUỘC, áp dụng cho MỌI câu Dạng II):** Ý a: ${L[c.yA]} | Ý b: ${L[c.yB]} | Ý c: ${L[c.yC]} | Ý d: ${L[c.yD]}. → Tổng số ý Dạng II: Biết ${count('nhan_biet')}, Hiểu ${count('thong_hieu')}, VD ${count('van_dung')}. Trong ma trận/đặc tả, mã II.ka đặt ở cột ${L[c.yA]}, II.kb ở cột ${L[c.yB]}, II.kc ở cột ${L[c.yC]}, II.kd ở cột ${L[c.yD]}; khi ra đề, độ khó từng ý phải đúng cấp độ này.`;
+  const totals = getDungSaiLevelTotals(config);
+  const details = questions.map((question, index) => `Câu ${index + 1}: ý a ${L[question.yA]}, ý b ${L[question.yB]}, ý c ${L[question.yC]}, ý d ${L[question.yD]}`).join('; ');
+  return `**CẤU HÌNH CẤP ĐỘ TỪNG CÂU ĐÚNG/SAI (BẮT BUỘC):** ${details}. Tổng ${questions.length * 4} ý: Biết ${totals.biet}, Hiểu ${totals.hieu}, Vận dụng ${totals.van_dung}. Mã II.ka, II.kb, II.kc, II.kd phải đặt đúng cột theo cấu hình riêng của Câu k.`;
 };
 
 /** Quy tắc giữ đủ cột cho bảng ma trận/đặc tả */

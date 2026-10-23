@@ -35,6 +35,20 @@ t('Lớp 12 không tự luận: 3-4-3', () => {
   assert.deepEqual(L.types.map(x => x.points), [3, 4, 3]); assert.equal(L.hasEssay, false);
 });
 
+t('Dạng II dùng số câu và mức độ riêng từng ý', () => {
+  const c = cfg([8,4,0],[1,1,0],[2,2,0],[1,1,1]);
+  c.type2QuestionCount = 2;
+  c.dungSaiLevelConfigs = [
+    { yA: 'nhan_biet', yB: 'nhan_biet', yC: 'thong_hieu', yD: 'van_dung' },
+    { yA: 'thong_hieu', yB: 'thong_hieu', yC: 'van_dung', yD: 'van_dung' },
+  ];
+  const L = m.computeCv7991Layout(c, true);
+  const ds = L.types.find(function(x) { return x.key === 'type2'; });
+  assert.equal(ds.questions, 2);
+  assert.equal(ds.commands, 8);
+  assert.deepEqual(ds.levels, { biet: 2, hieu: 3, vd: 3 });
+});
+
 t('Không có Trả lời ngắn → điểm chuyển sang Đúng – Sai (chú thích 3)', () => {
   const L = m.computeCv7991Layout(cfg([8,4,0],[2,1,1],[0,0,0],[1,1,1]), true);
   assert.deepEqual(L.types.map(x => [x.key, x.points]), [['type1',3],['type2',4],['essay',3]]);

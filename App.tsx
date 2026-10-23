@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion, MatrixTemplate, ExamHistoryItem, ReferenceUsageMode, ReferenceDocItem, DungSaiLevel, DEFAULT_DUNG_SAI_LEVELS } from './types';
+import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion, MatrixTemplate, ExamHistoryItem, ReferenceUsageMode, ReferenceDocItem, DungSaiLevel, DEFAULT_DUNG_SAI_LEVELS, getDungSaiQuestionCount, getDungSaiLevelConfigs } from './types';
 import StepIndicator from './components/StepIndicator';
 import Button from './components/Button';
 import MarkdownView from './components/MarkdownView';
@@ -51,6 +51,8 @@ const App: React.FC = () => {
     questionConfig: {
       type1: { biet: 8, hieu: 4, van_dung: 0, van_dung_cao: 0 },
       type2: { biet: 1, hieu: 1, van_dung: 0, van_dung_cao: 0 },
+      type2QuestionCount: 2,
+      dungSaiLevelConfigs: [{ ...DEFAULT_DUNG_SAI_LEVELS }, { ...DEFAULT_DUNG_SAI_LEVELS }],
       type3: { biet: 1, hieu: 1, van_dung: 2, van_dung_cao: 0 },
       essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
     }
@@ -643,7 +645,7 @@ const App: React.FC = () => {
   };
 
   // -- Question Config Logic --
-  const updateQuestionConfig = (type: keyof QuestionConfig, level: 'biet' | 'hieu' | 'van_dung' | 'van_dung_cao', value: number) => {
+  const updateQuestionConfig = (type: 'type1' | 'type2' | 'type3' | 'essay', level: 'biet' | 'hieu' | 'van_dung' | 'van_dung_cao', value: number) => {
     setInputData(prev => ({
       ...prev,
       questionConfig: {
@@ -1188,7 +1190,7 @@ const App: React.FC = () => {
 
   const renderQuestionConfigRow = (
     label: string,
-    typeKey: keyof QuestionConfig,
+    typeKey: 'type1' | 'type2' | 'type3' | 'essay',
     defaultB: number,
     defaultH: number,
     defaultV: number,
@@ -1238,6 +1240,23 @@ const App: React.FC = () => {
       </div>
     </div>
   );
+
+  const updateDungSaiQuestionCount = (value: number) => {
+    const count = Math.max(0, Math.floor(value || 0));
+    setInputData(prev => {
+      const current = getDungSaiLevelConfigs(prev.questionConfig);
+      const configs = Array.from({ length: count }, (_, index) => ({ ...(current[index] || DEFAULT_DUNG_SAI_LEVELS) }));
+      return { ...prev, questionConfig: { ...prev.questionConfig, type2QuestionCount: count, dungSaiLevelConfigs: configs } };
+    });
+  };
+
+  const updateDungSaiLevel = (questionIndex: number, key: keyof typeof DEFAULT_DUNG_SAI_LEVELS, value: DungSaiLevel) => {
+    setInputData(prev => {
+      const configs = getDungSaiLevelConfigs(prev.questionConfig);
+      configs[questionIndex] = { ...configs[questionIndex], [key]: value };
+      return { ...prev, questionConfig: { ...prev.questionConfig, dungSaiLevelConfigs: configs } };
+    });
+  };
 
   const renderInputStep = () => (
     <div className="max-w-4xl mx-auto space-y-8 pb-12 relative z-10">
@@ -1578,34 +1597,34 @@ const App: React.FC = () => {
         </h2>
         <div className="config-table">
           {renderQuestionConfigRow("Dạng I (4 lựa chọn)", "type1", 8, 4, 0)}
-          {renderQuestionConfigRow("Dạng II (Đúng/Sai)", "type2", 1, 1, 0)}
-          <div className="py-3 border-b border-teal-50">
-            <span className="block text-xs font-semibold text-teal-700 mb-2">Cấu hình cấp độ từng ý (áp dụng cho mỗi câu Đúng/Sai)</span>
-            <div className="grid grid-cols-4 gap-3">
-              {(['yA', 'yB', 'yC', 'yD'] as const).map((key, idx) => (
-                <div key={key} className="flex flex-col">
-                  <span className="text-xs text-teal-500 mb-1">Ý {'abcd'[idx]}</span>
-                  <select
-                    className="w-full p-2 input-elevated text-sm"
-                    value={(inputData.questionConfig.dungSaiLevelConfig || DEFAULT_DUNG_SAI_LEVELS)[key]}
-                    onChange={e => {
-                      const v = e.target.value as DungSaiLevel;
-                      setInputData(prev => ({
-                        ...prev,
-                        questionConfig: {
-                          ...prev.questionConfig,
-                          dungSaiLevelConfig: { ...(prev.questionConfig.dungSaiLevelConfig || DEFAULT_DUNG_SAI_LEVELS), [key]: v },
-                        },
-                      }));
-                    }}
-                  >
-                    <option value="nhan_biet">Nhận biết</option>
-                    <option value="thong_hieu">Thông hiểu</option>
-                    <option value="van_dung">Vận dụng</option>
-                  </select>
-                </div>
-              ))}
+          <div className="py-4 border-b border-teal-50 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
+              <div className="sm:col-span-3">
+                <span className="block text-sm font-semibold text-teal-700">Dạng II (Đúng/Sai)</span>
+                <p className="text-xs text-teal-500 mt-1">Khai báo số câu, sau đó chọn mức độ riêng cho từng ý a, b, c, d.</p>
+              </div>
+              <div className="sm:col-span-2 flex flex-col">
+                <span className="text-xs text-teal-500 mb-1">Số câu</span>
+                <input type="number" min={0} className="w-full p-2 input-elevated text-center text-sm" value={getDungSaiQuestionCount(inputData.questionConfig)} onChange={e => updateDungSaiQuestionCount(Number(e.target.value))} />
+              </div>
             </div>
+            {getDungSaiLevelConfigs(inputData.questionConfig).map((question, questionIndex) => (
+              <div key={questionIndex} className="rounded-xl border border-teal-100 bg-teal-50/40 p-3">
+                <span className="block text-sm font-bold text-teal-800 mb-2">Câu {questionIndex + 1}</span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {(['yA', 'yB', 'yC', 'yD'] as const).map((key, idx) => (
+                    <div key={key} className="flex flex-col">
+                      <span className="text-xs text-teal-500 mb-1">Ý {'abcd'[idx]}</span>
+                      <select className="w-full p-2 input-elevated text-sm" value={question[key]} onChange={e => updateDungSaiLevel(questionIndex, key, e.target.value as DungSaiLevel)}>
+                        <option value="nhan_biet">Nhận biết</option>
+                        <option value="thong_hieu">Thông hiểu</option>
+                        <option value="van_dung">Vận dụng</option>
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
           {renderQuestionConfigRow("Dạng III (Trả lời ngắn)", "type3", 1, 1, 2)}
           {renderQuestionConfigRow("Tự luận", "essay", 0, 1, 2)}
@@ -1729,7 +1748,7 @@ const App: React.FC = () => {
               </strong>
               {', '}
               <strong>
-                Phần II ({inputData.questionConfig.type2.biet + inputData.questionConfig.type2.hieu + inputData.questionConfig.type2.van_dung + inputData.questionConfig.type2.van_dung_cao} câu Đ/S)
+                Phần II ({getDungSaiQuestionCount(inputData.questionConfig)} câu Đ/S)
               </strong>
               {', '}
               <strong>
@@ -2040,6 +2059,8 @@ const App: React.FC = () => {
         questionConfig: {
           type1: { biet: 8, hieu: 4, van_dung: 0, van_dung_cao: 0 },
           type2: { biet: 1, hieu: 1, van_dung: 0, van_dung_cao: 0 },
+      type2QuestionCount: 2,
+      dungSaiLevelConfigs: [{ ...DEFAULT_DUNG_SAI_LEVELS }, { ...DEFAULT_DUNG_SAI_LEVELS }],
           type3: { biet: 1, hieu: 1, van_dung: 2, van_dung_cao: 0 },
           essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
         }
