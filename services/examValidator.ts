@@ -16,6 +16,8 @@ export interface ExamIssue {
 export interface ExamExpectation {
   /** Số câu cần có ở từng phần (Dạng II: số câu, mỗi câu 4 ý). null = không biết chắc → chỉ kiểm tra định dạng */
   counts: Record<QType, number> | null;
+  /** Tổng số câu cả đề (dùng khi đề chia phần theo kĩ năng, VD Ngữ văn: Đọc hiểu / Viết) */
+  total?: number;
 }
 
 export interface ExamStructure {
@@ -24,11 +26,13 @@ export interface ExamStructure {
 }
 
 const PART_RE = /^\s*(?:PHẦN|Phần)\s+(IV|III|II|I|[1-4])(?![A-Za-z0-9])[.:\s–-]*(.*)$/;
+// Đề Tiếng Anh: PART A / SECTION I … — số thứ tự phần KHÔNG phải dạng câu hỏi
+const EN_PART_RE = /^\s*(?:PART|Part|SECTION|Section)\s+([A-Z]|[IVX]+|\d+)\b[.:\s–-]*(.*)$/;
 const ESSAY_HEADING_RE = /^\s*(?:[A-D]|[IVX]+)\s*[.:]\s*(?:PHẦN\s+)?TỰ\s*LUẬN\b/i;
 // Kiểu tiêu đề "I. Trắc nghiệm nhiều lựa chọn", "II. ĐÚNG – SAI", "C. Trả lời ngắn"
 const ALT_PART_RE = /^\s*(?:[A-D]|[IVX]+)\s*[.:]\s*(?:câu\s*)?(?:trắc\s*nghiệm\s*)?(?:câu\s*hỏi\s*)?(nhiều\s*(?:phương\s*án\s*)?lựa\s*chọn|đúng\s*[-–\/]?\s*sai|trả\s*lời\s*ngắn|tự\s*luận)/i;
-const QUESTION_RE = /^\s*Câu\s+(\d{1,3})(?:\s*\([^)]*\))?\s*[.:)\-–]/i;
-const ANSWER_RE = /^\s*(?:[A-ZĐ]\s*[.:]\s*|[IVX]+\s*[.:]\s*|PHẦN\s+[IVX]+\s*[.:]?\s*)?(?:BẢNG\s*)?(ĐÁP\s*ÁN|HƯỚNG\s*DẪN\s*(?:CHẤM|GIẢI)|LỜI\s*GIẢI)/i;
+const QUESTION_RE = /^\s*(?:Câu|Question)\s+(\d{1,3})(?:\s*\([^)]*\))?\s*[.:)\-–]/i;
+const ANSWER_RE = /^\s*(?:[A-ZĐ]\s*[.:]\s*|[IVX]+\s*[.:]\s*|PHẦN\s+[IVX]+\s*[.:]?\s*)?(?:BẢNG\s*)?(ĐÁP\s*ÁN|HƯỚNG\s*DẪN\s*(?:CHẤM|GIẢI)|LỜI\s*GIẢI|ANSWER\s*KEYS?|ANSWERS\b|KEYS?\b\s*$)/i;
 
 const ROMAN_TO_TYPE: Record<string, QType> = { I: 'I', II: 'II', III: 'III', IV: 'IV', '1': 'I', '2': 'II', '3': 'III', '4': 'IV' };
 
@@ -38,6 +42,8 @@ const partTypeOf = (roman: string, rest: string): QType | null => {
   if (/trả\s*lời\s*ngắn/.test(t)) return 'III';
   if (/tự\s*luận/.test(t)) return 'IV';
   if (/nhiều\s*(?:phương\s*án\s*)?lựa\s*chọn|4\s*lựa\s*chọn/.test(t)) return 'I';
+  // Ngữ văn: Đọc hiểu / Viết / Làm văn là câu hỏi mở (không có phương án A–D)
+  if (/đọc\s*hiểu|viết|làm\s*văn|nghị\s*luận/.test(t)) return 'IV';
   return ROMAN_TO_TYPE[roman.toUpperCase()] || null;
 };
 
@@ -61,6 +67,15 @@ export const parseExamStructure = (html: string): ExamStructure => {
       continue;
     }
     const pm = line.length <= 220 ? PART_RE.exec(line) : null;
+    const em = !pm && line.length <= 160 ? EN_PART_RE.exec(line) : null;
+    if (em) {
+      // Phần của đề Tiếng Anh: không gắn dạng câu (Part II ≠ Đúng – Sai)
+      if (inAnswer) { currentQ = null; continue; }
+      current = { type: null, heading: line, questions: [] };
+      parts.push(current);
+      currentQ = null;
+      continue;
+    }
     let am = !pm && line.length <= 140 ? ALT_PART_RE.exec(line) : null;
     // "A./B./C./D. …" chỉ là tiêu đề khi viết HOA (tránh nhầm phương án "A. Tự luận" trong câu hỏi)
     if (am && /^\s*[A-D]\s*[.:]/.test(line) && am[1] !== am[1].toUpperCase()) am = null;
@@ -102,9 +117,20 @@ export const validateExamHtml = (html: string, exp: ExamExpectation): ExamIssue[
   const untyped = s.parts.filter(p => !p.type).flatMap(p => p.questions);
   s.parts.forEach(p => { if (p.type) byType[p.type].push(...p.questions); });
   // Đề không có tiêu đề PHẦN mà chỉ có 1 dạng → gán luôn cho dạng đó
-  const counts = exp.counts;
-  const expectedTypes = counts ? QTYPES.filter(t => counts[t] > 0) : [];
+  let counts = exp.counts;
+  let total = exp.total;
+  const expectedTypes = counts ? QTYPES.filter(t => counts![t] > 0) : [];
   if (untyped.length && expectedTypes.length === 1 && byType[expectedTypes[0]].length === 0) byType[expectedTypes[0]] = untyped;
+  else if (untyped.length && counts && expectedTypes.length > 1) {
+    // Có câu nằm ngoài các phần nhận diện được (VD đề Tiếng Anh chia PART A/B) → chỉ so TỔNG số câu
+    total = QTYPES.reduce((n, t) => n + counts![t], 0);
+    counts = null;
+  }
+
+  if (total !== undefined) {
+    const found = s.parts.reduce((n, p) => n + p.questions.length, 0);
+    if (found !== total) issues.push({ code: 'COUNT_TOTAL', message: `Ma trận yêu cầu tổng cộng ${total} câu, đề có ${found} câu.`, severity: 'error' });
+  }
 
   QTYPES.forEach(type => {
     const qs = byType[type];
@@ -122,6 +148,18 @@ export const validateExamHtml = (html: string, exp: ExamExpectation): ExamIssue[
     }
     if (nums.length !== want) {
       issues.push({ code: `COUNT_${type}`, message: `${label}: ma trận yêu cầu ${want} câu, đề có ${nums.length} câu.`, severity: 'error' });
+    }
+    // Không biết số câu từng dạng (đề chia theo kĩ năng — mỗi phần đánh số lại) → không xét trùng/liên tục
+    if (!counts) {
+      if (type === 'I') {
+        const bad = qs.filter(q => new Set(Array.from(q.text.matchAll(/(?:^|[\s>(])([A-D])\s*[.)]/g)).map(m => m[1])).size < 4).map(q => q.num);
+        if (bad.length) issues.push({ code: 'OPTIONS_I', message: `Phần I: câu ${bad.join(', ')} chưa đủ 4 phương án A, B, C, D.`, severity: 'error' });
+      }
+      if (type === 'II') {
+        const bad = qs.filter(q => new Set(Array.from(q.text.matchAll(/(?:^|[\s>(])([a-d])\s*\)/g)).map(m => m[1])).size < 4).map(q => q.num);
+        if (bad.length) issues.push({ code: 'ITEMS_II', message: `Phần II: câu ${bad.join(', ')} chưa đủ 4 ý a), b), c), d).`, severity: 'error' });
+      }
+      return;
     }
     const dup = qs.length - nums.length;
     if (dup > 0) issues.push({ code: `DUP_${type}`, message: `${label}: có số câu bị lặp lại.`, severity: 'warning' });

@@ -28,6 +28,8 @@ import {
   buildContractPromptBlock, buildSpecsTheadFromContract, contractMatchesConfig,
 } from './matrixContract';
 import { validateExamHtml, hasBlockingIssues, ExamIssue, TRUNCATION_MARKER } from './examValidator';
+import { UserFacingError } from './errors';
+export { UserFacingError };
 
 // --- Dual AI Provider & Storage Keys ---
 const GOOGLE_AI_PROVIDER_KEY = 'google_ai_provider';
@@ -429,8 +431,6 @@ const callWithRetry = async <T>(
   throw lastError;
 };
 
-/** Lỗi về nội dung/định dạng: không thử lại bằng model khác, hiển thị nguyên văn cho người dùng. */
-export class UserFacingError extends Error {}
 
 // --- Centralized Fallback Wrapper: try models in order and manage fallbackNotice ---
 export const callWithFallback = async <T = string>(
@@ -1370,6 +1370,19 @@ export const pickExamContract = (
 const TYPE_KEY_TO_ROMAN: Record<string, 'I' | 'II' | 'III' | 'IV'> = { type1: 'I', type2: 'II', type3: 'III', essay: 'IV' };
 
 const buildContractStructureInstructions = (contract: MatrixContract): string => {
+  if (contract.sections) {
+    // Ma trận theo kĩ năng (Ngữ văn: Đọc hiểu / Viết; Tiếng Anh: Listening / Reading …)
+    const roman = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
+    const lines: string[] = [buildContractPromptBlock(contract), '', '**CẤU TRÚC ĐỀ BẮT BUỘC (đúng theo hợp đồng số liệu trên):**'];
+    contract.sections.forEach((sec, i) => {
+      lines.push(`- **PHẦN ${roman[i] || i + 1}. ${sec.name.toUpperCase()}${sec.points !== undefined ? ` (${fmtNum(sec.points)} điểm)` : ''}:** đúng ${sec.questions.length} câu.`);
+    });
+    lines.push(contract.continuousNumbering
+      ? '- Đánh số câu LIÊN TỤC qua các phần. Câu trắc nghiệm có đủ 4 phương án A, B, C, D.'
+      : '- Mỗi phần đánh số lại từ "Câu 1". Phần đọc hiểu phải có văn bản/ngữ liệu đọc hiểu trước các câu hỏi; phần viết ghi rõ yêu cầu bài viết.');
+    lines.push('- Hướng dẫn chấm: có đáp án/gợi ý và biểu điểm chi tiết cho từng câu, tổng điểm mỗi phần đúng như hợp đồng.');
+    return lines.join('\n') + '\n';
+  }
   // Điểm từng phần: theo file; file không ghi điểm → thang mặc định CV 7991
   const pts: Partial<Record<'I' | 'II' | 'III' | 'IV', number>> = { ...contract.points.byType };
   if (!contract.points.fromFile && contract.questionConfig) {
@@ -1421,10 +1434,15 @@ const generateStep3ExamRaw = async (
 
   // Build a clear whitelist of allowed parts
   const allowedParts: string[] = [];
+  if (contract?.sections) {
+    const roman = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
+    contract.sections.forEach((sec, i) => allowedParts.push(`PHẦN ${roman[i] || i + 1} (${sec.name})`));
+  } else {
   if (counts.type1 > 0) allowedParts.push('PHẦN I (Trắc nghiệm nhiều lựa chọn)');
   if (counts.type2 > 0) allowedParts.push('PHẦN II (Đúng/Sai)');
   if (counts.type3 > 0) allowedParts.push('PHẦN III (Trả lời ngắn)');
   if (counts.essay > 0) allowedParts.push('PHẦN IV (Tự luận)');
+  }
 
   let structureInstructions = "**CẤU TRÚC ĐỀ THI & ĐÁP ÁN CẦN TẠO (BÁM SÁT 100% MA TRẬN & ĐẶC TẢ):**\n";
 
@@ -1770,7 +1788,7 @@ const generateStep3ExamRaw = async (
        + Lập bảng Hướng dẫn chấm gồm các cột: Câu | Nội dung / Hướng dẫn giải chi tiết | Điểm.
 
   **NGUYÊN TẮC CHUNG (BẮT BUỘC TUÂN THỦ):**
-  1. **⛔ CẤM TẠO PHẦN THỪA (QUAN TRỌNG NHẤT):** Đề thi CHỈ ĐƯỢC CHỨA các phần có trong WHITELIST ở trên: [${allowedParts.join(', ')}]. Nếu PHẦN IV (Tự luận) KHÔNG có trong whitelist → TUYỆT ĐỐI KHÔNG tạo câu tự luận, không tạo tiêu đề "PHẦN IV", không nhắc đến tự luận.
+  1. **⛔ CẤM TẠO PHẦN THỪA (QUAN TRỌNG NHẤT):** Đề thi CHỈ ĐƯỢC CHỨA các phần có trong WHITELIST ở trên: [${allowedParts.join(', ')}].${contract?.sections ? '' : ' Nếu PHẦN IV (Tự luận) KHÔNG có trong whitelist → TUYỆT ĐỐI KHÔNG tạo câu tự luận, không tạo tiêu đề "PHẦN IV", không nhắc đến tự luận.'}
   2. **CÔNG THỨC TOÁN (BẮT BUỘC — vì đề sẽ được chuyển sang MathType trong Word):**
      - MỌI công thức và ký hiệu toán/lý/hoá PHẢI viết bằng LaTeX, bọc trong dấu $ ... $ (công thức trong dòng) hoặc $$ ... $$ (công thức đứng riêng một dòng).
      - TUYỆT ĐỐI KHÔNG dùng ký tự Unicode để thay cho công thức: không viết x², √x, ≤, ≥, ≠, ≈, π, a⁻¹, ½... Thay vào đó viết $x^2$, $\\sqrt{x}$, $\\le$, $\\ge$, $\\ne$, $\\approx$, $\\pi$, $a^{-1}$, $\\frac{1}{2}$.
@@ -1892,9 +1910,12 @@ export const generateStep3ExamChecked = async (
   const args = [specsContent, questionConfig, inputData, referenceText, referenceImages, extractedQuestions, referenceMode, matrixContent, isUploadedMatrix] as const;
   let { raw, contract, counts } = await generateStep3ExamRaw(...args);
   // Ma trận tải lên mà không đọc được số liệu → không áp số câu (có thể sai), chỉ kiểm tra định dạng
-  const expect = {
-    counts: isUploadedMatrix && !contract ? null : { I: counts.type1, II: counts.type2, III: counts.type3, IV: counts.essay },
-  };
+  const expect = contract?.sections
+    // Ma trận theo kĩ năng: kiểm tra tổng số câu + định dạng (phần đặt tên theo kĩ năng, không theo Dạng I–IV)
+    ? { counts: null, total: contract.sections.reduce((n, sec) => n + sec.questions.length, 0) }
+    : {
+      counts: isUploadedMatrix && !contract ? null : { I: counts.type1, II: counts.type2, III: counts.type3, IV: counts.essay },
+    };
   let issues = validateExamHtml(raw, expect);
   let repaired = false;
 

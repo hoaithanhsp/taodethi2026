@@ -777,6 +777,9 @@ const readIntVal = (xml: string, tag: string): number => {
 const plainOf = (html: string) =>
   decodeXmlEntities(html.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
 
+const isHeaderLabelText = (t: string) =>
+  /^(tnkq|tn|tl|tự\s*luận|trắc\s*nghiệm(\s*khách\s*quan)?|nhiều\s*lựa\s*chọn|đúng\s*[-–]?\s*sai|trả\s*lời\s*ngắn|số\s*câu(\s*hỏi)?|số\s*ý|tỉ\s*lệ(\s*%)?|tỷ\s*lệ(\s*%)?|%|điểm|thời\s*gian(\s*\(phút\))?)$/i.test(t.trim().replace(/[“”"]/g, ''));
+
 const isLevelHeaderText = (t: string) =>
   /^(nhận\s*biết|biết|nb|b|thông\s*hiểu|hiểu|th|h|vận\s*dụng\s*cao|vận\s*dụng|vdc|vd|v|mức\s*[1-4])(\s*\([^)]*\))?$/i.test(t.trim());
 
@@ -875,10 +878,18 @@ const convertWordTableXmlToHtml = (tblXml: string): string => {
   // Dòng tiêu đề sơ bộ: dòng cuối (trong 8 dòng đầu) có ≥ 2 ô chỉ ghi mức độ (Biết/Hiểu/VD…)
   const rowPlain = (row: ParsedCell[]) => row.map(c => plainOf(c.html));
   let levelRow = -1;
+  let lastLabelRow = -1;
   for (let r = 0; r < Math.min(8, rows.length); r++) {
-    if (rowPlain(rows[r]).filter(isLevelHeaderText).length >= 2) levelRow = r;
-    else if (levelRow >= 0) break; // đã qua khối tiêu đề → gặp dòng dữ liệu thì dừng
+    const texts = rowPlain(rows[r]);
+    const nLevel = texts.filter(isLevelHeaderText).length;
+    const nLabel = nLevel + texts.filter(isHeaderLabelText).length;
+    if (nLabel >= 2) {
+      lastLabelRow = r;
+      if (nLevel >= 2) levelRow = r;
+    } else if (levelRow >= 0) break; // đã qua khối tiêu đề → gặp dòng dữ liệu thì dừng
   }
+  // Mẫu cũ: dòng "TNKQ | TL" nằm DƯỚI dòng mức độ → vẫn thuộc tiêu đề
+  if (levelRow >= 0 && lastLabelRow > levelRow) levelRow = lastLabelRow;
 
   // Bỏ các dòng tiêu đề bị CHÉP LẶP LẠI giữa bảng (thường do copy từ PDF / ngắt trang thủ công).
   // (Tính năng "Repeat header rows" của Word KHÔNG nhân bản dòng trong XML nên không bị ảnh hưởng.)
@@ -1090,6 +1101,125 @@ const finishExtraction = (fullHtml: string): DocxTableExtraction => {
   };
 };
 
+/** Thân tài liệu Word (XML) → các khối HTML (đoạn văn, tiêu đề, bảng) theo đúng thứ tự. */
+const bodyXmlToHtmlBlocks = (bodyXml: string): { htmlBlocks: string[]; tableCount: number } => {
+  const htmlBlocks: string[] = [];
+  let tableCount = 0;
+  for (const block of iterateBlocks(bodyXml, ['w:tbl', 'w:p'])) {
+    if (block.tag === 'w:tbl') {
+      const tblHtml = convertWordTableXmlToHtml(block.xml);
+      if (tblHtml) {
+        htmlBlocks.push(tblHtml);
+        tableCount++;
+      }
+    } else {
+      const { html, isBold, isCentered } = extractParagraphHtml(block.xml);
+      if (html) {
+        if (
+          isCentered ||
+          /^(?:[IVX\d]+\.\s*)?(?:MA\s*TRẬN|BẢNG\s*ĐẶC\s*TẢ|BẢN\s*ĐẶC\s*TẢ|ĐẶC\s*TẢ|KHUNG\s*MA\s*TRẬN|KHUNG\s*ĐẶC\s*TẢ)/i.test(plainOf(html))
+        ) {
+          htmlBlocks.push(`<h2>${html}</h2>`);
+        } else if (isBold) {
+          htmlBlocks.push(`<p class="bold">${html}</p>`);
+        } else {
+          htmlBlocks.push(`<p>${html}</p>`);
+        }
+      }
+    }
+  }
+  return { htmlBlocks, tableCount };
+};
+
+export interface DocxExamSource {
+  /** Nội dung đề dạng HTML (giữ bảng, công thức LaTeX $...$, vị trí hình [HÌNH k]) */
+  html: string;
+  /** Ảnh đọc được, theo đúng số thứ tự [HÌNH k] */
+  images: Array<{ index: number; base64: string; mimeType: string }>;
+  /** Số công thức Word chuẩn (Equation – OMML), đã chuyển sang LaTeX */
+  ommlCount: number;
+  /** Số công thức MathType (đối tượng OLE, chỉ có ảnh WMF) — AI KHÔNG đọc được */
+  mathTypeCount: number;
+  /** Ảnh WMF/EMF hoặc vượt giới hạn — không gửi được cho AI */
+  skippedImages: number;
+}
+
+const IMAGE_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+const MAX_SOURCE_IMAGES = 16;
+
+/**
+ * Đọc ĐỀ THI từ file Word (.docx) để gửi cho AI (tạo đề tương tự / sinh đề biến thể):
+ * giữ nguyên bảng, chuyển công thức Equation (OMML) sang LaTeX, đánh dấu vị trí hình [HÌNH k] và lấy ảnh kèm theo.
+ */
+export const docxToExamSource = async (arrayBuffer: ArrayBuffer): Promise<DocxExamSource> => {
+  const zip = await JSZip.loadAsync(arrayBuffer);
+  const docXmlFile = zip.file('word/document.xml');
+  if (!docXmlFile) throw new Error('File Word không có nội dung (thiếu word/document.xml).');
+  let xml = (await docXmlFile.async('string')).replace(/<mc:Fallback>[\s\S]*?<\/mc:Fallback>/g, '');
+
+  // Quan hệ rId → đường dẫn ảnh trong gói docx
+  const relsXml = (await zip.file('word/_rels/document.xml.rels')?.async('string')) || '';
+  const rels = new Map<string, string>();
+  for (const m of relsXml.matchAll(/<Relationship\b[^>]*>/g)) {
+    const id = /\bId="([^"]+)"/.exec(m[0])?.[1];
+    const target = /\bTarget="([^"]+)"/.exec(m[0])?.[1];
+    if (id && target) rels.set(id, target);
+  }
+
+  const ommlCount = (xml.match(/<m:oMath(?=[\s>])/g) || []).length;
+  let mathTypeCount = 0;
+  // Đối tượng nhúng: công thức MathType / Equation 3.0 → đánh dấu; đối tượng khác → coi như hình
+  xml = xml.replace(/<w:object\b[\s\S]*?<\/w:object>/g, obj => {
+    if (/ProgID="(?:Equation\.|MathType)/i.test(obj)) {
+      mathTypeCount++;
+      return '<w:t>[CÔNG THỨC MathType – không đọc được]</w:t>';
+    }
+    const id = /<v:imagedata\b[^>]*r:id="([^"]+)"/.exec(obj)?.[1];
+    return id ? `<w:t>⟦IMG:${id}⟧</w:t>` : '';
+  });
+  xml = xml.replace(/<w:drawing\b[\s\S]*?<\/w:drawing>/g, d => {
+    const id = /<a:blip\b[^>]*r:embed="([^"]+)"/.exec(d)?.[1];
+    return id ? `<w:t>⟦IMG:${id}⟧</w:t>` : '';
+  });
+  xml = xml.replace(/<w:pict\b[\s\S]*?<\/w:pict>/g, pict => {
+    const id = /<v:imagedata\b[^>]*r:id="([^"]+)"/.exec(pict)?.[1];
+    return id ? `<w:t>⟦IMG:${id}⟧</w:t>` : '';
+  });
+
+  const bodyStart = xml.search(/<w:body\b/);
+  const bodyEnd = xml.lastIndexOf('</w:body>');
+  const bodyXml = bodyStart >= 0 ? xml.slice(bodyStart, bodyEnd > bodyStart ? bodyEnd : undefined) : xml;
+  let html = bodyXmlToHtmlBlocks(bodyXml).htmlBlocks.join('\n');
+
+  // Thay dấu hình bằng [HÌNH k] và gom ảnh theo thứ tự xuất hiện
+  const images: DocxExamSource['images'] = [];
+  const indexOfRel = new Map<string, number>();
+  let skippedImages = 0;
+  let counter = 0;
+  const markers = Array.from(html.matchAll(/⟦IMG:([^⟧]+)⟧/g)).map(m => m[1]);
+  for (const relId of markers) {
+    if (indexOfRel.has(relId)) continue;
+    const k = ++counter;
+    indexOfRel.set(relId, k);
+    const target = rels.get(relId) || '';
+    const path = target.startsWith('/') ? target.slice(1) : `word/${target.replace(/^\.\//, '')}`;
+    const ext = (path.split('.').pop() || '').toLowerCase();
+    const file = zip.file(path);
+    if (file && IMAGE_MIME[ext] && images.length < MAX_SOURCE_IMAGES) {
+      images.push({ index: k, base64: await file.async('base64'), mimeType: IMAGE_MIME[ext] });
+    } else {
+      skippedImages++;
+    }
+  }
+  const sent = new Set(images.map(i => i.index));
+  html = html.replace(/⟦IMG:([^⟧]+)⟧/g, (_m, relId: string) => {
+    const k = indexOfRel.get(relId)!;
+    return sent.has(k) ? ` [HÌNH ${k}] ` : ` [HÌNH ${k} – không gửi được (định dạng WMF/EMF hoặc quá nhiều hình)] `;
+  });
+
+  return { html, images, ommlCount, mathTypeCount, skippedImages };
+};
+
 /**
  * Chuyển đổi trực tiếp file Word (.docx) Ma trận / Đặc tả sang HTML Table chính xác
  * (giữ nguyên hàng, cột, rowspan, colspan, ô trống, bảng lồng và công thức toán), KHÔNG qua AI.
@@ -1106,32 +1236,7 @@ export const extractDocxTablesAndHtml = async (arrayBuffer: ArrayBuffer): Promis
       const bodyEnd = xmlContent.lastIndexOf('</w:body>');
       const bodyXml = bodyStart >= 0 ? xmlContent.slice(bodyStart, bodyEnd > bodyStart ? bodyEnd : undefined) : xmlContent;
 
-      const htmlBlocks: string[] = [];
-      let tableCount = 0;
-
-      for (const block of iterateBlocks(bodyXml, ['w:tbl', 'w:p'])) {
-        if (block.tag === 'w:tbl') {
-          const tblHtml = convertWordTableXmlToHtml(block.xml);
-          if (tblHtml) {
-            htmlBlocks.push(tblHtml);
-            tableCount++;
-          }
-        } else {
-          const { html, isBold, isCentered } = extractParagraphHtml(block.xml);
-          if (html) {
-            if (
-              isCentered ||
-              /^(?:[IVX\d]+\.\s*)?(?:MA\s*TRẬN|BẢNG\s*ĐẶC\s*TẢ|BẢN\s*ĐẶC\s*TẢ|ĐẶC\s*TẢ|KHUNG\s*MA\s*TRẬN|KHUNG\s*ĐẶC\s*TẢ)/i.test(plainOf(html))
-            ) {
-              htmlBlocks.push(`<h2>${html}</h2>`);
-            } else if (isBold) {
-              htmlBlocks.push(`<p class="bold">${html}</p>`);
-            } else {
-              htmlBlocks.push(`<p>${html}</p>`);
-            }
-          }
-        }
-      }
+      const { htmlBlocks, tableCount } = bodyXmlToHtmlBlocks(bodyXml);
 
       if (tableCount > 0) {
         return finishExtraction(wrapMatrixHtmlDocument(htmlBlocks.join('\n')));

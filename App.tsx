@@ -1689,7 +1689,9 @@ const App: React.FC = () => {
     const tone = !primary ? 'red' : warnings.length ? 'amber' : 'emerald';
     const box = tone === 'red' ? 'bg-red-50 border-red-200 text-red-900' : tone === 'amber' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-emerald-50/90 border-emerald-200 text-emerald-900';
     const subjectOptions = inputData.subject && !SUBJECT_OPTIONS.includes(inputData.subject) ? [...SUBJECT_OPTIONS, inputData.subject] : SUBJECT_OPTIONS;
-    const pointsText = primary?.points.fromFile
+    const pointsText = primary?.sections
+      ? primary.sections.filter(sec => sec.points !== undefined).map(sec => `${sec.name}: ${fmtNum(sec.points!)}đ`).join(' · ')
+      : primary?.points.fromFile
       ? QTYPES.filter(t => primary.questionCount[t] > 0).map(t => `${t === 'IV' ? 'TL' : t}: ${primary.points.byType[t] !== undefined ? fmtNum(primary.points.byType[t]!) : '?'}đ`).join(' · ')
       : '';
     const source = contracts?.primarySource === 'specs' ? 'Bảng đặc tả' : 'Ma trận';

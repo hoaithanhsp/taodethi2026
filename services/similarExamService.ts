@@ -3,6 +3,7 @@ import { SimilarExamResult, SimilarExamOptions } from "../types";
 import { callWithFallback, createGeminiConfig, getAiProvider, wasTruncated, UserFacingError } from "./geminiService";
 import { AiProvider } from "../constants";
 import { FIGURE_JSON_MARKDOWN_INSTRUCTIONS } from "./figureEngine";
+import { prepareExamSourceParts } from "./examSourceService";
 
 const SIMILAR_SYSTEM_INSTRUCTION = `Bạn là trợ lý tạo đề thi THPT chuyên nghiệp. Nhiệm vụ của bạn là phân tích đề thi mẫu và sinh ra 1 đề thi tương tự.
 
@@ -173,9 +174,12 @@ export const generateSimilarExam = async (
   options?: SimilarExamOptions,
   preferredModel?: string,
   provider: AiProvider = getAiProvider(),
-  onExamReady?: (partial: SimilarExamResult) => void
+  onExamReady?: (partial: SimilarExamResult) => void,
+  fileName?: string
 ): Promise<SimilarExamResult> => {
   const finalSystemInstruction = SIMILAR_SYSTEM_INSTRUCTION + buildCustomInstructions(options);
+  // PDF/ảnh gửi nguyên file; Word .docx được app đọc trước (bảng, công thức LaTeX, hình)
+  const sourceParts = await prepareExamSourceParts(base64Data, mimeType, fileName);
 
   // ---------- LƯỢT 1: phân tích + đề mới ----------
   const step1 = await callWithFallback(
@@ -186,7 +190,7 @@ export const generateSimilarExam = async (
         contents: {
           role: 'user',
           parts: [
-            { inlineData: { mimeType, data: base64Data } },
+            ...sourceParts,
             { text: "LƯỢT 1: Hãy phân tích đề thi này và tạo 1 ĐỀ MỚI tương tự (giữ nguyên số câu, dạng câu, thứ tự phần, điểm). CHỈ trả về JSON gồm 'analysis' và 'examContent' — CHƯA viết lời giải." }
           ]
         },

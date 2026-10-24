@@ -224,7 +224,21 @@ export const typeOf = (text: string): QType | null => {
 };
 const isGenericTnkq = (text: string) => /tnkq|trắc\s*nghiệm|khách\s*quan/.test(low(text));
 
-const isExcludedHeader = (text: string) => /^(tổng|tỉ\s*lệ|tỷ\s*lệ|%|cộng|số\s*điểm|điểm\b|ghi\s*chú)/.test(low(text));
+const isExcludedHeader = (text: string) => /^(tổng|tỉ\s*lệ|tỷ\s*lệ|%|cộng|số\s*điểm|điểm\b|ghi\s*chú|thời\s*gian|tg\b)/.test(low(text));
+
+/** Ô tiêu đề ghi dạng câu viết tắt / chung: TL, TN, TNKQ, Trắc nghiệm… */
+const typeOfHeader = (text: string): QType | 'GEN' | null => {
+  const t = low(text).replace(/[.:]+$/, '');
+  if (!t || t.length > 60) return null;
+  const specific = typeOf(text);
+  if (specific) return specific;
+  if (/^tl$/.test(t)) return 'IV';
+  if (/^(tn|tnkq)$|trắc\s*nghiệm|khách\s*quan|tnkq/.test(t)) return 'GEN';
+  return null;
+};
+/** Ô tiêu đề phụ: Số câu / Tỉ lệ / Điểm / Thời gian (ma trận kiểu cũ chia nhỏ dưới mỗi mức). */
+const isMetaLabel = (text: string) =>
+  /^(số\s*câu(\s*hỏi)?|số\s*ý|số\s*lệnh(\s*hỏi)?|tỉ\s*lệ(\s*%)?|tỷ\s*lệ(\s*%)?|%|điểm|số\s*điểm|thời\s*gian(\s*\(phút\))?|tg|sl)$/.test(low(text).replace(/[.:]+$/, ''));
 
 // ============================================================================
 // 3. PHÂN TÍCH 1 BẢNG
@@ -243,7 +257,9 @@ export interface TableAnalysis {
   nCols: number;
   headerRows: number;
   colMap: Array<{ type: QType; level: Lvl } | null>;
-  roles: { tt?: number; chapter?: number; unit?: number; yccd?: number };
+  roles: { tt?: number; chapter?: number; unit?: number; yccd?: number; pct?: number };
+  /** Bảng không có cột dạng câu hỏi (VD ma trận Ngữ văn theo kĩ năng Đọc hiểu / Viết) */
+  typeless: boolean;
   dataRows: number[];
   footer: { countRow?: number; pointRow?: number; pctRow?: number };
   unmappedLevelCols: number;
@@ -261,20 +277,27 @@ const headerStack = (grid: (GridCell | undefined)[][], headerRows: number, c: nu
 export const analyzeTable = (tableHtml: string, index = 0, start = 0, end = 0): TableAnalysis => {
   const { grid, nRows, nCols } = tableToGrid(tableHtml);
 
-  // --- Dòng tiêu đề: dòng cuối cùng (trong 8 dòng đầu) có ≥ 2 ô chỉ ghi mức độ ---
+  // --- Khối dòng tiêu đề: các dòng liền nhau (trong 8 dòng đầu) có ≥ 2 ô là nhãn mức độ / dạng câu / nhãn phụ.
+  //     Hỗ trợ cả 2 kiểu: dạng câu ở trên mức độ (CV 7991) và mức độ ở trên dạng câu (TNKQ | TL — mẫu cũ).
   let levelRow = -1;
+  let lastHeaderRow = -1;
   for (let r = 0; r < Math.min(8, nRows); r++) {
     const seen = new Set<number>();
-    let n = 0;
+    let nLevel = 0;
+    let nLabel = 0;
     for (const cell of grid[r]) {
       if (!cell || seen.has(cell.id)) continue;
       seen.add(cell.id);
-      if (cell.r === r && isLevelLabel(cell.text)) n++;
+      if (cell.r !== r) continue;
+      if (isLevelLabel(cell.text)) { nLevel++; nLabel++; }
+      else if (typeOfHeader(cell.text) || isMetaLabel(cell.text)) nLabel++;
     }
-    if (n >= 2) levelRow = r;
-    else if (levelRow >= 0) break; // hết khối tiêu đề (dòng tiêu đề chép lặp phía dưới không được tính)
+    if (nLabel >= 2) {
+      lastHeaderRow = r;
+      if (nLevel >= 2) levelRow = r;
+    } else if (levelRow >= 0) break; // hết khối tiêu đề (dòng tiêu đề chép lặp phía dưới không được tính)
   }
-  let headerRows = levelRow >= 0 ? levelRow + 1 : 0;
+  let headerRows = levelRow >= 0 ? Math.max(levelRow, lastHeaderRow) + 1 : 0;
   if (headerRows === 0 && nRows > 0) {
     // Không có cột mức độ: tiêu đề = rowspan của ô đầu tiên (nếu có)
     headerRows = Math.min(grid[0]?.[0]?.rs || 1, Math.max(1, nRows - 1));
@@ -284,22 +307,30 @@ export const analyzeTable = (tableHtml: string, index = 0, start = 0, end = 0): 
   const colMap: TableAnalysis['colMap'] = [];
   const roles: TableAnalysis['roles'] = {};
   let unmappedLevelCols = 0;
-  const hasAnySpecificType = (() => {
-    for (let c = 0; c < nCols; c++) {
-      if (headerStack(grid, headerRows, c).some(cell => typeOf(cell.text))) return true;
-    }
-    return false;
-  })();
+  // Bảng có ghi dạng câu hỏi ở tiêu đề không? (không có → ma trận theo kĩ năng)
+  let anyTypeHeader = false;
+  for (let c = 0; c < nCols && !anyTypeHeader; c++) {
+    anyTypeHeader = headerStack(grid, headerRows, c).some(cell => typeOfHeader(cell.text) !== null);
+  }
+  const typeless = levelRow >= 0 && !anyTypeHeader;
 
   for (let c = 0; c < nCols; c++) {
     const stack = headerStack(grid, headerRows, c);
-    const bottom = grid[headerRows - 1]?.[c];
     let mapped: { type: QType; level: Lvl } | null = null;
-    if (levelRow >= 0 && bottom && isLevelLabel(bottom.text) && !stack.some(s => isExcludedHeader(s.text))) {
-      const level = levelOf(bottom.text);
+    const levelCellIdx = (() => { for (let i = stack.length - 1; i >= 0; i--) if (isLevelLabel(stack[i].text)) return i; return -1; })();
+    if (levelRow >= 0 && levelCellIdx >= 0 && !stack.some(s => isExcludedHeader(s.text))) {
+      const level = levelOf(stack[levelCellIdx].text);
       let type: QType | null = null;
-      for (let i = stack.length - 2; i >= 0 && !type; i--) type = typeOf(stack[i].text);
-      if (!type && !hasAnySpecificType && stack.slice(0, -1).some(s => isGenericTnkq(s.text))) type = 'I';
+      let generic = false;
+      for (let i = stack.length - 1; i >= 0 && !type; i--) {
+        if (i === levelCellIdx) continue;
+        const tt = typeOfHeader(stack[i].text);
+        if (tt === 'GEN') generic = true;
+        else if (tt) type = tt;
+      }
+      if (!type && generic) type = 'I';
+      // Ma trận theo kĩ năng (không có cột dạng câu): tạm coi là câu tự luận, sẽ chỉnh theo môn ở bước sau
+      if (!type && typeless) type = 'IV';
       if (level && type) mapped = { type, level };
       else if (level) unmappedLevelCols++;
     }
@@ -310,7 +341,9 @@ export const analyzeTable = (tableHtml: string, index = 0, start = 0, end = 0): 
       if (roles.tt === undefined && /^(s?tt|stt|số\s*tt|thứ\s*tự)\b/.test(joined)) roles.tt = c;
       else if (roles.yccd === undefined && /yêu\s*cầu\s*cần\s*đạt|mức\s*độ\s*(kiểm\s*tra|đánh\s*giá)|mô\s*tả|chuẩn\s*kiến\s*thức/.test(joined) && !/^tổng/.test(joined)) roles.yccd = c;
       else if (roles.unit === undefined && /nội\s*dung|đơn\s*vị|bài\s*học/.test(joined)) roles.unit = c;
-      else if (roles.chapter === undefined && /chương|chủ\s*đề|mạch|phân\s*môn/.test(joined)) roles.chapter = c;
+      else if (roles.chapter === undefined && /chương|chủ\s*đề|mạch|phân\s*môn|kĩ\s*năng|kỹ\s*năng|skill/.test(joined)) roles.chapter = c;
+      // Cột tỉ lệ % CỦA CẢ DÒNG (không nằm dưới một mức độ); nhiều cột thì lấy cột cuối (thường là "Tổng %")
+      else if (/tỉ\s*lệ|tỷ\s*lệ|%/.test(joined) && !stack.some(st => isLevelLabel(st.text))) roles.pct = c;
     }
   }
   // Ma trận kiểu 02 (ô "Nội" bị tách khỏi "dung/đơn vị kiến thức"): ghép lại theo cột
@@ -357,6 +390,7 @@ export const analyzeTable = (tableHtml: string, index = 0, start = 0, end = 0): 
     }
     if (lv >= 2) continue;
     if (!grid[r].some(cell => cell && cell.text)) continue;
+    // Dòng tiêu đề nhóm giữa bảng (VD "I. ĐỌC HIỂU" gộp ngang cả bảng, không có số liệu) vẫn là dữ liệu hợp lệ
     dataRows.push(r);
   }
 
@@ -376,7 +410,7 @@ export const analyzeTable = (tableHtml: string, index = 0, start = 0, end = 0): 
   const isSpecs = roles.yccd !== undefined || /yêu\s*cầu\s*cần\s*đạt|đặc\s*tả/.test(headerText) || specsBodyHits >= 2;
   const kind: TableKind = mappedCount >= 2 ? (isSpecs ? 'specs' : 'matrix') : (isSpecs ? 'specs' : 'other');
 
-  return { index, start, end, html: tableHtml, kind, grid, nRows, nCols, headerRows, colMap, roles, dataRows, footer, unmappedLevelCols };
+  return { index, start, end, html: tableHtml, kind, grid, nRows, nCols, headerRows, colMap, roles, dataRows, footer, unmappedLevelCols, typeless };
 };
 
 export const analyzeTables = (html: string): TableAnalysis[] =>
@@ -496,6 +530,13 @@ export interface MatrixContract {
   columns: Array<{ type: QType; level: Lvl; label: string }>;
   /** Tên nhóm cột của từng dạng như ghi trong file (VD: "TNKQ nhiều lựa chọn (I)") */
   typeHeaders: Partial<Record<QType, string>>;
+  /**
+   * Ma trận theo KĨ NĂNG (không có cột dạng câu — VD Ngữ văn: Đọc hiểu / Viết; Tiếng Anh: Listening / Reading…):
+   * đề chia phần theo kĩ năng thay vì theo Dạng I/II/III/IV.
+   */
+  sections: Array<{ name: string; questions: QuestionPlan[]; points?: number }> | null;
+  /** Đánh số câu liên tục qua các phần (Tiếng Anh) hay đánh lại từ Câu 1 mỗi phần */
+  continuousNumbering: boolean;
   topics: Array<{ chapter?: string; unit?: string }>;
   topicsSummary: string;
   warnings: string[];
@@ -540,7 +581,7 @@ export const parseMatrixContract = (html: string, opts: ParseContractOptions = {
     ok: false, tableKind: 'other', tablesFound: tables.length, codeStyle: 'none',
     questions, commands, questionCount, totalCommands: 0, hasVDC: false,
     points: { byType: {}, byTypeLevel: {}, total: null, fromFile: false },
-    questionConfig: null, meta, columns: [], typeHeaders: {}, topics: [], topicsSummary: '', warnings, confidence: 'low',
+    questionConfig: null, meta, columns: [], typeHeaders: {}, sections: null, continuousNumbering: false, topics: [], topicsSummary: '', warnings, confidence: 'low',
   };
 
   const t = pickTable(tables, opts.prefer);
@@ -551,6 +592,12 @@ export const parseMatrixContract = (html: string, opts: ParseContractOptions = {
     return base;
   }
   base.tableKind = t.kind;
+  if (t.typeless) {
+    // Ma trận theo kĩ năng: Tiếng Anh chủ yếu là trắc nghiệm, các môn khác (Ngữ văn…) là câu hỏi tự luận
+    const english = meta.subject === 'Tiếng Anh';
+    t.colMap = t.colMap.map(m => (m ? { ...m, type: english ? 'I' : 'IV' } : m));
+    base.continuousNumbering = english;
+  }
   for (let c = 0; c < t.nCols; c++) {
     const map = t.colMap[c];
     if (!map) continue;
@@ -783,6 +830,41 @@ export const parseMatrixContract = (html: string, opts: ParseContractOptions = {
   });
   base.points = { byType, byTypeLevel, total, fromFile };
 
+  // --- 5.4b Ma trận theo kĩ năng: chia phần theo cột Kĩ năng (hoặc Nội dung) ---
+  if (t.typeless) {
+    const type: QType = base.continuousNumbering ? 'I' : 'IV';
+    const sectionName = (chapter?: string, unit?: string) => (chapter || unit || 'Phần').replace(/^[IVX\d]+\s*[.)]\s*/, '');
+    const groups: Array<{ name: string; questions: QuestionPlan[]; pct: number }> = [];
+    for (const q of questions[type]) {
+      const name = sectionName(q.chapter, q.unit);
+      let g = groups.find(x => x.name === name);
+      if (!g) { g = { name, questions: [], pct: 0 }; groups.push(g); }
+      g.questions.push(q);
+    }
+    // Tỉ lệ % điểm theo dòng (ô gộp theo kĩ năng chỉ tính 1 lần)
+    if (t.roles.pct !== undefined) {
+      const seen = new Set<number>();
+      for (const r of t.dataRows) {
+        const cell = t.grid[r]?.[t.roles.pct];
+        if (!cell || seen.has(cell.id)) continue;
+        seen.add(cell.id);
+        const info = rowInfo(r);
+        const g = groups.find(x => x.name === sectionName(info.chapter, info.unit));
+        const v = parseNumberVN(cell.text);
+        if (g && v !== null) g.pct += v;
+      }
+    }
+    const pctTotal = groups.reduce((sum, g) => sum + g.pct, 0);
+    const scale = pctTotal > 20 ? 10 : 1; // cột ghi % (tổng 100) hay ghi điểm (tổng 10)
+    let running = 0;
+    base.sections = groups.map(g => ({
+      name: g.name,
+      questions: g.questions.map((q, i) => ({ ...q, num: base.continuousNumbering ? ++running : i + 1 })),
+      points: g.pct > 0 ? round2(g.pct / scale) : undefined,
+    }));
+    warnings.push(`Ma trận chia theo kĩ năng (${base.sections.map(x => x.name).join(', ')}) — không có cột dạng câu hỏi nên app coi là câu ${base.continuousNumbering ? 'trắc nghiệm' : 'tự luận'} theo từng phần.`);
+  }
+
   // --- 5.5 Tổng hợp ---
   base.totalCommands = QTYPES.reduce((s, type) => s + sumLv(commands[type]), 0);
   base.hasVDC = QTYPES.some(type => commands[type].van_dung_cao > 0);
@@ -945,6 +1027,7 @@ export const sumTypeCommands = (c: MatrixContract, type: QType) => sumLv(c.comma
 
 /** Tóm tắt 1 dòng để hiển thị cho người dùng. */
 export const summarizeContract = (c: MatrixContract): string => {
+  if (c.sections) return c.sections.map(sec => `${sec.name}: ${sec.questions.length} câu`).join(' · ');
   const parts: string[] = [];
   if (c.questionCount.I) parts.push(`Dạng I: ${c.questionCount.I} câu`);
   if (c.questionCount.II) parts.push(`Dạng II: ${c.questionCount.II} câu (${sumLv(c.commands.II)} ý)`);
@@ -962,10 +1045,40 @@ const clip = (s: string | undefined, n: number) => (s ? (s.length > n ? `${s.sli
  * Khối "HỢP ĐỒNG SỐ LIỆU" chèn vào prompt: liệt kê TỪNG câu hỏi, mức độ, đơn vị kiến thức, điểm.
  * Đây là nguồn chuẩn để AI sinh đề đúng số câu, đúng mức, đúng bài.
  */
+const questionLine = (q: QuestionPlan, label: string, maxY: number, multiItem: boolean) => {
+  const where = q.chapter && q.unit && q.chapter !== q.unit ? `${clip(q.chapter, 80)} › ${clip(q.unit, 100)}` : clip(q.unit || q.chapter, 120);
+  const pts = q.points !== undefined ? ` (${fmtNum(q.points)} điểm)` : '';
+  const lv = multiItem && (q.items.length > 1 || q.items[0]?.letter)
+    ? q.items.map(i => `ý ${i.letter || '—'}: ${LEVEL_LABEL[i.level]}`).join(', ')
+    : LEVEL_LABEL[q.items[0]?.level || 'biet'];
+  const y = q.yccd && maxY > 0 ? ` | YCCĐ: ${clip(oneLine(q.yccd), maxY)}` : '';
+  return `  - ${label} ${q.num}${pts} | ${lv}${where ? ` | ${where}` : ''}${y}`;
+};
+
+/** Khối hợp đồng cho ma trận THEO KĨ NĂNG (Ngữ văn: Đọc hiểu / Viết; Tiếng Anh: Listening / Reading …). */
+const buildSectionsPromptBlock = (c: MatrixContract, withList: boolean, maxY: number): string => {
+  const secs = c.sections || [];
+  const roman = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
+  const label = c.continuousNumbering ? 'Question' : 'Câu';
+  const lines: string[] = [];
+  lines.push('===== HỢP ĐỒNG SỐ LIỆU ĐỌC TRỰC TIẾP TỪ FILE NGƯỜI DÙNG TẢI LÊN (CHUẨN CAO NHẤT — KHÔNG ĐƯỢC THAY ĐỔI) =====');
+  lines.push(`Ma trận chia theo KĨ NĂNG. Đề gồm ĐÚNG ${secs.length} phần theo thứ tự: ${secs.map((sec, i) => `PHẦN ${roman[i] || i + 1}. ${sec.name.toUpperCase()}`).join(' ; ')}. Không thêm phần nào khác.`);
+  lines.push(`Tổng số câu: ${c.totalCommands}. ${c.continuousNumbering ? 'Đánh số câu LIÊN TỤC qua các phần (Question 1, 2, 3 …).' : 'Mỗi phần đánh số lại từ Câu 1.'}`);
+  secs.forEach((sec, i) => {
+    lines.push('');
+    lines.push(`PHẦN ${roman[i] || i + 1}. ${sec.name.toUpperCase()}${sec.points !== undefined ? ` (${fmtNum(sec.points)} điểm)` : ''}: ${sec.questions.length} câu`);
+    if (withList) sec.questions.forEach(q => lines.push(questionLine(q, label, maxY, true)));
+  });
+  lines.push('');
+  lines.push('QUY TẮC: Mỗi câu đúng phần kĩ năng, đúng mức độ và đúng nội dung đã ghi. Không thêm/bớt câu.');
+  return lines.join('\n');
+};
+
 export const buildContractPromptBlock = (c: MatrixContract, opts: { includeQuestionList?: boolean; maxYccd?: number } = {}): string => {
   if (!c.ok) return '';
   const withList = opts.includeQuestionList !== false;
   const maxY = opts.maxYccd ?? 220;
+  if (c.sections) return buildSectionsPromptBlock(c, withList, maxY);
   const lines: string[] = [];
   lines.push('===== HỢP ĐỒNG SỐ LIỆU ĐỌC TRỰC TIẾP TỪ FILE NGƯỜI DÙNG TẢI LÊN (CHUẨN CAO NHẤT — KHÔNG ĐƯỢC THAY ĐỔI) =====');
   const present = QTYPES.filter(type => c.questionCount[type] > 0);
@@ -1074,6 +1187,12 @@ export const buildSpecsTheadFromContract = (c: MatrixContract): { thead: string;
     else groups.push({ type: col.type, cols: [col] });
   }
   const levelCols = c.columns.length;
+  if (c.sections) {
+    // Ma trận theo kĩ năng: không có nhóm cột dạng câu hỏi
+    const r1 = `<tr><th rowspan="2" style="width:3%">TT</th><th rowspan="2" style="width:9%">Kĩ năng / Chủ đề</th><th rowspan="2" style="width:12%">Nội dung/đơn vị kiến thức</th><th rowspan="2" style="width:30%">Yêu cầu cần đạt</th><th colspan="${levelCols}">Số câu hỏi ở các mức độ đánh giá</th></tr>`;
+    const r2 = `<tr>${c.columns.map(col => `<th>${escHtml(col.label || LEVEL_LABEL[col.level])}</th>`).join('')}</tr>`;
+    return { thead: ['<thead>', r1, r2, '</thead>'].join('\n'), columnCount: 4 + levelCols };
+  }
   const row1 = `<tr><th rowspan="3" style="width:3%">TT</th><th rowspan="3" style="width:9%">Chủ đề/Chương</th><th rowspan="3" style="width:12%">Nội dung/đơn vị kiến thức</th><th rowspan="3" style="width:30%">Yêu cầu cần đạt</th><th colspan="${levelCols}">Số câu hỏi ở các mức độ đánh giá</th></tr>`;
   const row2 = `<tr>${groups.map(g => `<th colspan="${g.cols.length}">${escHtml(c.typeHeaders[g.type] || TYPE_LABEL[g.type])}</th>`).join('')}</tr>`;
   const row3 = `<tr>${c.columns.map(col => `<th>${escHtml(col.label || LEVEL_LABEL[col.level])}</th>`).join('')}</tr>`;
