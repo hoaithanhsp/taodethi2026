@@ -10,18 +10,24 @@ interface FileUploadZoneProps {
   maxSizeMB?: number;
   label?: string;
   sublabel?: string;
+  /** Cho phép file Word .docx (app tự đọc nội dung trước khi gửi AI) */
+  allowDocx?: boolean;
 }
+
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 const FileUploadZone: React.FC<FileUploadZoneProps> = ({
   onFileSelect,
   selectedFileName,
   onClear,
   isLoading = false,
-  accept = '.pdf,.jpg,.jpeg,.png,.webp',
+  accept,
   maxSizeMB = 20,
   label = 'Kéo thả đề thi vào đây',
   sublabel = 'hoặc click để chọn file',
+  allowDocx = false,
 }) => {
+  const acceptAttr = accept || (allowDocx ? '.pdf,.jpg,.jpeg,.png,.webp,.docx' : '.pdf,.jpg,.jpeg,.png,.webp');
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -30,8 +36,14 @@ const FileUploadZone: React.FC<FileUploadZoneProps> = ({
     setError(null);
 
     const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
-    if (!validTypes.includes(file.type)) {
-      setError('Chỉ hỗ trợ PDF hoặc hình ảnh (JPG, PNG, WEBP).');
+    const lowerName = file.name.toLowerCase();
+    const isDocx = allowDocx && (file.type === DOCX_MIME || lowerName.endsWith('.docx'));
+    if (allowDocx && lowerName.endsWith('.doc')) {
+      setError('File .doc đời cũ không đọc được. Hãy mở bằng Word → "Lưu thành" (Save As) → chọn .docx hoặc PDF.');
+      return;
+    }
+    if (!isDocx && !validTypes.includes(file.type)) {
+      setError(allowDocx ? 'Chỉ hỗ trợ Word (.docx), PDF hoặc hình ảnh (JPG, PNG, WEBP).' : 'Chỉ hỗ trợ PDF hoặc hình ảnh (JPG, PNG, WEBP).');
       return;
     }
 
@@ -45,12 +57,13 @@ const FileUploadZone: React.FC<FileUploadZoneProps> = ({
       const base64 = (e.target?.result as string).split(',')[1];
       onFileSelect({
         base64,
-        mimeType: file.type,
+        // Một số máy không gán MIME cho .docx → đặt chuẩn để các bước sau nhận đúng loại file
+        mimeType: isDocx ? DOCX_MIME : file.type,
         name: file.name,
       });
     };
     reader.readAsDataURL(file);
-  }, [onFileSelect, maxSizeMB]);
+  }, [onFileSelect, maxSizeMB, allowDocx]);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -126,7 +139,7 @@ const FileUploadZone: React.FC<FileUploadZoneProps> = ({
               <p className="text-sm text-slate-500 mt-1">{sublabel}</p>
             </div>
             <p className="text-xs text-slate-400">
-              Hỗ trợ PDF, JPG, PNG (Max {maxSizeMB}MB)
+              {allowDocx ? 'Hỗ trợ Word (.docx), PDF, JPG, PNG' : 'Hỗ trợ PDF, JPG, PNG'} (Max {maxSizeMB}MB)
             </p>
           </div>
         )}
@@ -137,7 +150,7 @@ const FileUploadZone: React.FC<FileUploadZoneProps> = ({
           className="hidden"
           onChange={handleChange}
           disabled={isLoading}
-          accept={accept}
+          accept={acceptAttr}
         />
       </div>
 

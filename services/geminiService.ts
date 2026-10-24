@@ -259,12 +259,17 @@ const getErrorText = (error: any): string => {
 };
 
 export const parseApiError = (error: any): GeminiApiErrorType => {
+  // Lỗi đọc JSON (thường do AI bị cắt giữa chừng) hoặc lỗi nội dung đã giải thích → không phải lỗi máy chủ.
+  // Trước đây "…JSON at position 15003" bị coi là lỗi 500 vì chứa chuỗi "500" → thử lại mọi model rồi báo "AI quá tải".
+  if (error instanceof SyntaxError || error instanceof UserFacingError) return 'UNKNOWN';
   const text = getErrorText(error);
   const status = String(error?.status || error?.code || '').toLowerCase();
+  // Mã HTTP phải đứng riêng (không nằm trong một số dài hơn như 15003, 40021)
+  const hasCode = (code: string) => new RegExp(`(^|[^0-9.,])${code}(?![0-9])`).test(text);
 
   if (
     status === '429' ||
-    text.includes('429') ||
+    hasCode('429') ||
     text.includes('resource_exhausted') ||
     text.includes('quota') ||
     text.includes('rate limit') ||
@@ -275,7 +280,7 @@ export const parseApiError = (error: any): GeminiApiErrorType => {
 
   if (
     status === '503' ||
-    text.includes('503') ||
+    hasCode('503') ||
     text.includes('unavailable') ||
     text.includes('service unavailable') ||
     text.includes('high demand') ||
@@ -291,10 +296,10 @@ export const parseApiError = (error: any): GeminiApiErrorType => {
     status === '502' ||
     status === '504' ||
     status === '404' ||
-    text.includes('500') ||
-    text.includes('502') ||
-    text.includes('504') ||
-    text.includes('404') ||
+    hasCode('500') ||
+    hasCode('502') ||
+    hasCode('504') ||
+    hasCode('404') ||
     text.includes('not_found') ||
     text.includes('deadline_exceeded') ||
     text.includes('deadline exceeded') ||
@@ -308,13 +313,13 @@ export const parseApiError = (error: any): GeminiApiErrorType => {
     return 'TRANSIENT_SERVER_ERROR';
   }
 
-  if (status === '403' || text.includes('permission_denied') || text.includes('403')) {
+  if (status === '403' || text.includes('permission_denied') || hasCode('403')) {
     return 'PERMISSION_DENIED';
   }
 
   if (
     status === '401' ||
-    text.includes('401') ||
+    hasCode('401') ||
     text.includes('api_key_invalid') ||
     text.includes('api key not valid') ||
     text.includes('invalid api key')
@@ -322,7 +327,7 @@ export const parseApiError = (error: any): GeminiApiErrorType => {
     return 'INVALID_API_KEY';
   }
 
-  if (status === '400' || text.includes('invalid_argument') || text.includes('400')) {
+  if (status === '400' || text.includes('invalid_argument') || hasCode('400')) {
     return 'INVALID_ARGUMENT';
   }
 
@@ -351,7 +356,11 @@ export const getFriendlyGeminiErrorMessage = (
   error: any,
   provider: AiProvider = getAiProvider()
 ): string => {
+  if (error instanceof UserFacingError) return error.message;
   const errorType = parseApiError(error);
+  if (/payload size|request entity too large|exceeds the (?:maximum|limit)/i.test(getErrorText(error))) {
+    return 'File quá lớn để gửi cho AI (giới hạn khoảng 14 MB). Hãy nén PDF, giảm độ phân giải ảnh hoặc tách đề thành nhiều phần.';
+  }
   if (errorType === 'INVALID_API_KEY') {
     return 'API Key không hợp lệ hoặc đã hết hạn. Vui lòng kiểm tra lại trong Cài đặt.';
   }
@@ -535,9 +544,9 @@ const fileToBase64 = (file: File): Promise<string> => {
 };
 
 // --- Kiểm tra output bị cắt do hết token (finishReason = MAX_TOKENS) ---
-const getFinishReason = (response: any): string =>
+export const getFinishReason = (response: any): string =>
   String(response?.candidates?.[0]?.finishReason || response?.candidates?.[0]?.finish_reason || '');
-const wasTruncated = (response: any): boolean => /MAX_TOKENS/i.test(getFinishReason(response));
+export const wasTruncated = (response: any): boolean => /MAX_TOKENS/i.test(getFinishReason(response));
 const stripCodeFences = (text: string): string => text.replace(/```html/gi, '').replace(/```/g, '');
 
 

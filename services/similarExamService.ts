@@ -1,6 +1,6 @@
 import { Type, ThinkingLevel } from "@google/genai";
 import { SimilarExamResult, SimilarExamOptions } from "../types";
-import { callWithFallback, createGeminiConfig, getAiProvider } from "./geminiService";
+import { callWithFallback, createGeminiConfig, getAiProvider, wasTruncated, UserFacingError } from "./geminiService";
 import { AiProvider } from "../constants";
 import { FIGURE_JSON_MARKDOWN_INSTRUCTIONS } from "./figureEngine";
 
@@ -82,12 +82,10 @@ QUY TẮC CÔNG THỨC TOÁN HỌC (BẮT BUỘC)
 ĐỊNH DẠNG XUẤT RA
 ═══════════════════════════════════════
 
-Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
-{
-  "analysis": "Nội dung phân tích chi tiết đề mẫu (Markdown string)",
-  "examContent": "Nội dung ĐỀ THI (Bước 1) - Chỉ chứa câu hỏi. Định dạng Markdown.",
-  "detailedSolution": "Nội dung LỜI GIẢI (Bước 2) - Chứa bảng đáp án và lời giải chi tiết. Định dạng Markdown."
-}
+Ứng dụng sẽ yêu cầu theo 2 LƯỢT riêng (để đề dài không bị cắt):
+- LƯỢT 1: trả về JSON { "analysis": "...", "examContent": "..." } — phân tích đề mẫu + ĐỀ MỚI (chỉ câu hỏi, chưa có lời giải).
+- LƯỢT 2: chỉ trả về Markdown của LỜI GIẢI cho đề mới (không JSON).
+Mỗi lượt làm ĐÚNG phần được yêu cầu trong lượt đó.
 
 ## BƯỚC 1: ĐỀ THI (field 'examContent')
 Trình bày rõ ràng, phân chia các phần:
@@ -124,57 +122,72 @@ ${FIGURE_JSON_MARKDOWN_INSTRUCTIONS}
 `;
 
 
+/** Đọc JSON trả về từ AI: chịu được code fence ```json và ký tự thừa trước/sau. */
+const parseJsonLoose = <T,>(text: string): T => {
+  try {
+    return JSON.parse(text) as T;
+  } catch (err) {
+    const cleaned = text.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start >= 0 && end > start) return JSON.parse(cleaned.slice(start, end + 1)) as T;
+    throw err;
+  }
+};
+
+const buildCustomInstructions = (options?: SimilarExamOptions): string => {
+  let customInstructions = "";
+  if (!options) return customInstructions;
+  if (options.diagramMode === 'detailed') {
+    customInstructions += `\n\n### YÊU CẦU NÂNG CAO VỀ HÌNH VẼ (High Detail):
+- BẮT BUỘC vẽ hình trực quan bằng khối \`\`\`figure-json ... \`\`\` cho mọi câu có Bảng biến thiên (type: "bbt"), Đồ thị hàm số / Diện tích hình phẳng (type: "graph"), Hình không gian 3D (type: "geo3d"), và Hình phẳng 2D (type: "geo2d").
+- Với hình không gian 3D và hình phẳng 2D: Khai báo đầy đủ các điểm phụ (extra) và ký hiệu góc vuông (marks).
+- Với đồ thị: Hiển thị đầy đủ tiệm cận, điểm cực trị và miền tô tích phân nếu có.`;
+  } else {
+    customInstructions += `\n\n### YÊU CẦU VỀ HÌNH VẼ (Standard):
+- Sử dụng khối \`\`\`figure-json ... \`\`\` để vẽ tự động Bảng biến thiên (bbt), Đồ thị hàm số (graph), Hình không gian 3D (geo3d) và Hình phẳng 2D (geo2d).`;
+  }
+  if (options.solutionMode === 'concise') {
+    customInstructions += `\n\n### YÊU CẦU VỀ LỜI GIẢI (Concise Mode):
+- TRẢ LỜI NGẮN GỌN. Tập trung vào đáp số và 1-2 bước biến đổi chốt.`;
+  } else if (options.solutionMode === 'very_detailed') {
+    customInstructions += `\n\n### YÊU CẦU VỀ LỜI GIẢI (Deep Dive Mode):
+- GIẢI CỰC KỲ CHI TIẾT. Mỗi bài gồm: Phân tích đề → Chiến lược → Lời giải → Sai lầm thường gặp.`;
+  } else {
+    customInstructions += `\n\n### YÊU CẦU VỀ LỜI GIẢI (Standard Mode):
+- Lời giải chi tiết, đầy đủ các bước, trình bày sư phạm, dễ hiểu.`;
+  }
+  return customInstructions;
+};
+
+const TRUNCATED_NOTE = '\n\n> ⚠️ Lời giải quá dài nên bị cắt ở đây. Hãy chọn "Chi tiết lời giải: Ngắn gọn" hoặc model Pro rồi tạo lại để có lời giải đầy đủ.';
+
+/**
+ * Tạo đề tương tự theo 2 lượt (tránh đề dài bị cắt cụt khi gộp tất cả vào 1 JSON):
+ *  - Lượt 1 (JSON nhỏ): phân tích đề mẫu + đề mới.  → gọi onExamReady để hiện đề ngay.
+ *  - Lượt 2 (Markdown): lời giải chi tiết cho đề mới; bị cắt do quá dài thì tự viết tiếp tối đa 2 lần.
+ */
 export const generateSimilarExam = async (
   base64Data: string,
   mimeType: string,
   options?: SimilarExamOptions,
   preferredModel?: string,
-  provider: AiProvider = getAiProvider()
+  provider: AiProvider = getAiProvider(),
+  onExamReady?: (partial: SimilarExamResult) => void
 ): Promise<SimilarExamResult> => {
-  // Build custom instructions based on options
-  let customInstructions = "";
-  if (options) {
-    if (options.diagramMode === 'detailed') {
-      customInstructions += `\n\n### YÊU CẦU NÂNG CAO VỀ HÌNH VẼ (High Detail):
-- BẮT BUỘC vẽ hình trực quan bằng khối \`\`\`figure-json ... \`\`\` cho mọi câu có Bảng biến thiên (type: "bbt"), Đồ thị hàm số / Diện tích hình phẳng (type: "graph"), Hình không gian 3D (type: "geo3d"), và Hình phẳng 2D (type: "geo2d").
-- Với hình không gian 3D và hình phẳng 2D: Khai báo đầy đủ các điểm phụ (extra) và ký hiệu góc vuông (marks).
-- Với đồ thị: Hiển thị đầy đủ tiệm cận, điểm cực trị và miền tô tích phân nếu có.`;
-    } else {
-      customInstructions += `\n\n### YÊU CẦU VỀ HÌNH VẼ (Standard):
-- Sử dụng khối \`\`\`figure-json ... \`\`\` để vẽ tự động Bảng biến thiên (bbt), Đồ thị hàm số (graph), Hình không gian 3D (geo3d) và Hình phẳng 2D (geo2d).`;
-    }
+  const finalSystemInstruction = SIMILAR_SYSTEM_INSTRUCTION + buildCustomInstructions(options);
 
-    if (options.solutionMode === 'concise') {
-      customInstructions += `\n\n### YÊU CẦU VỀ LỜI GIẢI (Concise Mode):
-- TRẢ LỜI NGẮN GỌN. Tập trung vào đáp số và 1-2 bước biến đổi chốt.`;
-    } else if (options.solutionMode === 'very_detailed') {
-      customInstructions += `\n\n### YÊU CẦU VỀ LỜI GIẢI (Deep Dive Mode):
-- GIẢI CỰC KỲ CHI TIẾT. Mỗi bài gồm: Phân tích đề → Chiến lược → Lời giải → Sai lầm thường gặp.`;
-    } else {
-      customInstructions += `\n\n### YÊU CẦU VỀ LỜI GIẢI (Standard Mode):
-- Lời giải chi tiết, đầy đủ các bước, trình bày sư phạm, dễ hiểu.`;
-    }
-  }
-
-  const finalSystemInstruction = SIMILAR_SYSTEM_INSTRUCTION + customInstructions;
-
-  return callWithFallback(
+  // ---------- LƯỢT 1: phân tích + đề mới ----------
+  const step1 = await callWithFallback(
     async (ai, modelName) => {
-      console.log(`[SimilarExam] (${provider}) Trying model: ${modelName}`);
+      console.log(`[SimilarExam] (${provider}) Lượt 1 – model: ${modelName}`);
       const response = await ai.models.generateContent({
         model: modelName,
         contents: {
           role: 'user',
           parts: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: base64Data
-              }
-            },
-            {
-              text: "Hãy phân tích đề thi này và tạo ra 1 đề thi tương tự kèm lời giải chi tiết theo hướng dẫn hệ thống."
-            }
+            { inlineData: { mimeType, data: base64Data } },
+            { text: "LƯỢT 1: Hãy phân tích đề thi này và tạo 1 ĐỀ MỚI tương tự (giữ nguyên số câu, dạng câu, thứ tự phần, điểm). CHỈ trả về JSON gồm 'analysis' và 'examContent' — CHƯA viết lời giải." }
           ]
         },
         config: createGeminiConfig({
@@ -182,37 +195,79 @@ export const generateSimilarExam = async (
           model: modelName,
           systemInstruction: finalSystemInstruction,
           thinkingLevel: ThinkingLevel.MEDIUM,
-          maxOutputTokens: 16384,
+          maxOutputTokens: 32768,
           temperature: 0.5,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              analysis: {
-                type: Type.STRING,
-                description: "Phân tích chi tiết cấu trúc, ma trận đề thi mẫu."
-              },
-              examContent: {
-                type: Type.STRING,
-                description: "Nội dung ĐỀ THI (Bước 1) - Chỉ chứa câu hỏi."
-              },
-              detailedSolution: {
-                type: Type.STRING,
-                description: "Nội dung LỜI GIẢI (Bước 2) - Chứa bảng đáp án và lời giải chi tiết."
-              }
+              analysis: { type: Type.STRING, description: "Phân tích chi tiết cấu trúc, ma trận đề thi mẫu." },
+              examContent: { type: Type.STRING, description: "Nội dung ĐỀ THI mới (Bước 1) - Chỉ chứa câu hỏi." },
             },
-            required: ["analysis", "examContent", "detailedSolution"]
+            required: ["analysis", "examContent"]
           }
         })
       });
 
       const text = response.text;
-      if (!text) throw new Error("No response from AI");
-
-      const result = JSON.parse(text) as SimilarExamResult;
-      return result;
+      if (!text) throw new Error("AI không trả về nội dung.");
+      if (wasTruncated(response)) {
+        throw new UserFacingError('Đề mẫu quá dài nên AI bị cắt giữa chừng khi tạo đề mới. Hãy tách đề mẫu thành 2 phần (ví dụ phần trắc nghiệm và phần tự luận) rồi tạo lần lượt, hoặc chọn model Pro.');
+      }
+      try {
+        const parsed = parseJsonLoose<{ analysis?: string; examContent?: string }>(text);
+        if (!parsed.examContent || !parsed.examContent.trim()) throw new Error('missing examContent');
+        return { analysis: parsed.analysis || '', examContent: parsed.examContent };
+      } catch {
+        throw new UserFacingError('AI trả về dữ liệu không đúng định dạng. Vui lòng bấm "Thử lại".');
+      }
     },
     preferredModel,
     provider
   );
+
+  onExamReady?.({ ...step1, detailedSolution: '' });
+
+  // ---------- LƯỢT 2: lời giải chi tiết (Markdown, tự viết tiếp nếu bị cắt) ----------
+  let solution = '';
+  try {
+  for (let round = 0; round < 3; round++) {
+    const isContinuation = round > 0;
+    const prompt = isContinuation
+      ? `ĐỀ THI:\n${step1.examContent}\n\n===== LỜI GIẢI ĐÃ VIẾT (bị cắt do quá dài) =====\n${solution}\n\n===== YÊU CẦU =====\nHãy VIẾT TIẾP lời giải ngay từ chỗ bị cắt ở trên. KHÔNG lặp lại phần đã viết, KHÔNG viết lại tiêu đề. Chỉ trả về Markdown phần viết tiếp.`
+      : `LƯỢT 2: Dưới đây là ĐỀ MỚI vừa tạo. Hãy viết HƯỚNG DẪN GIẢI CHI TIẾT cho đề này đúng định dạng "BƯỚC 2" (I. Bảng đáp án nhanh, II. Lời giải chi tiết cho TẤT CẢ các câu). CHỈ trả về nội dung Markdown của lời giải (không JSON, không chép lại đề).\n\nĐỀ MỚI:\n${step1.examContent}`;
+    const { text, truncated } = await callWithFallback(
+      async (ai, modelName) => {
+        console.log(`[SimilarExam] (${provider}) Lượt 2${isContinuation ? ` (viết tiếp ${round})` : ''} – model: ${modelName}`);
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: { role: 'user', parts: [{ text: prompt }] },
+          config: createGeminiConfig({
+            provider,
+            model: modelName,
+            systemInstruction: finalSystemInstruction,
+            thinkingLevel: ThinkingLevel.MEDIUM,
+            maxOutputTokens: 32768,
+            temperature: 0.3,
+          })
+        });
+        return {
+          text: (response.text || '').replace(/^\s*```(?:markdown|md)?\s*/i, '').replace(/\s*```\s*$/i, ''),
+          truncated: wasTruncated(response),
+        };
+      },
+      preferredModel,
+      provider
+    );
+    solution += text; // phần viết tiếp nối liền chỗ bị cắt
+    if (!truncated) break;
+    if (round === 2) solution += TRUNCATED_NOTE;
+  }
+  } catch (err: any) {
+    // Đề mới đã có → không bỏ đi; chỉ báo lời giải chưa tạo xong
+    console.warn('[SimilarExam] Lượt 2 (lời giải) lỗi:', err);
+    solution += `\n\n> ⚠️ Chưa tạo xong lời giải: ${err?.message || 'lỗi không xác định'}. Bấm "Tạo đề mới" để thử lại.`;
+  }
+
+  return { ...step1, detailedSolution: solution };
 };

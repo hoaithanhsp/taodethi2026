@@ -4,10 +4,11 @@ import { Chat } from "@google/genai";
 import FileUploadZone from './FileUploadZone';
 import MarkdownRenderer from './MarkdownRenderer';
 import BbtQuickGenerator from './BbtQuickGenerator';
-import { createVariantSession, generateVariantStep1, generateVariantNextStep, cloneVariantSession } from '../services/variantsExamService';
+import { createVariantSession, generateVariantStep1, generateVariantNextStep, cloneVariantSession, countVariantQuestions } from '../services/variantsExamService';
 import { exportToDoc } from '../services/exportUtils';
 import { VariantFileData, VariantState } from '../types';
-import { getApiKey, getFriendlyGeminiErrorMessage, parseApiError, getAiProvider, getGeminiModelsToTry, getSelectedModel, setFallbackNotice } from '../services/geminiService';
+import { getApiKey, getFriendlyGeminiErrorMessage, parseApiError, getAiProvider, getGeminiModelsToTry, getSelectedModel, setFallbackNotice, UserFacingError } from '../services/geminiService';
+import { prepareExamSourceParts, isDocxSource } from '../services/examSourceService';
 
 interface VariantsExamPageProps {
   checkAuth: () => boolean;
@@ -20,11 +21,24 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
   const [col3, setCol3] = useState('');
   const [state, setState] = useState<VariantState>(VariantState.IDLE);
   const [error, setError] = useState<string | null>(null);
+  // Bước bị lỗi (1/2/3) → cho phép chạy tiếp từ bước đó mà KHÔNG mất các đề đã sinh xong
+  const [failedStep, setFailedStep] = useState<1 | 2 | 3 | null>(null);
 
   const chatSessionRef = useRef<Chat | null>(null);
   const currentModelIndexRef = useRef<number>(0);
 
-  const handleFileSelect = (data: { base64: string; mimeType: string; name: string }) => {
+  const handleFileSelect = async (data: { base64: string; mimeType: string; name: string }) => {
+    setError(null);
+    if (isDocxSource(data.mimeType, data.name)) {
+      // Kiểm tra file Word ngay khi chọn (MathType, .doc cũ, đề dạng ảnh…) để báo sớm
+      try {
+        await prepareExamSourceParts(data.base64, data.mimeType, data.name);
+      } catch (err: any) {
+        setFile(null);
+        setError(err?.message || 'Không đọc được file Word này.');
+        return;
+      }
+    }
     setFile({ name: data.name, type: data.mimeType, data: data.base64 });
   };
 
@@ -50,7 +64,8 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
         console.warn(`[Variants] (${provider}) Step '${stepName}' failed with ${models[i]} (${errorType}):`, err);
         lastError = err;
 
-        if (errorType === 'INVALID_API_KEY') {
+        // Sai API key hoặc lỗi về file (Word MathType, .doc cũ…) → đổi model cũng vô ích
+        if (errorType === 'INVALID_API_KEY' || err instanceof UserFacingError) {
           break;
         }
 
@@ -72,7 +87,11 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
     throw new Error(getFriendlyGeminiErrorMessage(lastError));
   };
 
-  const runProcess = async () => {
+  const STEP_STATES = [VariantState.PROCESSING_STEP_1, VariantState.PROCESSING_STEP_2, VariantState.PROCESSING_STEP_3] as const;
+  const setters = [setCol1, setCol2, setCol3];
+
+  /** Chạy quy trình từ bước `fromStep` (1 = từ đầu). Các đề trước bước đó được giữ nguyên. */
+  const runFrom = async (fromStep: 1 | 2 | 3) => {
     if (!file) return;
     if (!checkAuth()) return;
 
@@ -84,69 +103,55 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
       return;
     }
 
-    currentModelIndexRef.current = 0;
-    setState(VariantState.PROCESSING_STEP_1);
-    setCol1(''); setCol2(''); setCol3('');
     setError(null);
+    setFailedStep(null);
     setFallbackNotice(null);
-
-    chatSessionRef.current = createVariantSession(apiKey, models[0], provider);
-
-    try {
-      // Step 1
-      await executeStepWithRetry(
-        "Step 1",
-        async (chat) => {
-          await generateVariantStep1(chat, file, (chunk) => setCol1(prev => prev + chunk));
-        },
-        () => setCol1('')
-      );
-    } catch (err: any) {
-      handleError(err);
-      return;
+    if (fromStep === 1 || !chatSessionRef.current) {
+      // Bắt đầu lại từ đầu (hoặc chưa có phiên): tạo phiên mới
+      fromStep = 1;
+      currentModelIndexRef.current = 0;
+      setCol1(''); setCol2(''); setCol3('');
+      chatSessionRef.current = createVariantSession(apiKey, models[0], provider);
+    } else {
+      // Chạy tiếp: xoá phần dở dang của bước lỗi và các bước sau
+      for (let k = fromStep; k <= 3; k++) setters[k - 1]('');
     }
 
-    // Step 2
-    setState(VariantState.PROCESSING_STEP_2);
-    try {
-      await executeStepWithRetry(
-        "Step 2",
-        async (chat) => {
-          await generateVariantNextStep(chat, 2, (chunk) => setCol2(prev => prev + chunk));
-        },
-        () => setCol2('')
-      );
-    } catch (err: any) {
-      handleError(err);
-      return;
+    for (let step = fromStep; step <= 3; step++) {
+      setState(STEP_STATES[step - 1]);
+      const setCol = setters[step - 1];
+      try {
+        await executeStepWithRetry(
+          `Step ${step}`,
+          async (chat) => {
+            if (step === 1) await generateVariantStep1(chat, file, (chunk) => setCol(prev => prev + chunk));
+            else await generateVariantNextStep(chat, step, (chunk) => setCol(prev => prev + chunk));
+          },
+          () => setCol('')
+        );
+      } catch (err: any) {
+        handleError(err, step as 1 | 2 | 3);
+        return;
+      }
     }
-
-    // Step 3
-    setState(VariantState.PROCESSING_STEP_3);
-    try {
-      await executeStepWithRetry(
-        "Step 3",
-        async (chat) => {
-          await generateVariantNextStep(chat, 3, (chunk) => setCol3(prev => prev + chunk));
-        },
-        () => setCol3('')
-      );
-      setFallbackNotice(null);
-      setState(VariantState.COMPLETE);
-    } catch (err: any) {
-      handleError(err);
-    }
+    setFallbackNotice(null);
+    setState(VariantState.COMPLETE);
   };
 
-  const handleError = (err: any) => {
+  const runProcess = () => runFrom(1);
+
+  const handleError = (err: any, step: 1 | 2 | 3) => {
     setFallbackNotice(null);
+    setFailedStep(step);
     setState(VariantState.ERROR);
     setError(getFriendlyGeminiErrorMessage(err));
   };
 
   const handleExport = () => {
     if (!col1 && !col2 && !col3) return;
-    const fullContent = `${col1}\n\n***\n\n${col2}\n\n***\n\n${col3}`;
+    // Mỗi đề bắt đầu ở TRANG MỚI trong file Word (trước đây chỉ có đường kẻ ngang)
+    const pageBreak = '\n\n<div style="page-break-before: always"></div>\n\n';
+    const fullContent = [col1, col2, col3].filter(Boolean).join(pageBreak);
     const fileName = file ? `Bo_3_De_Thi_${file.name.split('.')[0]}` : 'ExamGen_Output';
     exportToDoc(fullContent, fileName);
   };
@@ -156,6 +161,7 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
     setCol1(''); setCol2(''); setCol3('');
     setState(VariantState.IDLE);
     setError(null);
+    setFailedStep(null);
     chatSessionRef.current = null;
     currentModelIndexRef.current = 0;
   };
@@ -169,7 +175,7 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
             Sinh <span className="text-blue-600">3 đề biến thể</span> từ 1 đề gốc
           </h2>
           <p className="text-base text-slate-600 max-w-xl mx-auto leading-relaxed">
-            Tải lên đề gốc (PDF/Ảnh). Hệ thống sẽ tự động sinh 3 đề biến thể kèm đáp án chi tiết theo quy trình 3 bước.
+            Tải lên đề gốc (Word, PDF hoặc ảnh). Hệ thống sẽ tự động sinh 3 đề biến thể kèm đáp án chi tiết theo quy trình 3 bước.
           </p>
         </div>
 
@@ -179,7 +185,9 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
             selectedFileName={file?.name}
             onClear={reset}
             label="Kéo thả đề gốc vào đây"
-            sublabel="Hỗ trợ PDF, JPG, PNG"
+            sublabel="Hỗ trợ Word (.docx), PDF, JPG, PNG (tối đa 14 MB)"
+            maxSizeMB={14}
+            allowDocx
           />
 
           <button
@@ -218,20 +226,23 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
 
   // ===== PROCESSING / COMPLETE / ERROR =====
   const renderStepIndicator = (step: number, label: string) => {
+    // Khi lỗi: các bước trước bước lỗi vẫn hiện "đã xong", bước lỗi hiện đỏ
     const isActive = state === step;
-    const isDone = state > step && state !== VariantState.ERROR;
-    const isError = state === VariantState.ERROR && state >= step;
+    const isError = state === VariantState.ERROR && failedStep === step;
+    const isDone = state === VariantState.ERROR
+      ? failedStep !== null && step < failedStep
+      : state > step;
 
     return (
       <div className={`flex items-center ${
-        isError && state === step ? 'text-red-500' :
+        isError ? 'text-red-500' :
         isActive ? 'text-teal-600 animate-pulse' :
         isDone ? 'text-green-600' :
         'text-slate-400'
       }`}>
         {isDone ? (
           <FileCheck className="w-5 h-5 mr-2" />
-        ) : isError && state === step ? (
+        ) : isError ? (
           <AlertCircle className="w-5 h-5 mr-2 text-red-500" />
         ) : (
           <span className="w-6 h-6 rounded-full border-2 flex items-center justify-center mr-2 text-xs border-current">{step}</span>
@@ -245,6 +256,9 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
     <div className="flex flex-col panel-elevated overflow-hidden h-full min-h-[400px]">
       <div className="p-3 bg-teal-50/80 border-b border-teal-100 text-center font-bold text-teal-800 uppercase text-xs tracking-wider">
         {title}
+        {content && state !== stepState && countVariantQuestions(content) !== null && (
+          <span className="ml-2 normal-case font-medium text-teal-600">({countVariantQuestions(content)} câu)</span>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto p-4">
         {content ? (
@@ -298,10 +312,28 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
       {error && (
         <div className="mb-4 mx-auto max-w-2xl w-full p-4 bg-red-50 text-red-700 border border-red-200 rounded-xl flex items-center gap-3">
           <AlertCircle className="w-5 h-5 shrink-0" />
-          <span className="break-all text-sm flex-1">{error}</span>
-          <button onClick={reset} className="underline font-bold text-sm">Thử lại</button>
+          <span className="break-words text-sm flex-1">{error}</span>
+          {failedStep && file && (
+            <button onClick={() => runFrom(failedStep)} className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-xs shrink-0">
+              {failedStep === 1 ? 'Thử lại' : `Chạy tiếp từ Đề ${failedStep}`}
+            </button>
+          )}
+          <button onClick={reset} className="underline font-bold text-xs shrink-0">Làm lại từ đầu</button>
         </div>
       )}
+
+      {/* So sánh số câu giữa các đề (đề biến thể phải cùng số câu) */}
+      {(() => {
+        const counts = [col1, col2, col3].map(c => countVariantQuestions(c));
+        const done = [col1, col2, col3].map((c, i) => !!c && (state > STEP_STATES[i] || (state === VariantState.ERROR && failedStep !== null && i + 1 < failedStep)));
+        const known = counts.filter((n, i) => n !== null && done[i]) as number[];
+        if (known.length < 2 || known.every(n => n === known[0])) return null;
+        return (
+          <div className="mb-4 mx-auto max-w-2xl w-full p-3 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl text-sm">
+            ⚠️ Số câu giữa các đề không bằng nhau: {counts.map((n, i) => (done[i] ? `Đề ${i + 1}: ${n ?? '?'} câu` : null)).filter(Boolean).join(' · ')}. Vui lòng kiểm tra lại hoặc chạy lại đề bị thiếu.
+          </div>
+        );
+      })()}
 
       {(col1 || col2 || col3) && (
         <BbtQuickGenerator

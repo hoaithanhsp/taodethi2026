@@ -7,6 +7,7 @@ import { generateSimilarExam } from '../services/similarExamService';
 import { exportToDoc } from '../services/exportUtils';
 import { SimilarExamResult, SimilarExamFileData, DiagramMode, SolutionMode } from '../types';
 import { getSelectedModel } from '../services/geminiService';
+import { prepareExamSourceParts, isDocxSource } from '../services/examSourceService';
 
 interface SimilarExamPageProps {
   checkAuth: () => boolean;
@@ -19,12 +20,27 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
   const [fileData, setFileData] = useState<SimilarExamFileData | null>(null);
   const [errorDetail, setErrorDetail] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  // Đề mới đã có, đang viết lời giải (lượt 2)
+  const [solutionPending, setSolutionPending] = useState(false);
 
   // Options
   const [diagramMode, setDiagramMode] = useState<DiagramMode>('standard');
   const [solutionMode, setSolutionMode] = useState<SolutionMode>('detailed');
 
-  const handleFileSelect = (data: { base64: string; mimeType: string; name: string }) => {
+  const [fileError, setFileError] = useState('');
+
+  const handleFileSelect = async (data: { base64: string; mimeType: string; name: string }) => {
+    setFileError('');
+    if (isDocxSource(data.mimeType, data.name)) {
+      // Kiểm tra file Word ngay khi chọn (MathType, .doc cũ, đề dạng ảnh…) để báo sớm
+      try {
+        await prepareExamSourceParts(data.base64, data.mimeType, data.name);
+      } catch (err: any) {
+        setFileData(null);
+        setFileError(err?.message || 'Không đọc được file Word này.');
+        return;
+      }
+    }
     setFileData(data);
   };
 
@@ -32,7 +48,10 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
     if (!fileData || isGenerating) return;
     if (!checkAuth()) return;
 
-    setStatus('analyzing');
+    // Sinh lại khi đã có kết quả: GIỮ kết quả cũ trên màn hình cho tới khi có đề mới (lỗi thì không mất đề cũ)
+    const hadResult = !!result && status === 'success';
+    let gotNewExam = false;
+    if (!hadResult) setStatus('analyzing');
     setIsGenerating(true);
     setErrorDetail('');
 
@@ -41,16 +60,32 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
         fileData.base64,
         fileData.mimeType,
         { diagramMode, solutionMode },
-        getSelectedModel()
+        getSelectedModel(),
+        undefined,
+        (partial) => {
+          // Đề mới xong trước → hiện ngay, lời giải viết tiếp ở nền
+          gotNewExam = true;
+          setResult(partial);
+          setSolutionPending(true);
+          setStatus('success');
+          setActiveTab('examContent');
+        },
+        fileData.name
       );
       setResult(generatedContent);
       setStatus('success');
     } catch (error: any) {
       console.error(error);
-      setStatus('error');
-      setErrorDetail(error.message || JSON.stringify(error));
+      const message = error?.message || JSON.stringify(error);
+      if (hadResult || gotNewExam) {
+        setErrorDetail(message); // hiện thành thông báo, không xoá kết quả đang có
+      } else {
+        setStatus('error');
+        setErrorDetail(message);
+      }
     } finally {
       setIsGenerating(false);
+      setSolutionPending(false);
     }
   };
 
@@ -58,6 +93,7 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
     setStatus('idle');
     setResult(null);
     setFileData(null);
+    setFileError('');
     setActiveTab('analysis');
     setErrorDetail('');
   };
@@ -71,6 +107,14 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
       activeTab === 'examContent' ? 'DeThi' : 'LoiGiai';
     const baseName = fileData?.name?.replace(/\.[^/.]+$/, '') || 'export';
     await exportToDoc(content, `${tabLabel}_${baseName}`);
+  };
+
+  /** Xuất 1 file Word gồm ĐỀ + LỜI GIẢI (lời giải sang trang mới). */
+  const handleExportExamWithSolution = async () => {
+    if (!result?.examContent) return;
+    const baseName = fileData?.name?.replace(/\.[^/.]+$/, '') || 'export';
+    const combined = `${result.examContent}\n\n<div style="page-break-before: always"></div>\n\n## HƯỚNG DẪN GIẢI CHI TIẾT\n\n${result.detailedSolution || ''}`;
+    await exportToDoc(combined, `DeThi_LoiGiai_${baseName}`);
   };
 
   const handleCopy = () => {
@@ -89,7 +133,7 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
             Biến một đề thi thành <span className="text-blue-600">vô hạn</span>
           </h2>
           <p className="text-base text-slate-600 max-w-xl mx-auto leading-relaxed">
-            Tải lên đề thi mẫu (PDF/Ảnh). AI sẽ phân tích cấu trúc, độ khó và sinh ra đề tương tự chỉ trong giây lát.
+            Tải lên đề thi mẫu (Word, PDF hoặc ảnh). AI sẽ phân tích cấu trúc, độ khó và sinh ra đề tương tự chỉ trong giây lát.
           </p>
         </div>
 
@@ -138,8 +182,13 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
             onClear={() => setFileData(null)}
             isLoading={status === 'analyzing'}
             label="Kéo thả đề thi mẫu vào đây"
-            sublabel="Hỗ trợ PDF, JPG, PNG"
+            sublabel="Hỗ trợ Word (.docx), PDF, JPG, PNG (tối đa 14 MB)"
+            maxSizeMB={14}
+            allowDocx
           />
+          {fileError && (
+            <p className="mt-3 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">{fileError}</p>
+          )}
         </div>
 
         {/* Generate Button */}
@@ -211,12 +260,23 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
         <p className="text-red-600 font-medium mb-4 px-4 break-words">
           {errorDetail || "Không thể xử lý đề thi. Vui lòng thử lại."}
         </p>
-        <button
-          onClick={resetApp}
-          className="px-6 py-3 bg-teal-700 text-white font-medium rounded-xl hover:bg-teal-800 transition-colors shadow-lg"
-        >
-          Thử lại
-        </button>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          {fileData && (
+            <button
+              onClick={handleGenerate}
+              disabled={isGenerating}
+              className="px-6 py-3 bg-teal-700 text-white font-medium rounded-xl hover:bg-teal-800 transition-colors shadow-lg disabled:opacity-60"
+            >
+              Thử lại với file này
+            </button>
+          )}
+          <button
+            onClick={resetApp}
+            className="px-6 py-3 bg-white text-teal-800 border border-teal-200 font-medium rounded-xl hover:bg-teal-50 transition-colors"
+          >
+            Chọn file khác
+          </button>
+        </div>
       </div>
     );
   }
@@ -263,8 +323,8 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
               disabled={isGenerating}
               className={`w-full py-2 badge-section text-white text-sm font-medium rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              Tạo đề mới
+              <RotateCcw className={`w-3.5 h-3.5 ${isGenerating ? 'animate-spin' : ''}`} />
+              {isGenerating ? (solutionPending ? 'Đang viết lời giải…' : 'Đang tạo đề…') : 'Tạo đề mới'}
             </button>
             <button
               onClick={resetApp}
@@ -281,6 +341,17 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
         <div className="card-elevated p-6 md:p-8 min-h-[500px] relative">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-teal-500 via-emerald-500 to-cyan-500 rounded-t-xl opacity-80" />
 
+          {errorDetail && (
+            <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm break-words">
+              ⚠️ {errorDetail} {result ? '(Kết quả hiện tại vẫn được giữ nguyên.)' : ''}
+            </div>
+          )}
+          {isGenerating && !solutionPending && (
+            <div className="mb-4 p-3 rounded-xl bg-teal-50 border border-teal-100 text-teal-700 text-sm">
+              Đang tạo đề mới… Kết quả hiện tại vẫn được giữ nguyên cho tới khi có đề mới.
+            </div>
+          )}
+
           {/* Toolbar */}
           <div className="mb-6 pb-4 border-b border-slate-100 flex flex-wrap justify-between items-center gap-4">
             <h2 className="text-xl font-bold text-teal-900">
@@ -296,6 +367,17 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
                 <Download className="w-4 h-4" />
                 Word
               </button>
+              {activeTab !== 'analysis' && (
+                <button
+                  onClick={handleExportExamWithSolution}
+                  disabled={solutionPending}
+                  title="Xuất 1 file Word gồm Đề thi và Lời giải (lời giải sang trang mới)"
+                  className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                >
+                  <FileText className="w-4 h-4" />
+                  Word: Đề + Lời giải
+                </button>
+              )}
               <button
                 onClick={handleCopy}
                 className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-sm font-medium transition-colors"
@@ -323,7 +405,13 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
           <div>
             {activeTab === 'analysis' && result && <MarkdownRenderer content={result.analysis} />}
             {activeTab === 'examContent' && result && <MarkdownRenderer content={result.examContent} />}
-            {activeTab === 'detailedSolution' && result && <MarkdownRenderer content={result.detailedSolution} />}
+            {activeTab === 'detailedSolution' && result && (
+              result.detailedSolution
+                ? <MarkdownRenderer content={result.detailedSolution} />
+                : solutionPending
+                  ? <div className="py-16 text-center text-teal-700 text-sm"><BrainCircuit className="w-6 h-6 mx-auto mb-2 animate-spin" />Đang viết lời giải chi tiết cho đề mới…</div>
+                  : <div className="py-16 text-center text-slate-500 text-sm">Chưa có lời giải.</div>
+            )}
           </div>
         </div>
       </div>

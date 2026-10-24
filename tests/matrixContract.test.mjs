@@ -18,7 +18,7 @@ const stubMammoth = {
 };
 const out = await build({
   stdin: {
-    contents: `export * from './services/docxMathParser.ts'; export * from './services/matrixContract.ts'; export * from './services/examValidator.ts';`,
+    contents: `export * from './services/docxMathParser.ts'; export * from './services/matrixContract.ts'; export * from './services/examValidator.ts'; export { prepareExamSourceParts } from './services/examSourceService.ts';`,
     resolveDir: new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'),
     loader: 'ts',
   },
@@ -176,6 +176,56 @@ await t('Bảng bìa / ký duyệt không phải ma trận → không ghi đè c
   assert.ok(c.warnings.length > 0);
 });
 
+await t('Ma trận Ngữ văn theo KĨ NĂNG (không có cột dạng câu): chia phần Đọc hiểu / Viết, điểm theo %', async () => {
+  const x = await makeDocx(P('MA TRẬN ĐỀ KIỂM TRA CUỐI KÌ I – MÔN NGỮ VĂN LỚP 10', true) + TBL([
+    TR([TC('TT', { vm: 'r' }), TC('Kĩ năng', { vm: 'r' }), TC('Nội dung/đơn vị kiến thức', { vm: 'r' }), TC('Mức độ nhận thức', { span: 4 }), TC('Tổng % điểm', { vm: 'r' })]),
+    TR([TC('', { vm: 'c' }), TC('', { vm: 'c' }), TC('', { vm: 'c' }), TC('Nhận biết'), TC('Thông hiểu'), TC('Vận dụng'), TC('Vận dụng cao'), TC('', { vm: 'c' })]),
+    TR([TC('1'), TC('Đọc hiểu'), TC('Thơ trữ tình'), TC('3'), TC('2'), TC('1'), TC(''), TC('40')]),
+    TR([TC('2'), TC('Viết'), TC('Viết bài văn nghị luận phân tích một tác phẩm thơ'), TC(''), TC(''), TC(''), TC('1'), TC('60')]),
+    TR([TC('Tổng', { span: 3 }), TC('3'), TC('2'), TC('1'), TC('1'), TC('100')]),
+  ], 8));
+  const c = m.parseMatrixContract(x.matrixHtml);
+  assert.equal(c.ok, true);
+  assert.equal(c.meta.subject, 'Ngữ văn');
+  assert.deepEqual(c.sections.map(s => [s.name, s.questions.length, s.points]), [['Đọc hiểu', 6, 4], ['Viết', 1, 6]]);
+  assert.deepEqual(c.sections[1].questions.map(q => q.num), [1], 'mỗi phần đánh số lại từ Câu 1');
+  assert.equal(c.sections[1].questions[0].items[0].level, 'van_dung_cao');
+  const block = m.buildContractPromptBlock(c);
+  assert.ok(/PHẦN I\. ĐỌC HIỂU \(4,0 điểm\): 6 câu/.test(block) && /PHẦN II\. VIẾT \(6,0 điểm\): 1 câu/.test(block), block);
+  assert.ok(!/Tự luận/.test(m.buildSpecsTheadFromContract(c).thead));
+});
+
+await t('Ma trận mẫu cũ: mức độ ở TRÊN, "TNKQ | TL" ở dưới', async () => {
+  const lvTop = ['Nhận biết', 'Thông hiểu', 'Vận dụng'];
+  const x = await makeDocx(P('MA TRẬN KIỂM TRA GIỮA KÌ II – MÔN SINH HỌC 11', true) + TBL([
+    TR([TC('TT', { vm: 'r' }), TC('Chủ đề', { vm: 'r' }), ...lvTop.map(l => TC(l, { span: 2 })), TC('Tổng', { span: 2, vm: 'r' })]),
+    TR([TC('', { vm: 'c' }), TC('', { vm: 'c' }), ...lvTop.flatMap(() => [TC('TNKQ'), TC('TL')]), TC('', { span: 2, vm: 'c' })]),
+    TR([TC('1'), TC('Sinh trưởng ở thực vật'), TC('4'), TC(''), TC('2'), TC('1'), TC(''), TC('1'), TC('8'), TC('')]),
+    TR([TC('2'), TC('Sinh sản ở động vật'), TC('4'), TC(''), TC('2'), TC(''), TC(''), TC('1'), TC('8'), TC('')]),
+    TR([TC('Tổng số câu', { span: 2 }), TC('8'), TC('0'), TC('4'), TC('1'), TC('0'), TC('2'), TC(''), TC('')]),
+  ], 10));
+  assert.ok(/<thead>[\s\S]*TNKQ[\s\S]*<\/thead>/.test(x.matrixHtml), 'dòng TNKQ | TL thuộc tiêu đề bảng');
+  const c = m.parseMatrixContract(x.matrixHtml);
+  assert.equal(c.meta.subject, 'Sinh học');
+  assert.deepEqual(c.commands.I, lv(8, 4, 0));
+  assert.deepEqual(c.commands.IV, lv(0, 1, 2));
+  assert.equal(c.sections, null);
+  assert.equal(c.warnings.length, 0, c.warnings.join(' | '));
+});
+
+await t('Ma trận có cột phụ "Số câu | Tỉ lệ %" dưới mỗi mức độ: chỉ đếm cột Số câu', async () => {
+  const lvTop = ['Nhận biết', 'Thông hiểu', 'Vận dụng'];
+  const x = await makeDocx(P('MA TRẬN – MÔN NGỮ VĂN 8', true) + TBL([
+    TR([TC('TT', { vm: 'r' }), TC('Kĩ năng', { vm: 'r' }), ...lvTop.map(l => TC(l, { span: 2 })), TC('Tổng %', { vm: 'r' })]),
+    TR([TC('', { vm: 'c' }), TC('', { vm: 'c' }), ...lvTop.flatMap(() => [TC('Số câu'), TC('Tỉ lệ %')]), TC('', { vm: 'c' })]),
+    TR([TC('1'), TC('Đọc hiểu'), TC('4'), TC('20'), TC('3'), TC('15'), TC('1'), TC('10'), TC('45')]),
+    TR([TC('2'), TC('Viết'), TC(''), TC(''), TC(''), TC(''), TC('1'), TC('55'), TC('55')]),
+  ], 9));
+  const c = m.parseMatrixContract(x.matrixHtml);
+  assert.deepEqual(c.sections.map(s => [s.name, s.questions.length, s.points]), [['Đọc hiểu', 8, 4.5], ['Viết', 1, 5.5]]);
+  assert.deepEqual(c.commands.IV, lv(4, 3, 2));
+});
+
 // ---------------------------------------------------------------- đọc ô & môn học
 await t('Đọc ô: mã La Mã, mã "Câu", khoảng, số lượng', () => {
   const codes = s => m.parseCellContent(s).codes.map(c => `${c.type || ''}${c.num}${c.letter || ''}`);
@@ -237,6 +287,19 @@ await t('Kiểm tra đề: tiêu đề kiểu "I. Trắc nghiệm nhiều lựa 
   assert.ok(m.validateExamHtml(exam({ missingD: true }), { counts: null }).some(i => i.code === 'OPTIONS_I'));
 });
 
+await t('Kiểm tra đề Ngữ văn (Đọc hiểu / Viết) & Tiếng Anh (Part / Question / Answer key): không báo nhầm', () => {
+  const van = `<html><body><h3>PHẦN I. ĐỌC HIỂU (4,0 điểm)</h3><p>Đọc văn bản sau và trả lời câu hỏi: …</p>
+<p>Câu 1. Xác định thể thơ.</p><p>Câu 2. Nêu chủ đề.</p><p>Câu 3. Phân tích biện pháp tu từ.</p>
+<h3>PHẦN II. VIẾT (6,0 điểm)</h3><p>Câu 1. Viết bài văn nghị luận…</p>
+<h3>HƯỚNG DẪN CHẤM</h3><p>Câu 1: …</p></body></html>`;
+  assert.deepEqual(m.validateExamHtml(van, { counts: null, total: 4 }).filter(i => i.severity === 'error'), []);
+  assert.ok(m.validateExamHtml(van, { counts: null, total: 5 }).some(i => i.code === 'COUNT_TOTAL'));
+  const en = `<html><body><h3>PART A. LISTENING</h3><p>Question 1. Choose the correct answer.</p><p>A. go B. goes C. went D. gone</p>
+<h3>PART II. READING</h3><p>Question 2. What is the main idea?</p><p>A. x</p><p>B. y</p><p>C. z</p><p>D. t</p>
+<h3>ANSWER KEY</h3><p>1. A 2. C</p></body></html>`;
+  assert.deepEqual(m.validateExamHtml(en, { counts: { I: 2, II: 0, III: 0, IV: 0 } }).filter(i => i.severity === 'error'), []);
+});
+
 // ---------------------------------------------------------------- công thức Word (OMML → LaTeX)
 await t('OMML → LaTeX: cấu trúc lồng nhau không bị cắt/mất chữ', () => {
   const r = x => `<m:r><m:t>${x}</m:t></m:r>`;
@@ -249,6 +312,44 @@ await t('OMML → LaTeX: cấu trúc lồng nhau không bị cắt/mất chữ',
   assert.equal(conv(frac(frac(r('a'), r('b')), r('c'))), '\\frac{\\frac{a}{b}}{c}');
   assert.equal(conv(`<m:func><m:funcPr/><m:fName>${r('sin')}</m:fName>${e(r('x'))}</m:func>${r('+')}${frac(r('1'), r('2'))}`), '\\sin x+\\frac{1}{2}');
   assert.equal(conv(r('x≤2')), 'x\\le 2');
+});
+
+// ---------------------------------------------------------------- đề gốc dạng Word (Tạo đề tương tự / Sinh đề biến thể)
+const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+const makeExamDocx = async ({ mathType = 0 } = {}) => {
+  const zip = new JSZip();
+  const omml = '<m:oMath><m:f><m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:den></m:f></m:oMath>';
+  const drawing = '<w:r><w:drawing><wp:inline><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId9"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+  const mt = '<w:r><w:object><v:shape><v:imagedata r:id="rId10"/></v:shape><o:OLEObject ProgID="Equation.DSMT4" r:id="rId11"/></w:object></w:r>';
+  const body = P('ĐỀ KIỂM TRA MÔN TOÁN 10', true)
+    + `<w:p><w:r><w:t xml:space="preserve">Câu 1. Tính </w:t></w:r>${omml}${'<w:r><w:t> hoặc </w:t></w:r>' + mt.repeat(mathType)}</w:p>`
+    + `<w:p>${drawing}</w:p>`
+    + TBL([TR([TC('x'), TC('1'), TC('2')]), TR([TC('y'), TC('3'), TC('5')])], 3)
+    + P('A. 1   B. 2   C. 3   D. 4');
+  zip.file('word/document.xml', `<?xml version="1.0"?><w:document xmlns:w="w" xmlns:m="m" xmlns:r="r"><w:body>${body}</w:body></w:document>`);
+  zip.file('word/_rels/document.xml.rels', '<Relationships><Relationship Id="rId9" Type="image" Target="media/image1.png"/><Relationship Target="media/image2.wmf" Id="rId10" Type="image"/></Relationships>');
+  zip.file('word/media/image1.png', PNG_1PX, { base64: true });
+  zip.file('word/media/image2.wmf', 'x');
+  return zip.generateAsync({ type: 'base64' });
+};
+
+await t('Đề gốc Word: giữ bảng, công thức → LaTeX, vị trí [HÌNH 1] + ảnh đính kèm', async () => {
+  const parts = await m.prepareExamSourceParts(await makeExamDocx(), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'de.docx');
+  const text = parts[0].text;
+  assert.ok(/\$\\frac\{1\}\{2\}\$/.test(text), 'công thức Equation chuyển sang LaTeX');
+  assert.ok(/<table[\s\S]*<td>y<\/td>[\s\S]*<\/table>/.test(text), 'giữ bảng');
+  assert.ok(/\[HÌNH 1\]/.test(text) && /A\. 1/.test(text));
+  assert.equal(parts[1].text, '[HÌNH 1]');
+  assert.equal(parts[2].inlineData.mimeType, 'image/png');
+  const pdf = await m.prepareExamSourceParts('QUJD', 'application/pdf', 'de.pdf');
+  assert.deepEqual(pdf, [{ inlineData: { mimeType: 'application/pdf', data: 'QUJD' } }]);
+});
+
+await t('Đề gốc Word dùng MathType (ảnh WMF) → báo rõ cách xử lý thay vì gửi đề mất công thức', async () => {
+  await assert.rejects(
+    m.prepareExamSourceParts(await makeExamDocx({ mathType: 3 }), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'de.docx'),
+    e => /MathType/.test(e.message) && /PDF/.test(e.message)
+  );
 });
 
 console.log(`\n${ok} kiểm thử đạt.`);
