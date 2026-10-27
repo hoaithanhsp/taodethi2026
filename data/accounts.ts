@@ -11,6 +11,7 @@ export interface Account {
 export const ACCOUNTS: Account[] = [
   { username: "duonghangdtntls@gmail.com", password: "SKKN100", name: "GV" },
   { username: "ngocthanhluong2023@gmail.com", password: "123456", name: "GV" },
+  { username: "tnxq1998@gmail.com", password: "123456", name: "GV" },
   { username: "nttha.yt@gmail.com", password: "123456", name: "GV" },
   { username: "daothinganktd2002@gmail.com", password: "123456", name: "GV" },
   { username: "buinhuktd86@gmail.com", password: "123456", name: "GV" },
