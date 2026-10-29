@@ -1,21 +1,17 @@
 import { Chat, Part, Content, ThinkingLevel } from "@google/genai";
 import { VariantFileData } from "../types";
-import { createGoogleAiClient, getAiProvider, createGeminiConfig, wasTruncated } from "./geminiService";
+import { createGoogleAiClient, getAiProvider, createGeminiConfig } from "./geminiService";
 import { AiProvider, GEMINI_MODELS, AGENT_PLATFORM_MODELS } from "../constants";
 import { FIGURE_JSON_MARKDOWN_INSTRUCTIONS } from "./figureEngine";
-import { prepareExamSourceParts } from "./examSourceService";
 
 const VARIANTS_SYSTEM_INSTRUCTION = `
 # ExamGen Pro - SINH ĐỀ THI ĐA MÔN TỰ ĐỘNG
 
 ## VAI TRÒ
-Bạn là chuyên gia soạn đề thi các môn phổ thông (Toán, Khoa học tự nhiên, Khoa học xã hội, Ngữ văn, Ngoại ngữ…).
-Đề biến thể PHẢI cùng MÔN, cùng KHỐI LỚP, cùng phạm vi kiến thức với đề gốc.
+Bạn là chuyên gia soạn đề thi Toán và Khoa học Tự nhiên hàng đầu.
 
 ## NHIỆM VỤ
 Quy trình làm việc chia làm 3 bước độc lập. Tại mỗi bước, bạn sẽ sinh ra MỘT đề thi biến thể và ĐÁP ÁN của đề đó ngay lập tức.
-Mỗi đề biến thể giữ NGUYÊN cấu trúc đề gốc: cùng số phần, cùng số câu từng phần, cùng dạng câu (trắc nghiệm 4 phương án, Đúng – Sai 4 ý a–d, trả lời ngắn, tự luận), cùng thang điểm và mức độ từng câu; chỉ thay số liệu / bối cảnh / cách hỏi.
-Đánh số câu "Câu 1", "Câu 2"… như đề gốc.
 
 ---
 
@@ -70,7 +66,7 @@ export const createVariantSession = (
       model: selectedModel,
       systemInstruction: VARIANTS_SYSTEM_INSTRUCTION,
       thinkingLevel: ThinkingLevel.MEDIUM,
-      maxOutputTokens: 32768,
+      maxOutputTokens: 16384,
     }),
   });
 };
@@ -97,37 +93,9 @@ export const cloneVariantSession = async (
       model: newModel,
       systemInstruction: VARIANTS_SYSTEM_INSTRUCTION,
       thinkingLevel: ThinkingLevel.MEDIUM,
-      maxOutputTokens: 32768,
+      maxOutputTokens: 16384,
     }),
   });
-};
-
-const CONTINUE_PROMPT = 'Phần trả lời vừa rồi bị cắt do quá dài. Hãy VIẾT TIẾP ngay từ chỗ bị cắt (không lặp lại phần đã viết, không viết lại tiêu đề), cho tới hết đề và hết đáp án.';
-const TRUNCATED_NOTE = '\n\n> ⚠️ Nội dung quá dài nên bị cắt ở đây. Hãy chọn model Pro trong Cài đặt rồi chạy lại, hoặc dùng đề gốc ngắn hơn.';
-
-/**
- * Gửi 1 lượt trong phiên chat và stream kết quả.
- * Nếu AI dừng vì hết giới hạn độ dài (finishReason = MAX_TOKENS) → tự gửi "viết tiếp" (tối đa 2 lần)
- * để đề/đáp án không bị cụt (trước đây phần cuối đề bị mất mà không có thông báo).
- */
-const streamWithContinuation = async (
-  chat: Chat,
-  message: string | Part[],
-  onChunk: (text: string) => void
-): Promise<void> => {
-  let next: string | Part[] = message;
-  for (let round = 0; round < 3; round++) {
-    const result = await chat.sendMessageStream({ message: next });
-    let last: any = null;
-    for await (const chunk of result) {
-      if (chunk.text) onChunk(chunk.text);
-      last = chunk;
-    }
-    if (!wasTruncated(last)) return;
-    if (round === 2) { onChunk(TRUNCATED_NOTE); return; }
-    console.warn(`[Variants] Output bị cắt (MAX_TOKENS) → viết tiếp lần ${round + 1}`);
-    next = CONTINUE_PROMPT;
-  }
 };
 
 // Bước 1: Sinh Đề 1 & Đáp án 1 (Có File gốc)
@@ -136,8 +104,12 @@ export const generateVariantStep1 = async (
   file: VariantFileData,
   onChunk: (text: string) => void
 ): Promise<void> => {
-  // PDF/ảnh gửi nguyên file; Word .docx được app đọc trước (bảng, công thức LaTeX, hình)
-  const sourceParts = await prepareExamSourceParts(file.data, file.type, file.name);
+  const filePart: Part = {
+    inlineData: {
+      mimeType: file.type,
+      data: file.data,
+    },
+  };
 
   const textPart: Part = {
     text: `BƯỚC 1:
@@ -145,12 +117,18 @@ Dựa vào file đề gốc, hãy sinh ra **ĐỀ BIẾN THỂ SỐ 1**.
 Ngay sau đó, viết **ĐÁP ÁN CHI TIẾT CHO ĐỀ SỐ 1**.
 
 Yêu cầu:
-- Đề thi: Đủ số lượng câu như đề gốc, đúng môn học và khối lớp của đề gốc. Đầy đủ nội dung.
+- Đề thi: Đủ số lượng câu như đề gốc. Đầy đủ nội dung.
 - Đáp án: Câu dễ chỉ cần đáp án (1.A). Câu khó phải có lời giải vắn tắt.`
   };
 
   try {
-    await streamWithContinuation(chat, [...sourceParts, textPart], onChunk);
+    const result = await chat.sendMessageStream({
+      message: [filePart, textPart]
+    });
+
+    for await (const chunk of result) {
+      if (chunk.text) onChunk(chunk.text);
+    }
   } catch (error) {
     console.error("[Variants] Error Step 1:", error);
     throw error;
@@ -168,29 +146,19 @@ Tiếp tục sinh ra **ĐỀ BIẾN THỂ SỐ ${stepNumber}** (Khác số liệ
 Ngay sau đó, viết **ĐÁP ÁN CHI TIẾT CHO ĐỀ SỐ ${stepNumber}**.
 
 Yêu cầu:
-- Đề thi: Đủ số lượng câu và đúng cấu trúc như đề gốc (không ít hơn, không nhiều hơn).
+- Đề thi: Đủ số lượng câu.
 - Đáp án: Câu dễ chỉ cần đáp án. Câu khó phải có lời giải vắn tắt.`;
 
   try {
-    await streamWithContinuation(chat, prompt, onChunk);
+    const result = await chat.sendMessageStream({
+      message: prompt
+    });
+
+    for await (const chunk of result) {
+      if (chunk.text) onChunk(chunk.text);
+    }
   } catch (error) {
     console.error(`[Variants] Error Step ${stepNumber}:`, error);
     throw error;
   }
-};
-
-/**
- * Đếm số câu trong phần ĐỀ của 1 biến thể (trước phần ĐÁP ÁN) để so sánh giữa các đề.
- * Trả về null nếu không nhận ra câu nào.
- */
-export const countVariantQuestions = (markdown: string): number | null => {
-  if (!markdown) return null;
-  const lines = markdown.split('\n').map(l => l.replace(/[*_#>`]/g, '').trim());
-  let count = 0;
-  let seenQuestion = false;
-  for (const line of lines) {
-    if (seenQuestion && /^(?:[IVX]+\.|Phần\s*\d+\s*[:.]|PHẦN\s*\d+\s*[:.])?\s*(ĐÁP\s*ÁN|HƯỚNG\s*DẪN\s*(GIẢI|CHẤM)|LỜI\s*GIẢI|BẢNG\s*ĐÁP\s*ÁN)/i.test(line)) break;
-    if (/^Câu\s+\d{1,3}\s*[.:)\-–]/i.test(line)) { count++; seenQuestion = true; }
-  }
-  return count || null;
 };
