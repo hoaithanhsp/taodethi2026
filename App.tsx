@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion, MatrixTemplate, ExamHistoryItem, ReferenceUsageMode, ReferenceDocItem } from './types';
+import { AppStep, AppMode, InputData, GenerationState, Lesson, Chapter, QuestionConfig, ExtractedQuestion, MatrixTemplate, ExamHistoryItem, ReferenceUsageMode, ReferenceDocItem, DungSaiLevel, DEFAULT_DUNG_SAI_LEVELS, getDungSaiQuestionCount, getDungSaiLevelConfigs } from './types';
 import StepIndicator from './components/StepIndicator';
 import Button from './components/Button';
 import MarkdownView from './components/MarkdownView';
@@ -8,8 +8,10 @@ import BbtQuickGenerator from './components/BbtQuickGenerator';
 import SimilarExamPage from './components/SimilarExamPage';
 import VariantsExamPage from './components/VariantsExamPage';
 
-import { generateStep1Matrix, generateStep2Specs, generateStep3Exam, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, isValidApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel, getAiProvider, setAiProvider, getFallbackNotice, setFallbackNotice, subscribeFallbackNotice } from './services/geminiService';
-import { parseDocxWithMath, extractQuestionsLocally, extractDocxTablesAndHtml, parseMatrixMetadataAndConfig } from './services/docxMathParser';
+import { generateStep1Matrix, generateStep2Specs, generateStep3ExamChecked, extractInfoFromDocument, convertMatrixFileToHtml, convertMatrixTextToHtml, extractQuestionsFromReference, getApiKey, isValidApiKey, setApiKey as saveApiKey, getSelectedModel, setSelectedModel, getAiProvider, setAiProvider, getFallbackNotice, setFallbackNotice, subscribeFallbackNotice } from './services/geminiService';
+import { parseDocxWithMath, extractQuestionsLocally, extractDocxTablesAndHtml, splitMatrixAndSpecsHtml, isLegacyBinaryDoc } from './services/docxMathParser';
+import { resolveContracts, ResolvedContracts, summarizeContract, sameSubject, fmtNum, QTYPES } from './services/matrixContract';
+import type { ExamIssue } from './services/examValidator';
 import { normalizeMathForWord, renderMarkdownPreservingMath } from './services/mathExportUtils';
 import { extractFiguresToPlaceholders, restoreFiguresAsPngForWord } from './services/figureEngine';
 // @ts-ignore
@@ -51,6 +53,8 @@ const App: React.FC = () => {
     questionConfig: {
       type1: { biet: 8, hieu: 4, van_dung: 0, van_dung_cao: 0 },
       type2: { biet: 1, hieu: 1, van_dung: 0, van_dung_cao: 0 },
+      type2QuestionCount: 2,
+      dungSaiLevelConfigs: [{ ...DEFAULT_DUNG_SAI_LEVELS }, { ...DEFAULT_DUNG_SAI_LEVELS }],
       type3: { biet: 1, hieu: 1, van_dung: 2, van_dung_cao: 0 },
       essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
     }
@@ -122,6 +126,10 @@ const App: React.FC = () => {
   const [isCustomSubject, setIsCustomSubject] = useState(false);
   const [matrixTemplate, setMatrixTemplate] = useState<MatrixTemplate>('template1');
   const [isUploadedMatrix, setIsUploadedMatrix] = useState<boolean>(false);
+  // Hợp đồng số liệu đọc từ Ma trận / Đặc tả tải lên (hiển thị cho người dùng kiểm tra)
+  const [contracts, setContracts] = useState<ResolvedContracts | null>(null);
+  // Kết quả kiểm tra đề sau khi sinh
+  const [examCheck, setExamCheck] = useState<{ issues: ExamIssue[]; repaired: boolean; usedContract: boolean } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const matrixUploadRef = useRef<HTMLInputElement>(null); // Ref for Step 2 upload
   const matrixDirectUploadRef = useRef<HTMLInputElement>(null); // Ref for Step 1 direct upload
@@ -349,172 +357,134 @@ const App: React.FC = () => {
     return () => clearInterval(timer);
   }, [isAnalyzingFile]);
 
-  // Helper: detect if HTML content mentions essay/tự luận columns
-  const detectEssayInHtml = (html: string): boolean => {
-    const lowerHtml = html.toLowerCase();
-    // Nếu có khẳng định rõ ràng là không có tự luận hoặc tự luận = 0 câu thì coi như KHÔNG có
-    if (
-      lowerHtml.includes('không có tự luận') ||
-      lowerHtml.includes('không tự luận') ||
-      lowerHtml.includes('khong co tu luan') ||
-      lowerHtml.includes('tự luận: 0') ||
-      lowerHtml.includes('tự luận 0') ||
-      lowerHtml.includes('tự luận (0') ||
-      lowerHtml.includes('cột tự luận: 0') ||
-      lowerHtml.includes('tự luận | 0') ||
-      lowerHtml.includes('tự luận: 0.0') ||
-      lowerHtml.includes('tuyệt đối không tạo cột tự luận')
-    ) {
+    // Tên môn có trong ô chọn môn (ngoài danh sách → chuyển sang "Môn khác")
+  const SUBJECT_OPTIONS = ['Toán học', 'Ngữ văn', 'Tiếng Anh', 'Vật lí', 'Hóa học', 'Sinh học', 'Lịch sử', 'Địa lí', 'Tin học', 'Công nghệ', 'Giáo dục công dân'];
+
+  /**
+   * Đồng bộ thông tin từ Ma trận / Đặc tả tải lên bằng HỢP ĐỒNG SỐ LIỆU (đọc mã câu theo cột):
+   *  - Số câu từng dạng × mức độ, cấp độ từng ý Đúng – Sai, điểm → lấy đúng theo file.
+   *  - Đọc không được → GIỮ NGUYÊN cấu hình hiện tại và cảnh báo (không còn âm thầm dùng cấu hình mặc định,
+   *    không còn tự bịa câu tự luận khi thấy chữ "tự luận").
+   *  - Môn/Lớp trong file khác lựa chọn trên màn hình → hỏi người dùng thay vì im lặng chọn một bên.
+   */
+  const applyUploadedContent = (matrixHtml: string, specsHtml: string | null): ResolvedContracts => {
+    const resolved = resolveContracts(matrixHtml, specsHtml);
+    setContracts(resolved);
+    const primary = resolved.primary;
+    const meta = { ...(resolved.specs?.meta || {}), ...(resolved.matrix?.meta || {}) };
+    console.log('[MatrixUpload] Hợp đồng số liệu:', primary ? summarizeContract(primary) : '(không đọc được)', resolved);
+
+    // Xung đột Môn / Lớp giữa file và lựa chọn trên màn hình
+    const current = inputData;
+    const subjectConflict = !!(current.subject && meta.subject && !sameSubject(current.subject, meta.subject));
+    const gradeConflict = !!(current.grade && meta.grade && current.grade !== meta.grade);
+    let useFile = true;
+    if (subjectConflict || gradeConflict) {
+      const fileDesc = `${meta.subject ? `môn ${meta.subject}` : ''}${meta.grade ? ` lớp ${meta.grade}` : ''}`.trim();
+      const screenDesc = `môn ${current.subject || '(chưa chọn)'} lớp ${current.grade || '(chưa chọn)'}`;
+      useFile = window.confirm(
+        `⚠️ File tải lên ghi ${fileDesc}, nhưng màn hình đang chọn ${screenDesc}.\n\n` +
+        `• Bấm OK để dùng theo FILE (khuyên dùng).\n• Bấm Cancel để giữ lựa chọn trên màn hình.`
+      );
+    }
+    const nextSubject = (useFile ? meta.subject : undefined) || current.subject || meta.subject || '';
+    const nextGrade = (useFile ? meta.grade : undefined) || current.grade || meta.grade || '';
+    setIsCustomSubject(!!nextSubject && !SUBJECT_OPTIONS.includes(nextSubject));
+
+    setInputData(prev => ({
+      ...prev,
+      subject: nextSubject,
+      grade: nextGrade,
+      examType: meta.examType || prev.examType,
+      duration: meta.duration || prev.duration,
+      topics: primary?.topicsSummary || prev.topics,
+      questionConfig: primary?.ok && primary.questionConfig ? { ...primary.questionConfig } : prev.questionConfig,
+    }));
+    return resolved;
+  };
+
+  /** Lấy cấu hình số câu đúng theo ma trận/đặc tả hiện tại (kể cả khi người dùng đã sửa bảng trên màn hình). */
+  const getEffectiveUploadedConfig = (matrixHtml: string, specsHtml: string | null): QuestionConfig | null => {
+    const resolved = resolveContracts(matrixHtml, specsHtml);
+    setContracts(resolved);
+    return resolved.primary?.ok && resolved.primary.questionConfig ? { ...resolved.primary.questionConfig } : null;
+  };
+
+  const requireSubjectAndGrade = (data: InputData): boolean => {
+    if (!data.subject || !data.grade) {
+      setGenState(prev => ({
+        ...prev,
+        isLoading: false,
+        error: 'Chưa xác định được Môn học / Khối lớp từ file. Vui lòng chọn Môn và Lớp ở thanh thông tin phía trên bảng rồi bấm lại.',
+      }));
       return false;
     }
-    // Check for explicit essay column headers in the matrix/specs table
-    // Mở rộng từ khóa để nhận diện chính xác hơn khi user upload file Ma trận/Đặc tả
-    return (
-      lowerHtml.includes('tự luận') ||
-      lowerHtml.includes('tu luan') ||
-      lowerHtml.includes('essay') ||
-      lowerHtml.includes('phần iv') ||
-      lowerHtml.includes('phan iv') ||
-      lowerHtml.includes('phần 4') ||
-      /phần\s+iv/i.test(html) ||
-      />\s*iv\s*</i.test(html) ||
-      /part\s+iv/i.test(html) ||
-      lowerHtml.includes('câu tự luận') ||
-      lowerHtml.includes('dạng iv') ||
-      lowerHtml.includes('(iv)') ||
-      lowerHtml.includes('mục iv')
-    );
+    return true;
   };
 
-  // Auto-sync questionConfig.essay based on matrix HTML content
-  const syncEssayConfigFromMatrix = (matrixHtml: string) => {
-    const hasEssay = detectEssayInHtml(matrixHtml);
-    if (!hasEssay) {
-      console.log('[ExamCraft] Ma trận KHÔNG có tự luận → reset essay config = 0');
-      setInputData(prev => ({
-        ...prev,
-        questionConfig: {
-          ...prev.questionConfig,
-          essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-        }
-      }));
-    } else {
-      console.log('[ExamCraft] Ma trận CÓ tự luận → kiểm tra và set essay config nếu đang = 0');
-      setInputData(prev => {
-        const currentEssay = prev.questionConfig.essay;
-        const totalEssay = currentEssay.biet + currentEssay.hieu + currentEssay.van_dung + currentEssay.van_dung_cao;
-        if (totalEssay === 0) {
-          console.log('[ExamCraft] Essay config đang = 0 nhưng Ma trận CÓ tự luận → auto-set default essay config');
-          return {
-            ...prev,
-            questionConfig: {
-              ...prev.questionConfig,
-              essay: { biet: 0, hieu: 1, van_dung: 1, van_dung_cao: 0 },
-            }
-          };
-        }
-        return prev;
+  /** Đọc 1 file Ma trận / Đặc tả → HTML (Word đọc trực tiếp, PDF/ảnh qua AI). */
+  const readTableFile = async (file: File): Promise<{ matrixHtml: string; specsHtml: string | null; hasMatrixTable: boolean }> => {
+    const lowerName = file.name.toLowerCase();
+    if (file.type === "text/html" || file.type === "text/plain" || lowerName.endsWith(".html") || lowerName.endsWith(".htm") || lowerName.endsWith(".txt")) {
+      const text = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target?.result as string);
+        reader.readAsText(file);
       });
+      // File văn bản không có bảng HTML → nhờ AI dựng bảng
+      const html = /<table/i.test(text) ? text : await convertMatrixTextToHtml(text);
+      const split = splitMatrixAndSpecsHtml(html);
+      return { matrixHtml: split.matrixHtml, specsHtml: split.specsHtml, hasMatrixTable: split.kinds.some(k => k !== 'other') };
     }
-  };
-
-  // Đồng bộ toàn diện thông tin Môn, Lớp, Kỳ kiểm tra, Thời gian, Chủ đề và Số câu hỏi từ Ma trận/Đặc tả tải lên
-  const syncConfigFromUploadedMatrix = (htmlContent: string) => {
-    const meta = parseMatrixMetadataAndConfig(htmlContent);
-    const hasEssay = detectEssayInHtml(htmlContent);
-    console.log('[MatrixUpload] Parsed metadata & questionConfig from uploaded table:', meta, 'hasEssay=', hasEssay);
-
-    setInputData(prev => {
-      let nextQuestionConfig = meta.questionConfig
-        ? { ...meta.questionConfig }
-        : { ...prev.questionConfig };
-
-      if (!hasEssay) {
-        nextQuestionConfig = {
-          ...nextQuestionConfig,
-          essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-        };
-      } else {
-        const essaySum =
-          nextQuestionConfig.essay.biet +
-          nextQuestionConfig.essay.hieu +
-          nextQuestionConfig.essay.van_dung +
-          nextQuestionConfig.essay.van_dung_cao;
-        if (essaySum === 0) {
-          nextQuestionConfig = {
-            ...nextQuestionConfig,
-            essay: { biet: 0, hieu: 1, van_dung: 1, van_dung_cao: 0 },
-          };
-        }
+    if (lowerName.endsWith(".docx") || lowerName.endsWith(".doc")) {
+      const arrayBuffer = await file.arrayBuffer();
+      if (isLegacyBinaryDoc(arrayBuffer)) {
+        throw new Error('File "' + file.name + '" là định dạng Word .doc đời cũ nên không đọc được bảng chính xác. Vui lòng mở bằng Word → "Lưu thành" (Save As) → chọn .docx rồi tải lại (hoặc xuất PDF).');
       }
-
-      return {
-        ...prev,
-        subject: meta.subject || prev.subject || 'Toán học',
-        grade: meta.grade || prev.grade || '12',
-        examType: meta.examType || prev.examType,
-        duration: meta.duration || prev.duration,
-        topics: meta.topicsSummary || prev.topics,
-        questionConfig: nextQuestionConfig,
-      };
-    });
+      const directTable = await extractDocxTablesAndHtml(arrayBuffer);
+      if (directTable.hasTable && directTable.matrixHtml) {
+        console.log(`[MatrixUpload] Đọc trực tiếp bảng Word: ${directTable.tableKinds.join(', ')} (hasSpecs=${!!directTable.specsHtml})`);
+        return { matrixHtml: directTable.matrixHtml, specsHtml: directTable.specsHtml, hasMatrixTable: directTable.hasMatrixTable };
+      }
+      // Word không có bảng thật (bảng vẽ bằng tab/ảnh) → nhờ AI dựng bảng từ văn bản
+      const parsed = await parseDocxWithMath(arrayBuffer);
+      console.log(`[MatrixUpload] DOCX không có bảng XML: ${parsed.text.length} ký tự, ${parsed.images.length} ảnh → AI dựng bảng`);
+      const html = await convertMatrixTextToHtml(parsed.text, parsed.images);
+      const split = splitMatrixAndSpecsHtml(html);
+      return { matrixHtml: split.matrixHtml, specsHtml: split.specsHtml, hasMatrixTable: split.kinds.some(k => k !== 'other') };
+    }
+    // PDF / ảnh → AI chuyển bảng
+    const html = await convertMatrixFileToHtml(file);
+    const split = splitMatrixAndSpecsHtml(html);
+    return { matrixHtml: split.matrixHtml, specsHtml: split.specsHtml, hasMatrixTable: split.kinds.some(k => k !== 'other') };
   };
 
-  // Common logic for processing uploaded matrix file
-  const processMatrixUpload = async (file: File) => {
+  // Common logic for processing uploaded matrix file → trả về HTML ma trận (null nếu lỗi)
+  const processMatrixUpload = async (file: File): Promise<string | null> => {
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
+    setExamCheck(null);
 
     try {
-      let content = "";
-      let extractedSpecsFromSameFile: string | null = null;
-      const lowerName = file.name.toLowerCase();
-
-      // If HTML or Text, read directly
-      if (file.type === "text/html" || file.type === "text/plain" || lowerName.endsWith(".html") || lowerName.endsWith(".txt")) {
-        content = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = (e) => resolve(e.target?.result as string);
-          reader.readAsText(file);
-        });
-      }
-      // If DOCX/DOC, extract HTML table directly via JSZip XML parser (100% exact, < 20ms, no AI distortion)
-      else if (lowerName.endsWith(".docx") || lowerName.endsWith(".doc")) {
-        try {
-          const arrayBuffer = await file.arrayBuffer();
-          const directTable = await extractDocxTablesAndHtml(arrayBuffer);
-          if (directTable.hasTable && directTable.matrixHtml) {
-            content = directTable.matrixHtml;
-            extractedSpecsFromSameFile = directTable.specsHtml;
-            console.log(`[MatrixUpload] Direct DOCX table extracted 100% verbatim (${content.length} chars, hasSpecs=${!!extractedSpecsFromSameFile})`);
-          } else {
-            const parsed = await parseDocxWithMath(arrayBuffer);
-            console.log(`[MatrixUpload] DOCX parsed (no XML table found): ${parsed.text.length} chars, ${parsed.images.length} images, method=${parsed.method}`);
-            content = await convertMatrixTextToHtml(parsed.text, parsed.images);
-          }
-        } catch (docxErr: any) {
-          console.warn('[MatrixUpload] DOCX parse failed, trying direct AI:', docxErr);
-          content = await convertMatrixFileToHtml(file);
-        }
-      }
-      // If PDF, convert using AI directly (Gemini supports PDF)
-      else {
-        content = await convertMatrixFileToHtml(file);
+      const { matrixHtml, specsHtml } = await readTableFile(file);
+      if (!matrixHtml || !/<table/i.test(matrixHtml)) {
+        throw new Error('Không tìm thấy bảng Ma trận nào trong file. Vui lòng kiểm tra lại file (bảng phải là bảng thật trong Word, không phải ảnh chụp).');
       }
 
-      // Auto-detect & sync subject, grade, examType, duration, topics & exact questionConfig from the uploaded matrix
-      syncConfigFromUploadedMatrix(content);
+      applyUploadedContent(matrixHtml, specsHtml);
       setIsUploadedMatrix(true);
 
       setGenState(prev => ({
         ...prev,
-        matrix: content,
-        specs: extractedSpecsFromSameFile || prev.specs,
+        matrix: matrixHtml,
+        // Ma trận mới → bỏ đặc tả/đề cũ (tránh sinh đề theo đặc tả của ma trận trước)
+        specs: specsHtml || '',
+        exam: '',
         isLoading: false,
       }));
-      return true;
+      return matrixHtml;
     } catch (err: any) {
       setGenState(prev => ({ ...prev, isLoading: false, error: err.message }));
-      return false;
+      return null;
     }
   };
 
@@ -530,8 +500,8 @@ const App: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const success = await processMatrixUpload(file);
-    if (success) {
+    const matrixHtml = await processMatrixUpload(file);
+    if (matrixHtml) {
       // Skip to Matrix Step (Step 2) immediately
       setCurrentStep(AppStep.MATRIX);
       setCompletedSteps(Math.max(completedSteps, 1));
@@ -565,44 +535,18 @@ const App: React.FC = () => {
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
-      // Step 1: Process Matrix file
-      const matrixSuccess = await processMatrixUpload(comboMatrixFile);
-      if (!matrixSuccess) throw new Error('Không thể xử lý file Ma trận.');
+      setExamCheck(null);
+      // Đọc cả 2 file trước, rồi đồng bộ MỘT lần (tránh hỏi xung đột môn/lớp 2 lần)
+      const m = await readTableFile(comboMatrixFile);
+      if (!m.matrixHtml || !/<table/i.test(m.matrixHtml)) throw new Error('Không tìm thấy bảng Ma trận trong file Ma trận.');
+      const sp = await readTableFile(comboSpecsFile);
+      // File đặc tả gộp cả ma trận → lấy phần đặc tả; chỉ có 1 bảng → lấy cả bảng
+      const specsContent = sp.specsHtml || sp.matrixHtml;
+      if (!specsContent || !/<table/i.test(specsContent)) throw new Error('Không tìm thấy bảng Đặc tả trong file Đặc tả.');
 
-      // Step 2: Process Specs file (direct XML table extraction for .docx/.doc)
-      let specsContent = '';
-      const specsFile = comboSpecsFile;
-      const lowerSpecsName = specsFile.name.toLowerCase();
-
-      if (specsFile.type === 'text/html' || specsFile.type === 'text/plain' || lowerSpecsName.endsWith('.html') || lowerSpecsName.endsWith('.txt')) {
-        specsContent = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = (e) => resolve(e.target?.result as string);
-          reader.readAsText(specsFile);
-        });
-      } else if (lowerSpecsName.endsWith('.docx') || lowerSpecsName.endsWith('.doc')) {
-        try {
-          const arrayBuffer = await specsFile.arrayBuffer();
-          const directTable = await extractDocxTablesAndHtml(arrayBuffer);
-          if (directTable.hasTable) {
-            specsContent = directTable.specsHtml || directTable.fullHtml;
-            console.log(`[ComboSpecsUpload] Direct DOCX specs table extracted 100% verbatim (${specsContent.length} chars)`);
-          } else {
-            const parsed = await parseDocxWithMath(arrayBuffer);
-            specsContent = await convertMatrixTextToHtml(parsed.text, parsed.images);
-          }
-        } catch {
-          specsContent = await convertMatrixFileToHtml(specsFile);
-        }
-      } else {
-        specsContent = await convertMatrixFileToHtml(specsFile);
-      }
-
-      // Sync metadata/questionConfig from specs as well if matrix didn't have all fields
-      syncConfigFromUploadedMatrix(specsContent);
+      applyUploadedContent(m.matrixHtml, specsContent);
       setIsUploadedMatrix(true);
-
-      setGenState(prev => ({ ...prev, specs: specsContent, isLoading: false }));
+      setGenState(prev => ({ ...prev, matrix: m.matrixHtml, specs: specsContent, exam: '', isLoading: false }));
 
       // Jump to SPECS step → user clicks "Tạo đề" from there
       setCurrentStep(AppStep.SPECS);
@@ -668,7 +612,7 @@ const App: React.FC = () => {
   };
 
   // -- Question Config Logic --
-  const updateQuestionConfig = (type: keyof QuestionConfig, level: 'biet' | 'hieu' | 'van_dung' | 'van_dung_cao', value: number) => {
+  const updateQuestionConfig = (type: 'type1' | 'type2' | 'type3' | 'essay', level: 'biet' | 'hieu' | 'van_dung' | 'van_dung_cao', value: number) => {
     setInputData(prev => ({
       ...prev,
       questionConfig: {
@@ -694,6 +638,8 @@ const App: React.FC = () => {
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
       setIsUploadedMatrix(false);
+      setContracts(null);
+      setExamCheck(null);
       const matrix = await generateStep1Matrix(inputData, selectedLessonIds, matrixTemplate);
       // Tôn trọng cấu hình: nếu người dùng đã đặt tự luận = 0, không auto-set lên
       const userConfigTotalEssay = inputData.questionConfig.essay.biet + inputData.questionConfig.essay.hieu + inputData.questionConfig.essay.van_dung + inputData.questionConfig.essay.van_dung_cao;
@@ -705,10 +651,9 @@ const App: React.FC = () => {
             essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
           }
         }));
-      } else {
-        // Sync essay config: nếu matrix sinh ra không có tự luận, reset essay = 0
-        syncEssayConfigFromMatrix(matrix);
       }
+      // Người dùng đã nhập số câu Tự luận > 0 ở bất kỳ cột nào → GIỮ NGUYÊN cấu hình,
+      // không reset theo kết quả dò từ khóa trong HTML (nguyên nhân Tự luận "lúc có lúc không").
       setGenState(prev => ({ ...prev, matrix, isLoading: false }));
       setCurrentStep(AppStep.MATRIX);
       setCompletedSteps(Math.max(completedSteps, 1));
@@ -721,27 +666,18 @@ const App: React.FC = () => {
     if (!checkAuthOrTrial()) return;
     setGenState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
-      // Đảm bảo thông tin môn/lớp/số câu đã đồng bộ từ Ma trận hiện tại (đặc biệt khi tải lên Ma trận)
+      // Ma trận tải lên: số câu lấy lại trực tiếp từ bảng hiện tại (kể cả khi người dùng đã sửa bảng)
       let effectiveData = inputData;
       if (isUploadedMatrix && genState.matrix) {
-        const meta = parseMatrixMetadataAndConfig(genState.matrix);
-        const hasEssay = detectEssayInHtml(genState.matrix);
-        let qCfg = meta.questionConfig ? { ...meta.questionConfig } : { ...inputData.questionConfig };
-        if (!hasEssay) {
-          qCfg = { ...qCfg, essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 } };
+        const cfg = getEffectiveUploadedConfig(genState.matrix, null);
+        if (cfg) {
+          effectiveData = { ...inputData, questionConfig: cfg };
+          setInputData(effectiveData);
         }
-        effectiveData = {
-          ...inputData,
-          subject: inputData.subject || meta.subject || 'Toán học',
-          grade: inputData.grade || meta.grade || '12',
-          examType: meta.examType || inputData.examType,
-          duration: meta.duration || inputData.duration,
-          topics: meta.topicsSummary || inputData.topics,
-          questionConfig: qCfg,
-        };
-        setInputData(effectiveData);
       }
-
+      if (!requireSubjectAndGrade(effectiveData)) return;
+      setExamCheck(null);
+      setGenState(prev => ({ ...prev, specs: '', exam: '', isLoading: true, error: null }));
       const specs = await generateStep2Specs(
         genState.matrix,
         effectiveData,
@@ -749,6 +685,8 @@ const App: React.FC = () => {
         matrixTemplate,
         isUploadedMatrix
       );
+      // Đối chiếu đặc tả vừa sinh với ma trận → cảnh báo nếu lệch số câu
+      if (isUploadedMatrix) setContracts(resolveContracts(genState.matrix, specs));
       setGenState(prev => ({ ...prev, specs, isLoading: false }));
       setCurrentStep(AppStep.SPECS);
       setCompletedSteps(Math.max(completedSteps, 2));
@@ -764,35 +702,13 @@ const App: React.FC = () => {
     try {
       let effectiveData = inputData;
       if (isUploadedMatrix && (genState.matrix || genState.specs)) {
-        const meta = parseMatrixMetadataAndConfig(genState.matrix || genState.specs);
-        const hasEssay = detectEssayInHtml(genState.matrix || genState.specs);
-        let qCfg = meta.questionConfig ? { ...meta.questionConfig } : { ...inputData.questionConfig };
-        if (!hasEssay) {
-          qCfg = { ...qCfg, essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 } };
+        const cfg = getEffectiveUploadedConfig(genState.matrix, genState.specs || null);
+        if (cfg) {
+          effectiveData = { ...inputData, questionConfig: cfg };
+          setInputData(effectiveData);
         }
-        effectiveData = {
-          ...inputData,
-          subject: inputData.subject || meta.subject || 'Toán học',
-          grade: inputData.grade || meta.grade || '12',
-          examType: meta.examType || inputData.examType,
-          duration: meta.duration || inputData.duration,
-          topics: meta.topicsSummary || inputData.topics,
-          questionConfig: qCfg,
-        };
-        setInputData(effectiveData);
       }
-
-      const finalQuestionConfig = { ...effectiveData.questionConfig };
-      
-      const userTotalEssay = 
-        finalQuestionConfig.essay.biet + 
-        finalQuestionConfig.essay.hieu + 
-        finalQuestionConfig.essay.van_dung + 
-        finalQuestionConfig.essay.van_dung_cao;
-
-      if (userTotalEssay === 0) {
-        finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
-      }
+      if (!requireSubjectAndGrade(effectiveData)) return;
 
       // Instant local question extraction if not done yet (no double AI call!)
       const combinedRef = getCombinedReferenceData();
@@ -805,9 +721,9 @@ const App: React.FC = () => {
         }
       }
 
-      const exam = await generateStep3Exam(
+      const result = await generateStep3ExamChecked(
         genState.specs,
-        finalQuestionConfig,
+        { ...effectiveData.questionConfig },
         effectiveData,
         combinedRef.text || undefined,
         combinedRef.images.length > 0 ? combinedRef.images : undefined,
@@ -816,7 +732,8 @@ const App: React.FC = () => {
         genState.matrix || undefined,
         isUploadedMatrix
       );
-      setGenState(prev => ({ ...prev, exam, isLoading: false }));
+      setExamCheck({ issues: result.issues, repaired: result.repaired, usedContract: result.usedContract });
+      setGenState(prev => ({ ...prev, exam: result.html, isLoading: false }));
       setCurrentStep(AppStep.EXAM);
       setCompletedSteps(Math.max(completedSteps, 3));
       setIsCurrentExamSaved(false);
@@ -859,6 +776,7 @@ const App: React.FC = () => {
       matrix: genState.matrix,
       specs: genState.specs,
       exam: genState.exam,
+      isUploadedMatrix,
     };
     const updated = [newItem, ...examHistory].slice(0, 5);
     persistExamHistory(updated);
@@ -884,29 +802,24 @@ const App: React.FC = () => {
       error: null,
     });
 
+    setIsUploadedMatrix(!!item.isUploadedMatrix);
+    setContracts(item.isUploadedMatrix ? resolveContracts(item.matrix, item.specs) : null);
+    setExamCheck(null);
     try {
-      const finalQuestionConfig = { ...item.inputData.questionConfig };
-      const userTotalEssay =
-        finalQuestionConfig.essay.biet +
-        finalQuestionConfig.essay.hieu +
-        finalQuestionConfig.essay.van_dung +
-        finalQuestionConfig.essay.van_dung_cao;
-
-      if (userTotalEssay === 0) {
-        finalQuestionConfig.essay = { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 };
-      }
-
       const combinedRef = getCombinedReferenceData();
-      const newExam = await generateStep3Exam(
+      const result = await generateStep3ExamChecked(
         item.specs || item.matrix,
-        finalQuestionConfig,
+        { ...item.inputData.questionConfig },
         item.inputData,
         combinedRef.text || undefined,
         combinedRef.images.length > 0 ? combinedRef.images : undefined,
         extractedQuestions.length > 0 ? extractedQuestions : undefined,
         referenceMode,
-        item.matrix || undefined
+        item.matrix || undefined,
+        !!item.isUploadedMatrix
       );
+      const newExam = result.html;
+      setExamCheck({ issues: result.issues, repaired: result.repaired, usedContract: result.usedContract });
 
       setGenState({
         matrix: item.matrix,
@@ -925,6 +838,9 @@ const App: React.FC = () => {
 
   const handleRestoreHistory = (item: ExamHistoryItem) => {
     setShowHistoryModal(false);
+    setIsUploadedMatrix(!!item.isUploadedMatrix);
+    setContracts(item.isUploadedMatrix ? resolveContracts(item.matrix, item.specs) : null);
+    setExamCheck(null);
     setAppMode('cv7991');
     setInputData(item.inputData);
     setMatrixTemplate(item.matrixTemplate || 'template1');
@@ -1214,7 +1130,7 @@ const App: React.FC = () => {
 
   const renderQuestionConfigRow = (
     label: string,
-    typeKey: keyof QuestionConfig,
+    typeKey: 'type1' | 'type2' | 'type3' | 'essay',
     defaultB: number,
     defaultH: number,
     defaultV: number,
@@ -1265,6 +1181,23 @@ const App: React.FC = () => {
     </div>
   );
 
+  const updateDungSaiQuestionCount = (value: number) => {
+    const count = Math.max(0, Math.floor(value || 0));
+    setInputData(prev => {
+      const current = getDungSaiLevelConfigs(prev.questionConfig);
+      const configs = Array.from({ length: count }, (_, index) => ({ ...(current[index] || DEFAULT_DUNG_SAI_LEVELS) }));
+      return { ...prev, questionConfig: { ...prev.questionConfig, type2QuestionCount: count, dungSaiLevelConfigs: configs } };
+    });
+  };
+
+  const updateDungSaiLevel = (questionIndex: number, key: keyof typeof DEFAULT_DUNG_SAI_LEVELS, value: DungSaiLevel) => {
+    setInputData(prev => {
+      const configs = getDungSaiLevelConfigs(prev.questionConfig);
+      configs[questionIndex] = { ...configs[questionIndex], [key]: value };
+      return { ...prev, questionConfig: { ...prev.questionConfig, dungSaiLevelConfigs: configs } };
+    });
+  };
+
   const renderInputStep = () => (
     <div className="max-w-4xl mx-auto space-y-8 pb-12 relative z-10">
 
@@ -1272,35 +1205,153 @@ const App: React.FC = () => {
       <div className="animate-fade-in-up">
         <div className="space-y-4">
           {/* Shortcut 1: Có file Ma trận */}
-          <div className="shortcut-box p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div>
-              <h3 className="text-lg font-bold text-blue-800">⚡ Lối tắt: Bạn đã có file Ma trận?</h3>
-              <p className="text-sm text-blue-600">Tải lên file Ma trận (HTML, Word, PDF) để bỏ qua các bước cấu hình và sinh ngay Bảng đặc tả.</p>
+          <div className="shortcut-box p-5">
+            <div className="flex flex-col gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-blue-800">⚡ Lối tắt: Bạn đã có file Ma trận?</h3>
+                <p className="text-sm text-blue-600">Tải lên file Ma trận (HTML, Word, PDF) để bỏ qua các bước cấu hình và sinh ngay Bảng đặc tả.</p>
+              </div>
+              
+              {/* 🔴 KHAI BÁO MÔN & LỚP TRƯỚC KHI UPLOAD (Tránh nhầm lẫn) */}
+              <div className="grid grid-cols-2 gap-3 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
+                <div>
+                  <label className="block text-xs font-semibold text-blue-700 mb-1">Môn học <span className="text-red-500">*</span></label>
+                  <select
+                    value={isCustomSubject ? '__custom__' : inputData.subject}
+                    onChange={e => {
+                      if (e.target.value === '__custom__') {
+                        setIsCustomSubject(true);
+                        setInputData(prev => ({ ...prev, subject: '' }));
+                      } else {
+                        setIsCustomSubject(false);
+                        setInputData(prev => ({ ...prev, subject: e.target.value }));
+                      }
+                    }}
+                    className="w-full px-2.5 py-2 input-elevated text-sm"
+                  >
+                    <option value="">-- Chọn môn học --</option>
+                    <option value="Toán học">Toán học</option>
+                    <option value="Ngữ văn">Ngữ văn</option>
+                    <option value="Tiếng Anh">Tiếng Anh</option>
+                    <option value="Vật lí">Vật lí</option>
+                    <option value="Hóa học">Hóa học</option>
+                    <option value="Sinh học">Sinh học</option>
+                    <option value="Lịch sử">Lịch sử</option>
+                    <option value="Địa lí">Địa lí</option>
+                    <option value="Tin học">Tin học</option>
+                    <option value="Công nghệ">Công nghệ</option>
+                    <option value="Giáo dục công dân">Giáo dục công dân (GD KT&PL)</option>
+                    <option value="__custom__">Môn khác...</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-blue-700 mb-1">Khối lớp <span className="text-red-500">*</span></label>
+                  <select
+                    value={inputData.grade}
+                    onChange={e => setInputData(prev => ({ ...prev, grade: e.target.value }))}
+                    className="w-full px-2.5 py-2 input-elevated text-sm"
+                  >
+                    <option value="">-- Chọn khối --</option>
+                    <option value="1">Lớp 1</option>
+                    <option value="2">Lớp 2</option>
+                    <option value="3">Lớp 3</option>
+                    <option value="4">Lớp 4</option>
+                    <option value="5">Lớp 5</option>
+                    <option value="6">Lớp 6</option>
+                    <option value="7">Lớp 7</option>
+                    <option value="8">Lớp 8</option>
+                    <option value="9">Lớp 9</option>
+                    <option value="10">Lớp 10</option>
+                    <option value="11">Lớp 11</option>
+                    <option value="12">Lớp 12</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-blue-500">✓ Khai báo môn/lớp trước để hệ thống nhận diện chính xác</p>
+                <input
+                  type="file"
+                  ref={matrixDirectUploadRef}
+                  onChange={handleMatrixSkipUpload}
+                  className="hidden"
+                  accept=".html,.txt,.pdf,.docx,.doc"
+                />
+                <Button
+                  variant="secondary"
+                  onClick={() => matrixDirectUploadRef.current?.click()}
+                  icon={<FileUp className="w-4 h-4" />}
+                  className="whitespace-nowrap"
+                  isLoading={genState.isLoading && currentStep === AppStep.INPUT && !isComboProcessing}
+                >
+                  Upload Ma trận & Đi tiếp
+                </Button>
+              </div>
             </div>
-            <input
-              type="file"
-              ref={matrixDirectUploadRef}
-              onChange={handleMatrixSkipUpload}
-              className="hidden"
-              accept=".html,.txt,.pdf,.docx,.doc"
-            />
-            <Button
-              variant="secondary"
-              onClick={() => matrixDirectUploadRef.current?.click()}
-              icon={<FileUp className="w-4 h-4" />}
-              className="whitespace-nowrap"
-              isLoading={genState.isLoading && currentStep === AppStep.INPUT && !isComboProcessing}
-            >
-              Upload Ma trận & Đi tiếp
-            </Button>
           </div>
 
           {/* Shortcut 2: Có cả Ma trận + Đặc tả */}
           <div className="shortcut-box p-5" style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 50%, #f0f9ff 100%)' }}>
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+            <div className="flex flex-col gap-4 mb-4">
               <div>
                 <h3 className="text-lg font-bold text-emerald-800">🚀 Lối tắt: Bạn đã có file Ma trận + Đặc tả?</h3>
                 <p className="text-sm text-emerald-600">Tải lên cả 2 file để nhảy thẳng sang bước tạo đề thi!</p>
+              </div>
+              
+              {/* 🔴 KHAI BÁO MÔN & LỚP TRƯỚC KHI UPLOAD (Tránh nhầm lẫn) */}
+              <div className="grid grid-cols-2 gap-3 bg-emerald-50/50 p-3 rounded-lg border border-emerald-100">
+                <div>
+                  <label className="block text-xs font-semibold text-emerald-700 mb-1">Môn học <span className="text-red-500">*</span></label>
+                  <select
+                    value={isCustomSubject ? '__custom__' : inputData.subject}
+                    onChange={e => {
+                      if (e.target.value === '__custom__') {
+                        setIsCustomSubject(true);
+                        setInputData(prev => ({ ...prev, subject: '' }));
+                      } else {
+                        setIsCustomSubject(false);
+                        setInputData(prev => ({ ...prev, subject: e.target.value }));
+                      }
+                    }}
+                    className="w-full px-2.5 py-2 input-elevated text-sm"
+                  >
+                    <option value="">-- Chọn môn học --</option>
+                    <option value="Toán học">Toán học</option>
+                    <option value="Ngữ văn">Ngữ văn</option>
+                    <option value="Tiếng Anh">Tiếng Anh</option>
+                    <option value="Vật lí">Vật lí</option>
+                    <option value="Hóa học">Hóa học</option>
+                    <option value="Sinh học">Sinh học</option>
+                    <option value="Lịch sử">Lịch sử</option>
+                    <option value="Địa lí">Địa lí</option>
+                    <option value="Tin học">Tin học</option>
+                    <option value="Công nghệ">Công nghệ</option>
+                    <option value="Giáo dục công dân">Giáo dục công dân (GD KT&PL)</option>
+                    <option value="__custom__">Môn khác...</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-emerald-700 mb-1">Khối lớp <span className="text-red-500">*</span></label>
+                  <select
+                    value={inputData.grade}
+                    onChange={e => setInputData(prev => ({ ...prev, grade: e.target.value }))}
+                    className="w-full px-2.5 py-2 input-elevated text-sm"
+                  >
+                    <option value="">-- Chọn khối --</option>
+                    <option value="1">Lớp 1</option>
+                    <option value="2">Lớp 2</option>
+                    <option value="3">Lớp 3</option>
+                    <option value="4">Lớp 4</option>
+                    <option value="5">Lớp 5</option>
+                    <option value="6">Lớp 6</option>
+                    <option value="7">Lớp 7</option>
+                    <option value="8">Lớp 8</option>
+                    <option value="9">Lớp 9</option>
+                    <option value="10">Lớp 10</option>
+                    <option value="11">Lớp 11</option>
+                    <option value="12">Lớp 12</option>
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -1621,7 +1672,35 @@ const App: React.FC = () => {
         </h2>
         <div className="config-table">
           {renderQuestionConfigRow("Dạng I (4 lựa chọn)", "type1", 8, 4, 0)}
-          {renderQuestionConfigRow("Dạng II (Đúng/Sai)", "type2", 1, 1, 0)}
+          <div className="py-4 border-b border-teal-50 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
+              <div className="sm:col-span-3">
+                <span className="block text-sm font-semibold text-teal-700">Dạng II (Đúng/Sai)</span>
+                <p className="text-xs text-teal-500 mt-1">Khai báo số câu, sau đó chọn mức độ riêng cho từng ý a, b, c, d.</p>
+              </div>
+              <div className="sm:col-span-2 flex flex-col">
+                <span className="text-xs text-teal-500 mb-1">Số câu</span>
+                <input type="number" min={0} className="w-full p-2 input-elevated text-center text-sm" value={getDungSaiQuestionCount(inputData.questionConfig)} onChange={e => updateDungSaiQuestionCount(Number(e.target.value))} />
+              </div>
+            </div>
+            {getDungSaiLevelConfigs(inputData.questionConfig).map((question, questionIndex) => (
+              <div key={questionIndex} className="rounded-xl border border-teal-100 bg-teal-50/40 p-3">
+                <span className="block text-sm font-bold text-teal-800 mb-2">Câu {questionIndex + 1}</span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {(['yA', 'yB', 'yC', 'yD'] as const).map((key, idx) => (
+                    <div key={key} className="flex flex-col">
+                      <span className="text-xs text-teal-500 mb-1">Ý {'abcd'[idx]}</span>
+                      <select className="w-full p-2 input-elevated text-sm" value={question[key]} onChange={e => updateDungSaiLevel(questionIndex, key, e.target.value as DungSaiLevel)}>
+                        <option value="nhan_biet">Nhận biết</option>
+                        <option value="thong_hieu">Thông hiểu</option>
+                        <option value="van_dung">Vận dụng</option>
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
           {renderQuestionConfigRow("Dạng III (Trả lời ngắn)", "type3", 1, 1, 2)}
           {renderQuestionConfigRow("Tự luận", "essay", 0, 1, 2)}
         </div>
@@ -1641,6 +1720,126 @@ const App: React.FC = () => {
 
     </div>
   );
+
+  const renderUploadedMatrixBanner = () => {
+    const primary = contracts?.primary || null;
+    const warnings = Array.from(new Set([
+      ...(contracts?.warnings || []),
+      ...(contracts?.matrix?.warnings || []).map(w => `Ma trận: ${w}`),
+      ...(contracts?.specs?.warnings || []).map(w => `Đặc tả: ${w}`),
+    ]));
+    const tone = !primary ? 'red' : warnings.length ? 'amber' : 'emerald';
+    const box = tone === 'red' ? 'bg-red-50 border-red-200 text-red-900' : tone === 'amber' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-emerald-50/90 border-emerald-200 text-emerald-900';
+    const subjectOptions = inputData.subject && !SUBJECT_OPTIONS.includes(inputData.subject) ? [...SUBJECT_OPTIONS, inputData.subject] : SUBJECT_OPTIONS;
+    const pointsText = primary?.sections
+      ? primary.sections.filter(sec => sec.points !== undefined).map(sec => `${sec.name}: ${fmtNum(sec.points!)}đ`).join(' · ')
+      : primary?.points.fromFile
+      ? QTYPES.filter(t => primary.questionCount[t] > 0).map(t => `${t === 'IV' ? 'TL' : t}: ${primary.points.byType[t] !== undefined ? fmtNum(primary.points.byType[t]!) : '?'}đ`).join(' · ')
+      : '';
+    const source = contracts?.primarySource === 'specs' ? 'Bảng đặc tả' : 'Ma trận';
+    return (
+      <div className={`mb-3 px-4 py-2.5 rounded-xl border text-xs flex-shrink-0 space-y-1.5 ${box}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="font-bold flex items-center gap-1">
+              {primary ? <Check className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+              {primary ? `Đã đọc từ ${source} tải lên:` : 'Không đọc được số câu từ file:'}
+            </span>
+            <label className="flex items-center gap-1">Môn:
+              <select
+                value={inputData.subject}
+                onChange={e => {
+                  let v = e.target.value;
+                  if (v === '__custom__') v = (window.prompt('Nhập tên môn học:', '') || '').trim();
+                  if (!v) return;
+                  setIsCustomSubject(!SUBJECT_OPTIONS.includes(v));
+                  setInputData(prev => ({ ...prev, subject: v }));
+                }}
+                className={`px-1.5 py-0.5 rounded border bg-white text-xs font-semibold ${inputData.subject ? 'border-slate-300' : 'border-red-400'}`}
+              >
+                <option value="">-- Chọn môn --</option>
+                {subjectOptions.map(o => <option key={o} value={o}>{o}</option>)}
+                <option value="__custom__">Môn khác…</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-1">Lớp:
+              <select
+                value={inputData.grade}
+                onChange={e => setInputData(prev => ({ ...prev, grade: e.target.value }))}
+                className={`px-1.5 py-0.5 rounded border bg-white text-xs font-semibold ${inputData.grade ? 'border-slate-300' : 'border-red-400'}`}
+              >
+                <option value="">--</option>
+                {Array.from({ length: 12 }, (_, i) => String(i + 1)).map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </label>
+            <span>Kỳ: <strong>{inputData.examType}</strong></span>
+            {primary && <span>• Cấu trúc: <strong>{summarizeContract(primary)}</strong> ({primary.totalCommands} lệnh hỏi{primary.hasVDC ? ', có Vận dụng cao' : ''})</span>}
+            {pointsText && <span>• Điểm: <strong>{pointsText}</strong></span>}
+          </div>
+          {currentStep === AppStep.MATRIX && genState.specs && (
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentStep(AppStep.SPECS);
+                setCompletedSteps(Math.max(completedSteps, 2));
+              }}
+              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-colors flex items-center gap-1 shrink-0"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              Dùng luôn Đặc tả trong file
+            </button>
+          )}
+        </div>
+        {!primary && (
+          <p className="font-medium">App giữ nguyên cấu hình số câu hiện tại và để AI tự đọc bảng — hãy kiểm tra kỹ đề sinh ra. Nên dùng file Word (.docx) có cột Biết/Hiểu/Vận dụng theo từng dạng câu hỏi.</p>
+        )}
+        {warnings.length > 0 && (
+          <details open={warnings.length <= 3}>
+            <summary className="cursor-pointer font-semibold">⚠️ {warnings.length} điểm cần kiểm tra trong file</summary>
+            <ul className="mt-1 list-disc pl-5 space-y-0.5 max-h-32 overflow-y-auto">
+              {warnings.map((w, i) => <li key={i}>{w}</li>)}
+            </ul>
+          </details>
+        )}
+      </div>
+    );
+  };
+
+  const renderExamCheckBanner = () => {
+    if (!examCheck) return null;
+    const errors = examCheck.issues.filter(i => i.severity === 'error');
+    const warns = examCheck.issues.filter(i => i.severity === 'warning');
+    const ok = errors.length === 0;
+    return (
+      <div className={`mb-3 px-4 py-2.5 rounded-xl border text-xs flex-shrink-0 space-y-1 ${ok ? 'bg-emerald-50/90 border-emerald-200 text-emerald-900' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-bold flex items-center gap-1">
+            {ok ? <Check className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+            {ok
+              ? `Kiểm tra tự động: đề đúng số câu từng phần${examCheck.usedContract ? ' theo ma trận / đặc tả' : ''}, đủ phương án và đáp án.`
+              : `Kiểm tra tự động phát hiện ${errors.length} lỗi cấu trúc — vui lòng xem lại hoặc tạo lại đề.`}
+            {examCheck.repaired && <span className="font-normal">(app đã tự sửa đề 1 lần)</span>}
+          </span>
+          {!ok && (
+            <button
+              type="button"
+              onClick={handleGenerateExam}
+              disabled={genState.isLoading}
+              className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold transition-colors flex items-center gap-1 shrink-0 disabled:opacity-60"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Tạo lại đề
+            </button>
+          )}
+        </div>
+        {(errors.length > 0 || warns.length > 0) && (
+          <ul className="list-disc pl-5 space-y-0.5 max-h-28 overflow-y-auto">
+            {[...errors, ...warns].map((i, k) => <li key={k} className={i.severity === 'error' ? 'font-medium' : ''}>{i.message}</li>)}
+          </ul>
+        )}
+      </div>
+    );
+  };
 
   const renderContentStep = (
     title: string,
@@ -1723,54 +1922,11 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Thanh thông tin đồng bộ từ Ma trận đã tải lên (hiển thị ở Bước 2 & Bước 3) */}
-      {isUploadedMatrix && (currentStep === AppStep.MATRIX || currentStep === AppStep.SPECS) && (
-        <div className="mb-3 px-4 py-2.5 rounded-xl bg-emerald-50/90 border border-emerald-200 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-900 flex-shrink-0">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-bold flex items-center gap-1 text-emerald-800">
-              <Check className="w-4 h-4 text-emerald-600" />
-              Đã đồng bộ theo đúng Ma trận tải lên:
-            </span>
-            <span>Môn: <strong>{inputData.subject || 'Toán học'}</strong></span>
-            <span>•</span>
-            <span>Khối: <strong>Lớp {inputData.grade || '12'}</strong></span>
-            <span>•</span>
-            <span>Kỳ: <strong>{inputData.examType}</strong></span>
-            <span>•</span>
-            <span>
-              Cấu trúc:{' '}
-              <strong>
-                Phần I ({inputData.questionConfig.type1.biet + inputData.questionConfig.type1.hieu + inputData.questionConfig.type1.van_dung + inputData.questionConfig.type1.van_dung_cao} câu)
-              </strong>
-              {', '}
-              <strong>
-                Phần II ({inputData.questionConfig.type2.biet + inputData.questionConfig.type2.hieu + inputData.questionConfig.type2.van_dung + inputData.questionConfig.type2.van_dung_cao} câu Đ/S)
-              </strong>
-              {', '}
-              <strong>
-                Phần III ({inputData.questionConfig.type3.biet + inputData.questionConfig.type3.hieu + inputData.questionConfig.type3.van_dung + inputData.questionConfig.type3.van_dung_cao} câu TLN)
-              </strong>
-              {', '}
-              <strong>
-                Tự luận ({inputData.questionConfig.essay.biet + inputData.questionConfig.essay.hieu + inputData.questionConfig.essay.van_dung + inputData.questionConfig.essay.van_dung_cao} câu)
-              </strong>
-            </span>
-          </div>
-          {currentStep === AppStep.MATRIX && genState.specs && (
-            <button
-              type="button"
-              onClick={() => {
-                setCurrentStep(AppStep.SPECS);
-                setCompletedSteps(Math.max(completedSteps, 2));
-              }}
-              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-colors flex items-center gap-1 shrink-0"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              Dùng luôn Đặc tả trong file
-            </button>
-          )}
-        </div>
-      )}
+      {/* Thanh thông tin: số liệu app đọc được từ Ma trận / Đặc tả tải lên (Bước 2 & 3) */}
+      {isUploadedMatrix && (currentStep === AppStep.MATRIX || currentStep === AppStep.SPECS) && renderUploadedMatrixBanner()}
+
+      {/* Kết quả kiểm tra tự động đề vừa sinh (Bước 4) */}
+      {currentStep === AppStep.EXAM && examCheck && renderExamCheckBanner()}
 
       {/* Reference Document Upload - Only for SPECS step */}
       {currentStep === AppStep.SPECS && (
@@ -2055,12 +2211,17 @@ const App: React.FC = () => {
         questionConfig: {
           type1: { biet: 8, hieu: 4, van_dung: 0, van_dung_cao: 0 },
           type2: { biet: 1, hieu: 1, van_dung: 0, van_dung_cao: 0 },
+      type2QuestionCount: 2,
+      dungSaiLevelConfigs: [{ ...DEFAULT_DUNG_SAI_LEVELS }, { ...DEFAULT_DUNG_SAI_LEVELS }],
           type3: { biet: 1, hieu: 1, van_dung: 2, van_dung_cao: 0 },
           essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
         }
       });
       setUploadedFileName(null);
       setIsCustomSubject(false);
+      setIsUploadedMatrix(false);
+      setContracts(null);
+      setExamCheck(null);
       setCurrentStep(AppStep.INPUT);
       setCompletedSteps(0);
       setSelectedLessonIds(new Set());

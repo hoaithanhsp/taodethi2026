@@ -12,6 +12,7 @@
 import JSZip from 'jszip';
 import mammoth from 'mammoth';
 import { ExtractedQuestion, QuestionConfig } from '../types';
+import { analyzeTables, parseMatrixContract, TableKind } from './matrixContract';
 
 export interface DocxParseResult {
   text: string;
@@ -34,7 +35,7 @@ const decodeXmlEntities = (str: string): string =>
 // --- OMML → LaTeX converter ---
 const extractMathText = (xml: string): string => {
   let result = '';
-  const textMatches = xml.matchAll(/<(?:m|w):t[^>]*>([^<]*)<\/(?:m|w):t>/g);
+  const textMatches = xml.matchAll(/<(?:m|w):t(?:\s[^>]*)?>([^<]*)<\/(?:m|w):t>/g);
   for (const match of textMatches) {
     result += decodeXmlEntities(match[1]);
   }
@@ -42,91 +43,119 @@ const extractMathText = (xml: string): string => {
   return decodeXmlEntities(xml.replace(/<[^>]+>/g, '').trim());
 };
 
-const ommlToLatex = (ommlXml: string): string => {
-  let latex = ommlXml;
+// Các cấu trúc OMML được xử lý TỪ TRONG RA NGOÀI (khối không chứa cấu trúc con nào được đổi trước),
+// nên phân số lồng phân số, luỹ thừa của ngoặc, hàm sin/cos… không còn bị cắt sai hay mất chữ.
+const OMML_STRUCTS = 'sSubSup|sSup|sSub|sPre|f|rad|nary|d|func|acc|bar|limLow|limUpp|groupChr|box|borderBox|eqArr|m';
+const OMML_INNERMOST_RE = new RegExp(
+  `<m:(${OMML_STRUCTS})(?=[\\s>])[^>]*>((?:(?!<m:(?:${OMML_STRUCTS})(?=[\\s>/]))[\\s\\S])*?)<\\/m:\\1>`,
+  'g'
+);
+const OMML_FUNC_NAMES = new Set(['sin', 'cos', 'tan', 'cot', 'log', 'ln', 'lg', 'exp', 'lim', 'max', 'min', 'arcsin', 'arccos', 'arctan', 'sinh', 'cosh', 'tanh']);
+const OMML_ACCENTS: Record<string, string> = {
+  '\u0302': '\\hat', '^': '\\hat', '\u0303': '\\tilde', '~': '\\tilde', '\u20d7': '\\vec', '\u2192': '\\vec',
+  '\u0307': '\\dot', '\u0308': '\\ddot', '\u0304': '\\bar', '\u0305': '\\overline', '\u00af': '\\bar', '\u20d6': '\\overleftarrow',
+};
+const OMML_NARY: Record<string, string> = { '∑': '\\sum', '∏': '\\prod', '∫': '\\int', '∬': '\\iint', '∭': '\\iiint', '∮': '\\oint', '⋃': '\\bigcup', '⋂': '\\bigcap' };
+const UNICODE_TO_LATEX: Array<[RegExp, string]> = [
+  [/≤/g, '\\le '], [/≥/g, '\\ge '], [/≠/g, '\\ne '], [/∞/g, '\\infty '], [/π/g, '\\pi '], [/→/g, '\\to '],
+  [/∈/g, '\\in '], [/∉/g, '\\notin '], [/±/g, '\\pm '], [/×/g, '\\times '], [/÷/g, '\\div '], [/⇒/g, '\\Rightarrow '],
+  [/⇔/g, '\\Leftrightarrow '], [/∀/g, '\\forall '], [/∃/g, '\\exists '], [/∅/g, '\\varnothing '], [/∩/g, '\\cap '],
+  [/∪/g, '\\cup '], [/⊂/g, '\\subset '], [/⊃/g, '\\supset '], [/°/g, '^{\\circ}'], [/·/g, '\\cdot '], [/[∆Δ]/g, '\\Delta '],
+  [/α/g, '\\alpha '], [/β/g, '\\beta '], [/γ/g, '\\gamma '], [/θ/g, '\\theta '], [/λ/g, '\\lambda '], [/μ/g, '\\mu '],
+  [/σ/g, '\\sigma '], [/φ/g, '\\varphi '], [/ω/g, '\\omega '], [/−/g, '-'],
+];
 
-  // Apply recursively up to 4 levels for nested fractions/superscripts/radicals
-  for (let pass = 0; pass < 4; pass++) {
-    const prev = latex;
+const encMathText = (latex: string) => `<m:r><m:t>${latex.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</m:t></m:r>`;
+const ommlChild = (inner: string, tag: string): string | null => {
+  const m = new RegExp(`<m:${tag}(?=[\\s>])[^>]*>([\\s\\S]*?)<\\/m:${tag}>`).exec(inner);
+  return m ? m[1] : null;
+};
+const ommlChildren = (inner: string, tag: string): string[] =>
+  Array.from(inner.matchAll(new RegExp(`<m:${tag}(?=[\\s>])[^>]*>([\\s\\S]*?)<\\/m:${tag}>`, 'g'))).map(m => m[1]);
+const ommlVal = (inner: string, tag: string): string | null => {
+  const m = new RegExp(`<m:${tag}\\b[^>]*m:val="([^"]*)"`).exec(inner);
+  return m ? decodeXmlEntities(m[1]) : null;
+};
+const tx = (xml: string | null) => (xml ? extractMathText(xml).trim() : '');
+const delim = (ch: string, side: 'l' | 'r') => {
+  if (ch === '') return side === 'l' ? '\\left.' : '\\right.';
+  const map: Record<string, string> = { '{': '\\{', '}': '\\}', '〈': '\\langle', '⟨': '\\langle', '〉': '\\rangle', '⟩': '\\rangle', '‖': '\\|', '⌊': '\\lfloor', '⌋': '\\rfloor', '⌈': '\\lceil', '⌉': '\\rceil' };
+  return `${side === 'l' ? '\\left' : '\\right'}${map[ch] || ch}`;
+};
 
-    // Sub-superscript: <m:sSubSup>
-    latex = latex.replace(/<m:sSubSup[^>]*>([\s\S]*?)<\/m:sSubSup>/g, (_match, inner) => {
-      const baseMatch = inner.match(/<m:e[^>]*>([\s\S]*?)<\/m:e>/);
-      const subMatch = inner.match(/<m:sub[^>]*>([\s\S]*?)<\/m:sub>/);
-      const supMatch = inner.match(/<m:sup[^>]*>([\s\S]*?)<\/m:sup>/);
-      const base = baseMatch ? ommlToLatex(baseMatch[1]) : '?';
-      const sub = subMatch ? ommlToLatex(subMatch[1]) : '';
-      const sup = supMatch ? ommlToLatex(supMatch[1]) : '';
-      return `${base}_{${sub}}^{${sup}}`;
-    });
-
-    // Superscripts: <m:sSup>
-    latex = latex.replace(/<m:sSup[^>]*>([\s\S]*?)<\/m:sSup>/g, (_match, inner) => {
-      const baseMatch = inner.match(/<m:e[^>]*>([\s\S]*?)<\/m:e>/);
-      const supMatch = inner.match(/<m:sup[^>]*>([\s\S]*?)<\/m:sup>/);
-      const base = baseMatch ? ommlToLatex(baseMatch[1]) : '?';
-      const sup = supMatch ? ommlToLatex(supMatch[1]) : '?';
-      return `${base}^{${sup}}`;
-    });
-
-    // Subscripts: <m:sSub>
-    latex = latex.replace(/<m:sSub[^>]*>([\s\S]*?)<\/m:sSub>/g, (_match, inner) => {
-      const baseMatch = inner.match(/<m:e[^>]*>([\s\S]*?)<\/m:e>/);
-      const subMatch = inner.match(/<m:sub[^>]*>([\s\S]*?)<\/m:sub>/);
-      const base = baseMatch ? ommlToLatex(baseMatch[1]) : '?';
-      const sub = subMatch ? ommlToLatex(subMatch[1]) : '?';
-      return `${base}_{${sub}}`;
-    });
-
-    // Fractions: <m:f>
-    latex = latex.replace(/<m:f[^>]*>([\s\S]*?)<\/m:f>/g, (_match, inner) => {
-      const numMatch = inner.match(/<m:num[^>]*>([\s\S]*?)<\/m:num>/);
-      const denMatch = inner.match(/<m:den[^>]*>([\s\S]*?)<\/m:den>/);
-      const num = numMatch ? ommlToLatex(numMatch[1]) : '?';
-      const den = denMatch ? ommlToLatex(denMatch[1]) : '?';
+const convertOmmlStruct = (tag: string, inner: string): string => {
+  switch (tag) {
+    case 'sSubSup': return `${tx(ommlChild(inner, 'e'))}_{${tx(ommlChild(inner, 'sub'))}}^{${tx(ommlChild(inner, 'sup'))}}`;
+    case 'sSup': return `${tx(ommlChild(inner, 'e'))}^{${tx(ommlChild(inner, 'sup'))}}`;
+    case 'sSub': return `${tx(ommlChild(inner, 'e'))}_{${tx(ommlChild(inner, 'sub'))}}`;
+    case 'sPre': return `{}_{${tx(ommlChild(inner, 'sub'))}}^{${tx(ommlChild(inner, 'sup'))}}${tx(ommlChild(inner, 'e'))}`;
+    case 'f': {
+      const num = tx(ommlChild(inner, 'num'));
+      const den = tx(ommlChild(inner, 'den'));
+      const type = ommlVal(inner, 'type');
+      if (type === 'lin') return `${num}/${den}`;
+      if (type === 'noBar') return `\\binom{${num}}{${den}}`;
       return `\\frac{${num}}{${den}}`;
-    });
-
-    // Radicals: <m:rad>
-    latex = latex.replace(/<m:rad[^>]*>([\s\S]*?)<\/m:rad>/g, (_match, inner) => {
-      const degMatch = inner.match(/<m:deg[^>]*>([\s\S]*?)<\/m:deg>/);
-      const eMatch = inner.match(/<m:e[^>]*>([\s\S]*?)<\/m:e>/);
-      const deg = degMatch ? ommlToLatex(degMatch[1]).trim() : '';
-      const e = eMatch ? ommlToLatex(eMatch[1]) : '?';
+    }
+    case 'rad': {
+      const deg = tx(ommlChild(inner, 'deg'));
+      const e = tx(ommlChild(inner, 'e'));
       return deg ? `\\sqrt[${deg}]{${e}}` : `\\sqrt{${e}}`;
-    });
+    }
+    case 'nary': {
+      const chr = ommlVal(inner, 'chr');
+      const op = OMML_NARY[chr ?? '∫'] || (chr ? chr : '\\int');
+      const sub = tx(ommlChild(inner, 'sub'));
+      const sup = tx(ommlChild(inner, 'sup'));
+      return `${op}${sub ? `_{${sub}}` : ''}${sup ? `^{${sup}}` : ''} ${tx(ommlChild(inner, 'e'))}`;
+    }
+    case 'd': {
+      const beg = ommlVal(inner, 'begChr');
+      const end = ommlVal(inner, 'endChr');
+      const sep = ommlVal(inner, 'sepChr');
+      const items = ommlChildren(inner, 'e').map(x => tx(x));
+      const body = items.join(sep ?? ',');
+      const l = beg ?? '(';
+      const r = end ?? ')';
+      // Ngoặc thường → giữ ký tự gốc; ngoặc nhọn hệ phương trình / ngoặc rỗng → \left \right
+      if ((l === '(' && r === ')') || (l === '[' && r === ']') || (l === '|' && r === '|')) return `${l}${body}${r}`;
+      return `${delim(l, 'l')} ${body} ${delim(r, 'r')}`;
+    }
+    case 'func': {
+      const name = tx(ommlChild(inner, 'fName'));
+      const arg = tx(ommlChild(inner, 'e'));
+      return OMML_FUNC_NAMES.has(name) ? `\\${name} ${arg}` : `${name} ${arg}`;
+    }
+    case 'acc': {
+      const chr = ommlVal(inner, 'chr') ?? '\u0302';
+      return `${OMML_ACCENTS[chr] || '\\hat'}{${tx(ommlChild(inner, 'e'))}}`;
+    }
+    case 'bar': return `${ommlVal(inner, 'pos') === 'bot' ? '\\underline' : '\\overline'}{${tx(ommlChild(inner, 'e'))}}`;
+    case 'limLow': {
+      const e = tx(ommlChild(inner, 'e'));
+      return `${OMML_FUNC_NAMES.has(e) ? `\\${e}` : e}_{${tx(ommlChild(inner, 'lim'))}}`;
+    }
+    case 'limUpp': return `${tx(ommlChild(inner, 'e'))}^{${tx(ommlChild(inner, 'lim'))}}`;
+    case 'eqArr': return `\\begin{array}{l} ${ommlChildren(inner, 'e').map(x => tx(x)).join(' \\\\ ')} \\end{array}`;
+    case 'm': {
+      const rows = ommlChildren(inner, 'mr').map(row => ommlChildren(row, 'e').map(x => tx(x)).join(' & '));
+      return `\\begin{matrix} ${rows.join(' \\\\ ')} \\end{matrix}`;
+    }
+    default: // groupChr, box, borderBox
+      return tx(ommlChild(inner, 'e'));
+  }
+};
 
-    // N-ary operators (integral, sum, product): <m:nary>
-    latex = latex.replace(/<m:nary[^>]*>([\s\S]*?)<\/m:nary>/g, (_match, inner) => {
-      const chrMatch = inner.match(/<m:chr[^>]*m:val="([^"]+)"/);
-      const subMatch = inner.match(/<m:sub[^>]*>([\s\S]*?)<\/m:sub>/);
-      const supMatch = inner.match(/<m:sup[^>]*>([\s\S]*?)<\/m:sup>/);
-      const eMatch = inner.match(/<m:e[^>]*>([\s\S]*?)<\/m:e>/);
-      const chr = chrMatch ? chrMatch[1] : '∫';
-      const op = chr === '∑' ? '\\sum' : chr === '∏' ? '\\prod' : '\\int';
-      const sub = subMatch ? ommlToLatex(subMatch[1]).trim() : '';
-      const sup = supMatch ? ommlToLatex(supMatch[1]).trim() : '';
-      const e = eMatch ? ommlToLatex(eMatch[1]) : '';
-      return `${op}${sub ? `_{${sub}}` : ''}${sup ? `^{${sup}}` : ''} ${e}`;
-    });
-
-    // Delimiters (parentheses, brackets, braces): <m:d>
-    latex = latex.replace(/<m:d(?:\s[^>]*)?>([\s\S]*?)<\/m:d>/g, (_match, inner) => {
-      const begMatch = inner.match(/<m:begChr[^>]*m:val="([^"]*)"/);
-      const endMatch = inner.match(/<m:endChr[^>]*m:val="([^"]*)"/);
-      const beg = begMatch ? begMatch[1] : '(';
-      const end = endMatch ? endMatch[1] : ')';
-      const elements: string[] = [];
-      for (const em of inner.matchAll(/<m:e[^>]*>([\s\S]*?)<\/m:e>/g)) {
-        elements.push(ommlToLatex(em[1]));
-      }
-      return `${beg}${elements.join(', ')}${end}`;
-    });
-
+export const ommlToLatex = (ommlXml: string): string => {
+  let latex = ommlXml;
+  for (let pass = 0; pass < 60; pass++) {
+    const prev = latex;
+    latex = latex.replace(OMML_INNERMOST_RE, (_m, tag: string, inner: string) => encMathText(convertOmmlStruct(tag, inner)));
     if (latex === prev) break;
   }
-
-  return extractMathText(latex);
+  let out = extractMathText(latex);
+  for (const [re, rep] of UNICODE_TO_LATEX) out = out.replace(re, rep);
+  return out.replace(/[ ]{2,}/g, ' ');
 };
 
 // --- XML Parser: Extract text + OMML from word/document.xml ---
@@ -694,6 +723,66 @@ const extractParagraphHtml = (paraXml: string): { html: string; isBold: boolean;
   return { html: cleaned, isBold, isCentered };
 };
 
+// ---------------------------------------------------------------------------
+// Bộ duyệt khối OOXML có ĐẾM ĐỘ SÂU (thay cho regex non-greedy):
+//  - an toàn với bảng lồng trong ô (<w:tbl> trong <w:tc>), đoạn văn trong textbox…
+//  - tìm được <w:tbl>/<w:tr>/<w:tc> nằm trong <w:sdt>/<w:customXml>
+// ---------------------------------------------------------------------------
+const blockTagRe = (tag: string) => new RegExp(`<(\\/?)${tag}(?=[\\s>/])[^>]*?(\\/?)>`, 'g');
+
+/** Vị trí ngay sau thẻ đóng tương ứng của khối bắt đầu tại `start` (-1 nếu không đóng). */
+const findBlockEnd = (xml: string, tag: string, start: number): number => {
+  const re = blockTagRe(tag);
+  re.lastIndex = start;
+  let depth = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml))) {
+    if (m[1] === '/') {
+      depth--;
+      if (depth <= 0) return re.lastIndex;
+    } else if (m[2] === '/') {
+      if (depth === 0) return re.lastIndex; // <w:p/> tự đóng
+    } else {
+      depth++;
+    }
+  }
+  return -1;
+};
+
+/** Các khối cấp ngoài cùng (theo thứ tự tài liệu) thuộc một trong các thẻ `tags`. */
+const iterateBlocks = (xml: string, tags: string[]): Array<{ tag: string; xml: string }> => {
+  const out: Array<{ tag: string; xml: string }> = [];
+  const openRe = new RegExp(`<(${tags.join('|')})(?=[\\s>/])`, 'g');
+  let pos = 0;
+  while (pos < xml.length) {
+    openRe.lastIndex = pos;
+    const m = openRe.exec(xml);
+    if (!m) break;
+    const end = findBlockEnd(xml, m[1], m.index);
+    if (end < 0) {
+      out.push({ tag: m[1], xml: xml.slice(m.index) });
+      break;
+    }
+    out.push({ tag: m[1], xml: xml.slice(m.index, end) });
+    pos = end;
+  }
+  return out;
+};
+
+const readIntVal = (xml: string, tag: string): number => {
+  const m = new RegExp(`<${tag}\\b[^>]*w:val="(\\d+)"`).exec(xml);
+  return m ? parseInt(m[1], 10) || 0 : 0;
+};
+
+const plainOf = (html: string) =>
+  decodeXmlEntities(html.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+
+const isHeaderLabelText = (t: string) =>
+  /^(tnkq|tn|tl|tự\s*luận|trắc\s*nghiệm(\s*khách\s*quan)?|nhiều\s*lựa\s*chọn|đúng\s*[-–]?\s*sai|trả\s*lời\s*ngắn|số\s*câu(\s*hỏi)?|số\s*ý|tỉ\s*lệ(\s*%)?|tỷ\s*lệ(\s*%)?|%|điểm|thời\s*gian(\s*\(phút\))?)$/i.test(t.trim().replace(/[“”"]/g, ''));
+
+const isLevelHeaderText = (t: string) =>
+  /^(nhận\s*biết|biết|nb|b|thông\s*hiểu|hiểu|th|h|vận\s*dụng\s*cao|vận\s*dụng|vdc|vd|v|mức\s*[1-4])(\s*\([^)]*\))?$/i.test(t.trim());
+
 const convertWordTableXmlToHtml = (tblXml: string): string => {
   interface ParsedCell {
     html: string;
@@ -704,43 +793,66 @@ const convertWordTableXmlToHtml = (tblXml: string): string => {
     vMerge: 'restart' | 'continue' | null;
     skip: boolean;
   }
+  const emptyCell = (colspan = 1): ParsedCell => ({
+    html: '', isBold: false, isCentered: false, colspan, rowspan: 1, vMerge: null, skip: false,
+  });
 
-  const trMatches = Array.from(tblXml.matchAll(/<w:tr(?=[ >])[^>]*>([\s\S]*?)<\/w:tr>/g));
-  if (trMatches.length === 0) return '';
+  const openEnd = tblXml.indexOf('>') + 1;
+  const closeIdx = tblXml.lastIndexOf('</w:tbl>');
+  const inner = tblXml.slice(openEnd, closeIdx >= openEnd ? closeIdx : undefined);
+
+  // Số cột chuẩn của bảng theo <w:tblGrid>
+  const gridXml = /<w:tblGrid\b[\s\S]*?<\/w:tblGrid>/.exec(inner)?.[0] || '';
+  const gridCols = (gridXml.match(/<w:gridCol\b/g) || []).length;
 
   const rows: ParsedCell[][] = [];
+  const headerFlags: boolean[] = [];
 
-  for (const trMatch of trMatches) {
-    const trXml = trMatch[1];
-    const tcMatches = Array.from(trXml.matchAll(/<w:tc(?=[ >])[^>]*>([\s\S]*?)<\/w:tc>/g));
+  for (const { xml: trXml } of iterateBlocks(inner, ['w:tr'])) {
+    const firstTc = trXml.search(/<w:tc(?=[\s>/])/);
+    const trHead = firstTc >= 0 ? trXml.slice(0, firstTc) : trXml;
+    const trPr = /<w:trPr\b[^>]*>([\s\S]*?)<\/w:trPr>/.exec(trHead)?.[1] || '';
+    const isHeaderRow = /<w:tblHeader\b(?![^>]*w:val="(?:false|0|off)")/.test(trPr);
+    const gridBefore = readIntVal(trPr, 'w:gridBefore');
+    const gridAfter = readIntVal(trPr, 'w:gridAfter');
+
     const rowCells: ParsedCell[] = [];
+    // Ô trống đầu dòng mà Word không ghi <w:tc> (gridBefore) → bù lại để không lệch cột
+    if (gridBefore > 0) rowCells.push(emptyCell(gridBefore));
 
-    for (const tcMatch of tcMatches) {
-      const tcXml = tcMatch[1];
-      const tcPrMatch = tcXml.match(/<w:tcPr>([\s\S]*?)<\/w:tcPr>/);
-      const tcPr = tcPrMatch ? tcPrMatch[1] : '';
+    for (const { xml: tcXml } of iterateBlocks(trXml, ['w:tc'])) {
+      const contentStart = tcXml.search(/<w:(?:p|tbl)(?=[\s>/])/);
+      const tcHead = contentStart >= 0 ? tcXml.slice(0, contentStart) : tcXml;
+      const tcPr = /<w:tcPr\b[^>]*>([\s\S]*?)<\/w:tcPr>/.exec(tcHead)?.[1] || '';
 
-      const gridSpanMatch = tcPr.match(/<w:gridSpan[^>]*w:val="(\d+)"/i);
-      const colspan = gridSpanMatch ? Math.max(1, parseInt(gridSpanMatch[1], 10)) : 1;
+      const colspan = Math.max(1, readIntVal(tcPr, 'w:gridSpan') || 1);
+      let vMerge: ParsedCell['vMerge'] = null;
+      const vMergeMatch = /<w:vMerge\b([^>]*)\/?>/.exec(tcPr);
+      if (vMergeMatch) vMerge = /w:val="restart"/.test(vMergeMatch[1]) ? 'restart' : 'continue';
+      const hMergeMatch = /<w:hMerge\b([^>]*)\/?>/.exec(tcPr);
+      const hMergeContinue = !!hMergeMatch && !/w:val="restart"/.test(hMergeMatch[1]);
 
-      let vMerge: 'restart' | 'continue' | null = null;
-      const vMergeMatch = tcPr.match(/<w:vMerge(?:\s+[^>]*w:val="([^"]*)")?\s*\/?>/i);
-      if (vMergeMatch) {
-        vMerge = vMergeMatch[1] === 'restart' ? 'restart' : 'continue';
-      }
-
-      const paras = Array.from(tcXml.matchAll(/<w:p(?=[ >])[^>]*>([\s\S]*?)<\/w:p>/g));
       const paraStrings: string[] = [];
-      let allBold = paras.length > 0;
+      let allBold = true;
       let anyCentered = false;
-
-      for (const p of paras) {
-        const { html, isBold, isCentered } = extractParagraphHtml(p[0]);
+      for (const block of iterateBlocks(tcXml, ['w:p', 'w:tbl'])) {
+        if (block.tag === 'w:tbl') {
+          const nested = convertWordTableXmlToHtml(block.xml); // bảng lồng trong ô
+          if (nested) { paraStrings.push(nested); allBold = false; }
+          continue;
+        }
+        const { html, isBold, isCentered } = extractParagraphHtml(block.xml);
         if (html) {
           paraStrings.push(html);
           if (!isBold) allBold = false;
           if (isCentered) anyCentered = true;
         }
+      }
+
+      // hMerge kiểu cũ: ô "continue" thuộc về ô bên trái
+      if (hMergeContinue && rowCells.length > 0) {
+        rowCells[rowCells.length - 1].colspan += colspan;
+        continue;
       }
 
       rowCells.push({
@@ -753,27 +865,56 @@ const convertWordTableXmlToHtml = (tblXml: string): string => {
         skip: false,
       });
     }
+    if (gridAfter > 0) rowCells.push(emptyCell(gridAfter));
 
     if (rowCells.length > 0) {
       rows.push(rowCells);
+      headerFlags.push(isHeaderRow);
     }
   }
 
   if (rows.length === 0) return '';
 
-  // Resolve vertical merges (vMerge) across the 2D column grid
-  const activeOriginByCol = new Map<number, { r: number; cIdx: number }>();
+  // Dòng tiêu đề sơ bộ: dòng cuối (trong 8 dòng đầu) có ≥ 2 ô chỉ ghi mức độ (Biết/Hiểu/VD…)
+  const rowPlain = (row: ParsedCell[]) => row.map(c => plainOf(c.html));
+  let levelRow = -1;
+  let lastLabelRow = -1;
+  for (let r = 0; r < Math.min(8, rows.length); r++) {
+    const texts = rowPlain(rows[r]);
+    const nLevel = texts.filter(isLevelHeaderText).length;
+    const nLabel = nLevel + texts.filter(isHeaderLabelText).length;
+    if (nLabel >= 2) {
+      lastLabelRow = r;
+      if (nLevel >= 2) levelRow = r;
+    } else if (levelRow >= 0) break; // đã qua khối tiêu đề → gặp dòng dữ liệu thì dừng
+  }
+  // Mẫu cũ: dòng "TNKQ | TL" nằm DƯỚI dòng mức độ → vẫn thuộc tiêu đề
+  if (levelRow >= 0 && lastLabelRow > levelRow) levelRow = lastLabelRow;
 
+  // Bỏ các dòng tiêu đề bị CHÉP LẶP LẠI giữa bảng (thường do copy từ PDF / ngắt trang thủ công).
+  // (Tính năng "Repeat header rows" của Word KHÔNG nhân bản dòng trong XML nên không bị ảnh hưởng.)
+  if (levelRow >= 0) {
+    const sig = (row: ParsedCell[]) => rowPlain(row).join('|');
+    const headerSigs = new Set(rows.slice(0, levelRow + 1).map(sig).filter(s => s.replace(/\|/g, '').length > 0));
+    for (let r = rows.length - 1; r > levelRow; r--) {
+      const texts = rowPlain(rows[r]);
+      const nonEmpty = texts.filter(Boolean).length;
+      if (nonEmpty >= 2 && (headerSigs.has(sig(rows[r])) || texts.filter(isLevelHeaderText).length >= 2)) {
+        rows.splice(r, 1);
+        headerFlags.splice(r, 1);
+      }
+    }
+  }
+
+  // Giải vMerge (gộp dọc) trên lưới cột thực (đã tính gridBefore & gridSpan)
+  const activeOriginByCol = new Map<number, { r: number; cIdx: number }>();
   for (let r = 0; r < rows.length; r++) {
     let colCursor = 0;
     const incrementedOrigins = new Set<string>();
-
     for (let cIdx = 0; cIdx < rows[r].length; cIdx++) {
       const cell = rows[r][cIdx];
       if (cell.vMerge === 'restart') {
-        for (let k = 0; k < cell.colspan; k++) {
-          activeOriginByCol.set(colCursor + k, { r, cIdx });
-        }
+        for (let k = 0; k < cell.colspan; k++) activeOriginByCol.set(colCursor + k, { r, cIdx });
       } else if (cell.vMerge === 'continue') {
         const origin = activeOriginByCol.get(colCursor);
         if (origin) {
@@ -784,35 +925,34 @@ const convertWordTableXmlToHtml = (tblXml: string): string => {
             incrementedOrigins.add(key);
           }
         } else {
-          // Orphan vMerge continuation without restart above → treat as normal cell
-          cell.vMerge = null;
+          // Ô "continue" không có ô "restart" phía trên (Word cho phép) → coi như ô mở đầu mới
+          cell.vMerge = 'restart';
+          for (let k = 0; k < cell.colspan; k++) activeOriginByCol.set(colCursor + k, { r, cIdx });
         }
       } else {
-        for (let k = 0; k < cell.colspan; k++) {
-          activeOriginByCol.delete(colCursor + k);
-        }
+        for (let k = 0; k < cell.colspan; k++) activeOriginByCol.delete(colCursor + k);
       }
       colCursor += cell.colspan;
     }
   }
 
-  // Determine how many top rows belong to <thead>
-  let headerRowCount = 0;
-  for (let r = 0; r < Math.min(5, rows.length); r++) {
-    const rowText = rows[r].map(c => c.html).join(' ').toLowerCase();
-    if (
-      r === 0 ||
-      /\b(tt|stt|chương|chủ đề|nội dung|đơn vị kiến thức|mức độ|tnkq|nhiều lựa chọn|đúng|trả lời ngắn|tự luận|biết|hiểu|vận dụng|yêu cầu cần đạt|số câu)\b/i.test(
-        rowText
-      )
-    ) {
-      // Stop if first non-skipped cell is just row number "1"
-      const firstCellText = rows[r][0]?.html?.replace(/<[^>]+>/g, '').trim() || '';
-      if (r > 0 && /^1\.?$/.test(firstCellText)) break;
-      headerRowCount = r + 1;
-    } else {
-      break;
+  // Bù ô trống ở cuối dòng nếu Word lược bớt (giữ đúng số cột theo tblGrid)
+  if (gridCols > 0) {
+    for (const row of rows) {
+      const width = row.reduce((s, c) => s + c.colspan, 0);
+      if (width < gridCols) row.push(emptyCell(gridCols - width));
     }
+  }
+
+  // Số dòng tiêu đề (<thead>): ưu tiên dòng mức độ; sau đó cờ <w:tblHeader>; cuối cùng rowspan ô đầu
+  let headerRowCount = 0;
+  if (levelRow >= 0) headerRowCount = levelRow + 1;
+  else {
+    let flagged = 0;
+    while (flagged < headerFlags.length && headerFlags[flagged]) flagged++;
+    const firstRs = rows[0][0]?.rowspan || 1;
+    headerRowCount = Math.max(flagged, plainOf(rows[0][0]?.html || '').length <= 30 ? firstRs : 1, 1);
+    if (headerRowCount >= rows.length) headerRowCount = Math.max(1, rows.length - 1);
   }
 
   const renderRow = (row: ParsedCell[], isHeader: boolean): string => {
@@ -830,7 +970,7 @@ const convertWordTableXmlToHtml = (tblXml: string): string => {
           attrs.push('class="bold"');
         }
         const attrStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
-        const inner = c.isBold && !isHeader && !c.html.startsWith('<b>') ? `<b>${c.html}</b>` : c.html;
+        const inner = c.isBold && !isHeader && !c.html.startsWith('<b>') && !c.html.includes('<table') ? `<b>${c.html}</b>` : c.html;
         return `<${tag}${attrStr}>${inner}</${tag}>`;
       })
       .join('');
@@ -865,110 +1005,245 @@ ${bodyHtml}
 </body>
 </html>`;
 
-/**
- * Tách riêng phần Ma trận và phần Bản đặc tả nếu người dùng tải lên 1 file gộp cả 2 bảng.
- */
-export const splitMatrixAndSpecsHtml = (
-  fullHtml: string
-): { matrixHtml: string; specsHtml: string | null } => {
-  // Check if there are at least 2 tables and a "ĐẶC TẢ" heading between them
-  const tables = Array.from(fullHtml.matchAll(/<table[\s\S]*?<\/table>/gi));
-  if (tables.length < 2) {
-    return { matrixHtml: fullHtml, specsHtml: null };
-  }
-
-  const firstTableEnd = (tables[0].index || 0) + tables[0][0].length;
-  const secondTableStart = tables[1].index || 0;
-  const betweenText = fullHtml.slice(firstTableEnd, secondTableStart);
-
-  // Also check if second table itself has "Yêu cầu cần đạt"
-  const secondTableHasSpecs = /yêu\s*cầu\s*cần\s*đạt/i.test(tables[1][0]);
-  const headingMatch = betweenText.match(/<(?:h[1-4]|p)[^>]*>[^<]*(?:BẢNG|BẢN)\s*ĐẶC\s*TẢ[\s\S]*$/i);
-
-  if (headingMatch || secondTableHasSpecs) {
-    const splitIndex =
-      headingMatch && headingMatch.index !== undefined
-        ? firstTableEnd + headingMatch.index
-        : secondTableStart;
-
-    const bodyStartMatch = fullHtml.match(/<body[^>]*>/i);
-    const bodyEndMatch = fullHtml.match(/<\/body>/i);
-    const bodyStart = bodyStartMatch && bodyStartMatch.index !== undefined ? bodyStartMatch.index + bodyStartMatch[0].length : 0;
-    const bodyEnd = bodyEndMatch && bodyEndMatch.index !== undefined ? bodyEndMatch.index : fullHtml.length;
-
-    const matrixPart = fullHtml.slice(bodyStart, splitIndex).trim();
-    const specsPart = fullHtml.slice(splitIndex, bodyEnd).trim();
-
-    if (matrixPart.includes('<table') && specsPart.includes('<table')) {
-      return {
-        matrixHtml: wrapMatrixHtmlDocument(matrixPart),
-        specsHtml: wrapMatrixHtmlDocument(specsPart),
-      };
-    }
-  }
-
-  return { matrixHtml: fullHtml, specsHtml: null };
+const bodyBounds = (fullHtml: string) => {
+  const bodyStartMatch = /<body[^>]*>/i.exec(fullHtml);
+  const bodyEndMatch = /<\/body>/i.exec(fullHtml);
+  return {
+    start: bodyStartMatch ? bodyStartMatch.index + bodyStartMatch[0].length : 0,
+    end: bodyEndMatch ? bodyEndMatch.index : fullHtml.length,
+  };
 };
 
 /**
- * Chuyển đổi trực tiếp file Word (.docx / .doc) Ma trận hoặc Đặc tả sang HTML Table chuẩn xác 100%
- * (giữ nguyên toàn bộ hàng, cột, rowspan, colspan, ô trống và công thức toán), KHÔNG qua AI làm lệch bảng.
+ * Điểm bắt đầu "phần" của một bảng: nếu ngay trước bảng (sau bảng trước) có đoạn tiêu đề
+ * khớp `headingRe` (VD "BẢN ĐẶC TẢ…", "ĐẶC TẢ ĐỀ KIỂM TRA…", "KHUNG ĐẶC TẢ…") thì tách từ tiêu đề đó,
+ * để ghi chú của bảng trước vẫn đi cùng bảng trước.
  */
-export const extractDocxTablesAndHtml = async (
-  arrayBuffer: ArrayBuffer
-): Promise<{
+const sectionStart = (fullHtml: string, gapFrom: number, tableStart: number, headingRe: RegExp): number => {
+  const gap = fullHtml.slice(gapFrom, tableStart);
+  const blockRe = /<(h[1-6]|p)\b[^>]*>[\s\S]*?<\/\1>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = blockRe.exec(gap))) {
+    const text = plainOf(m[0]);
+    if (text.length > 0 && text.length <= 220 && headingRe.test(text)) return gapFrom + m.index;
+  }
+  return tableStart;
+};
+
+export type DocxTableKind = TableKind;
+
+/**
+ * Tách riêng phần Ma trận và phần Bản đặc tả khi 1 file chứa cả 2 bảng.
+ * Nhận diện theo NỘI DUNG BẢNG (cột "Yêu cầu cần đạt"/"Mức độ kiểm tra, đánh giá", dòng "Nhận biết: …")
+ * chứ không chỉ dựa vào tiêu đề "BẢN ĐẶC TẢ".
+ */
+export const splitMatrixAndSpecsHtml = (
+  fullHtml: string
+): { matrixHtml: string; specsHtml: string | null; kinds: DocxTableKind[] } => {
+  const tables = analyzeTables(fullHtml);
+  const kinds = tables.map(t => t.kind);
+  if (tables.length < 2) return { matrixHtml: fullHtml, specsHtml: null, kinds };
+
+  const { start: bodyStart, end: bodyEnd } = bodyBounds(fullHtml);
+  const mIdx = tables.findIndex(t => t.kind === 'matrix');
+  let sIdx = tables.findIndex((t, i) => t.kind === 'specs' && i !== mIdx);
+
+  // Dự phòng: không nhận ra bảng đặc tả qua cột → dùng tiêu đề "ĐẶC TẢ" đứng giữa 2 bảng
+  if (sIdx < 0) {
+    for (let i = 1; i < tables.length; i++) {
+      const s = sectionStart(fullHtml, tables[i - 1].end, tables[i].start, /đặc\s*tả/i);
+      if (s !== tables[i].start) { sIdx = i; break; }
+    }
+  }
+  if (sIdx < 0) return { matrixHtml: fullHtml, specsHtml: null, kinds };
+
+  let matrixPart: string;
+  let specsPart: string;
+  if (mIdx < 0 || mIdx < sIdx) {
+    const gapFrom = sIdx > 0 ? tables[sIdx - 1].end : bodyStart;
+    const split = sectionStart(fullHtml, gapFrom, tables[sIdx].start, /đặc\s*tả/i);
+    matrixPart = fullHtml.slice(bodyStart, split).trim();
+    specsPart = fullHtml.slice(split, bodyEnd).trim();
+  } else {
+    // Đặc tả đứng trước ma trận
+    const gapFrom = mIdx > 0 ? tables[mIdx - 1].end : bodyStart;
+    const split = sectionStart(fullHtml, gapFrom, tables[mIdx].start, /ma\s*trận/i);
+    specsPart = fullHtml.slice(bodyStart, split).trim();
+    matrixPart = fullHtml.slice(split, bodyEnd).trim();
+  }
+
+  if (/<table/i.test(matrixPart) && /<table/i.test(specsPart)) {
+    return { matrixHtml: wrapMatrixHtmlDocument(matrixPart), specsHtml: wrapMatrixHtmlDocument(specsPart), kinds };
+  }
+  return { matrixHtml: fullHtml, specsHtml: null, kinds };
+};
+
+export interface DocxTableExtraction {
   fullHtml: string;
   matrixHtml: string;
   specsHtml: string | null;
+  /** Có ít nhất 1 bảng bất kỳ */
   hasTable: boolean;
-}> => {
+  /** Có bảng mang cấu trúc ma trận/đặc tả (cột mức độ × dạng câu hỏi) */
+  hasMatrixTable: boolean;
+  tableKinds: DocxTableKind[];
+}
+
+const finishExtraction = (fullHtml: string): DocxTableExtraction => {
+  const { matrixHtml, specsHtml, kinds } = splitMatrixAndSpecsHtml(fullHtml);
+  return {
+    fullHtml,
+    matrixHtml,
+    specsHtml,
+    hasTable: kinds.length > 0,
+    hasMatrixTable: kinds.some(k => k === 'matrix' || k === 'specs'),
+    tableKinds: kinds,
+  };
+};
+
+/** Thân tài liệu Word (XML) → các khối HTML (đoạn văn, tiêu đề, bảng) theo đúng thứ tự. */
+const bodyXmlToHtmlBlocks = (bodyXml: string): { htmlBlocks: string[]; tableCount: number } => {
+  const htmlBlocks: string[] = [];
+  let tableCount = 0;
+  for (const block of iterateBlocks(bodyXml, ['w:tbl', 'w:p'])) {
+    if (block.tag === 'w:tbl') {
+      const tblHtml = convertWordTableXmlToHtml(block.xml);
+      if (tblHtml) {
+        htmlBlocks.push(tblHtml);
+        tableCount++;
+      }
+    } else {
+      const { html, isBold, isCentered } = extractParagraphHtml(block.xml);
+      if (html) {
+        if (
+          isCentered ||
+          /^(?:[IVX\d]+\.\s*)?(?:MA\s*TRẬN|BẢNG\s*ĐẶC\s*TẢ|BẢN\s*ĐẶC\s*TẢ|ĐẶC\s*TẢ|KHUNG\s*MA\s*TRẬN|KHUNG\s*ĐẶC\s*TẢ)/i.test(plainOf(html))
+        ) {
+          htmlBlocks.push(`<h2>${html}</h2>`);
+        } else if (isBold) {
+          htmlBlocks.push(`<p class="bold">${html}</p>`);
+        } else {
+          htmlBlocks.push(`<p>${html}</p>`);
+        }
+      }
+    }
+  }
+  return { htmlBlocks, tableCount };
+};
+
+export interface DocxExamSource {
+  /** Nội dung đề dạng HTML (giữ bảng, công thức LaTeX $...$, vị trí hình [HÌNH k]) */
+  html: string;
+  /** Ảnh đọc được, theo đúng số thứ tự [HÌNH k] */
+  images: Array<{ index: number; base64: string; mimeType: string }>;
+  /** Số công thức Word chuẩn (Equation – OMML), đã chuyển sang LaTeX */
+  ommlCount: number;
+  /** Số công thức MathType (đối tượng OLE, chỉ có ảnh WMF) — AI KHÔNG đọc được */
+  mathTypeCount: number;
+  /** Ảnh WMF/EMF hoặc vượt giới hạn — không gửi được cho AI */
+  skippedImages: number;
+}
+
+const IMAGE_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+const MAX_SOURCE_IMAGES = 16;
+
+/**
+ * Đọc ĐỀ THI từ file Word (.docx) để gửi cho AI (tạo đề tương tự / sinh đề biến thể):
+ * giữ nguyên bảng, chuyển công thức Equation (OMML) sang LaTeX, đánh dấu vị trí hình [HÌNH k] và lấy ảnh kèm theo.
+ */
+export const docxToExamSource = async (arrayBuffer: ArrayBuffer): Promise<DocxExamSource> => {
+  const zip = await JSZip.loadAsync(arrayBuffer);
+  const docXmlFile = zip.file('word/document.xml');
+  if (!docXmlFile) throw new Error('File Word không có nội dung (thiếu word/document.xml).');
+  let xml = (await docXmlFile.async('string')).replace(/<mc:Fallback>[\s\S]*?<\/mc:Fallback>/g, '');
+
+  // Quan hệ rId → đường dẫn ảnh trong gói docx
+  const relsXml = (await zip.file('word/_rels/document.xml.rels')?.async('string')) || '';
+  const rels = new Map<string, string>();
+  for (const m of relsXml.matchAll(/<Relationship\b[^>]*>/g)) {
+    const id = /\bId="([^"]+)"/.exec(m[0])?.[1];
+    const target = /\bTarget="([^"]+)"/.exec(m[0])?.[1];
+    if (id && target) rels.set(id, target);
+  }
+
+  const ommlCount = (xml.match(/<m:oMath(?=[\s>])/g) || []).length;
+  let mathTypeCount = 0;
+  // Đối tượng nhúng: công thức MathType / Equation 3.0 → đánh dấu; đối tượng khác → coi như hình
+  xml = xml.replace(/<w:object\b[\s\S]*?<\/w:object>/g, obj => {
+    if (/ProgID="(?:Equation\.|MathType)/i.test(obj)) {
+      mathTypeCount++;
+      return '<w:t>[CÔNG THỨC MathType – không đọc được]</w:t>';
+    }
+    const id = /<v:imagedata\b[^>]*r:id="([^"]+)"/.exec(obj)?.[1];
+    return id ? `<w:t>⟦IMG:${id}⟧</w:t>` : '';
+  });
+  xml = xml.replace(/<w:drawing\b[\s\S]*?<\/w:drawing>/g, d => {
+    const id = /<a:blip\b[^>]*r:embed="([^"]+)"/.exec(d)?.[1];
+    return id ? `<w:t>⟦IMG:${id}⟧</w:t>` : '';
+  });
+  xml = xml.replace(/<w:pict\b[\s\S]*?<\/w:pict>/g, pict => {
+    const id = /<v:imagedata\b[^>]*r:id="([^"]+)"/.exec(pict)?.[1];
+    return id ? `<w:t>⟦IMG:${id}⟧</w:t>` : '';
+  });
+
+  const bodyStart = xml.search(/<w:body\b/);
+  const bodyEnd = xml.lastIndexOf('</w:body>');
+  const bodyXml = bodyStart >= 0 ? xml.slice(bodyStart, bodyEnd > bodyStart ? bodyEnd : undefined) : xml;
+  let html = bodyXmlToHtmlBlocks(bodyXml).htmlBlocks.join('\n');
+
+  // Thay dấu hình bằng [HÌNH k] và gom ảnh theo thứ tự xuất hiện
+  const images: DocxExamSource['images'] = [];
+  const indexOfRel = new Map<string, number>();
+  let skippedImages = 0;
+  let counter = 0;
+  const markers = Array.from(html.matchAll(/⟦IMG:([^⟧]+)⟧/g)).map(m => m[1]);
+  for (const relId of markers) {
+    if (indexOfRel.has(relId)) continue;
+    const k = ++counter;
+    indexOfRel.set(relId, k);
+    const target = rels.get(relId) || '';
+    const path = target.startsWith('/') ? target.slice(1) : `word/${target.replace(/^\.\//, '')}`;
+    const ext = (path.split('.').pop() || '').toLowerCase();
+    const file = zip.file(path);
+    if (file && IMAGE_MIME[ext] && images.length < MAX_SOURCE_IMAGES) {
+      images.push({ index: k, base64: await file.async('base64'), mimeType: IMAGE_MIME[ext] });
+    } else {
+      skippedImages++;
+    }
+  }
+  const sent = new Set(images.map(i => i.index));
+  html = html.replace(/⟦IMG:([^⟧]+)⟧/g, (_m, relId: string) => {
+    const k = indexOfRel.get(relId)!;
+    return sent.has(k) ? ` [HÌNH ${k}] ` : ` [HÌNH ${k} – không gửi được (định dạng WMF/EMF hoặc quá nhiều hình)] `;
+  });
+
+  return { html, images, ommlCount, mathTypeCount, skippedImages };
+};
+
+/**
+ * Chuyển đổi trực tiếp file Word (.docx) Ma trận / Đặc tả sang HTML Table chính xác
+ * (giữ nguyên hàng, cột, rowspan, colspan, ô trống, bảng lồng và công thức toán), KHÔNG qua AI.
+ */
+export const extractDocxTablesAndHtml = async (arrayBuffer: ArrayBuffer): Promise<DocxTableExtraction> => {
   try {
     const zip = await JSZip.loadAsync(arrayBuffer);
     const docXmlFile = zip.file('word/document.xml');
 
     if (docXmlFile) {
-      const xmlContent = await docXmlFile.async('string');
-      const bodyMatch = xmlContent.match(/<w:body[^>]*>([\s\S]*?)<\/w:body>/);
-      const bodyXml = bodyMatch ? bodyMatch[1] : xmlContent;
+      // mc:Fallback chứa bản sao nội dung textbox/hình → bỏ để không nhân đôi chữ
+      const xmlContent = (await docXmlFile.async('string')).replace(/<mc:Fallback>[\s\S]*?<\/mc:Fallback>/g, '');
+      const bodyStart = xmlContent.search(/<w:body\b/);
+      const bodyEnd = xmlContent.lastIndexOf('</w:body>');
+      const bodyXml = bodyStart >= 0 ? xmlContent.slice(bodyStart, bodyEnd > bodyStart ? bodyEnd : undefined) : xmlContent;
 
-      // Match top-level <w:tbl> and <w:p> in document order
-      const blockRegex = /<w:tbl(?=[ >])[^>]*>[\s\S]*?<\/w:tbl>|<w:p(?=[ >])[^>]*>[\s\S]*?<\/w:p>/g;
-      const htmlBlocks: string[] = [];
-      let tableCount = 0;
-
-      for (const m of bodyXml.matchAll(blockRegex)) {
-        const block = m[0];
-        if (block.startsWith('<w:tbl')) {
-          const tblHtml = convertWordTableXmlToHtml(block);
-          if (tblHtml) {
-            htmlBlocks.push(tblHtml);
-            tableCount++;
-          }
-        } else {
-          const { html, isBold, isCentered } = extractParagraphHtml(block);
-          if (html) {
-            if (
-              isCentered ||
-              /^(?:\d+\.\s*)?(?:MA\s*TRẬN|BẢNG\s*ĐẶC\s*TẢ|BẢN\s*ĐẶC\s*TẢ|KHUNG\s*MA\s*TRẬN)/i.test(html)
-            ) {
-              htmlBlocks.push(`<h2>${html}</h2>`);
-            } else if (isBold) {
-              htmlBlocks.push(`<p class="bold">${html}</p>`);
-            } else {
-              htmlBlocks.push(`<p>${html}</p>`);
-            }
-          }
-        }
-      }
+      const { htmlBlocks, tableCount } = bodyXmlToHtmlBlocks(bodyXml);
 
       if (tableCount > 0) {
-        const fullHtml = wrapMatrixHtmlDocument(htmlBlocks.join('\n'));
-        const { matrixHtml, specsHtml } = splitMatrixAndSpecsHtml(fullHtml);
-        return { fullHtml, matrixHtml, specsHtml, hasTable: true };
+        return finishExtraction(wrapMatrixHtmlDocument(htmlBlocks.join('\n')));
       }
     }
 
-    // Fallback for altChunk MHTML (.docx exported by html-docx-js)
+    // altChunk MHTML (.docx xuất bởi html-docx-js, ví dụ file do chính app này tải về)
     const mhtFile = zip.file('word/afchunk.mht') || zip.file(/afchunk.*\.mht$/i)[0];
     if (mhtFile) {
       const mhtRaw = await mhtFile.async('string');
@@ -996,29 +1271,31 @@ export const extractDocxTablesAndHtml = async (
       const decoded = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(bytes));
       const htmlStart = decoded.search(/<!DOCTYPE|<html|<table/i);
       if (htmlStart !== -1 && /<table/i.test(decoded)) {
-        const rawHtml = decoded.slice(htmlStart).trim();
-        const { matrixHtml, specsHtml } = splitMatrixAndSpecsHtml(rawHtml);
-        return { fullHtml: rawHtml, matrixHtml, specsHtml, hasTable: true };
+        return finishExtraction(decoded.slice(htmlStart).trim());
       }
     }
   } catch (err) {
     console.warn('[DocxMathParser] Direct XML table extraction failed, checking HTML/Mammoth fallback:', err);
   }
 
-  // Check if file is HTML saved with .doc/.docx extension
+  // File HTML được lưu với đuôi .doc/.docx
   const rawUtf8 = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(arrayBuffer));
   if (/<table[\s\S]*?<\/table>/i.test(rawUtf8)) {
     const htmlStart = rawUtf8.search(/<!DOCTYPE|<html|<table/i);
-    const cleanHtml = htmlStart !== -1 ? rawUtf8.slice(htmlStart).trim() : rawUtf8;
-    const { matrixHtml, specsHtml } = splitMatrixAndSpecsHtml(cleanHtml);
-    return { fullHtml: cleanHtml, matrixHtml, specsHtml, hasTable: true };
+    return finishExtraction(htmlStart !== -1 ? rawUtf8.slice(htmlStart).trim() : rawUtf8);
   }
 
-  return { fullHtml: '', matrixHtml: '', specsHtml: null, hasTable: false };
+  return { fullHtml: '', matrixHtml: '', specsHtml: null, hasTable: false, hasMatrixTable: false, tableKinds: [] };
+};
+
+/** Nhận diện file .doc nhị phân đời cũ (OLE2) — không đọc được bảng trực tiếp. */
+export const isLegacyBinaryDoc = (arrayBuffer: ArrayBuffer): boolean => {
+  const b = new Uint8Array(arrayBuffer.slice(0, 8));
+  return b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0;
 };
 
 // ============================================================================
-// MATRIX METADATA & QUESTION CONFIG ANALYZER (Syncs uploaded Matrix → App State)
+// MATRIX METADATA & QUESTION CONFIG (giữ API cũ — nay dùng bộ đọc hợp đồng số liệu)
 // ============================================================================
 
 export interface ParsedMatrixMetadata {
@@ -1030,355 +1307,18 @@ export interface ParsedMatrixMetadata {
   topicsSummary?: string;
 }
 
-const KNOWN_SUBJECTS: { pattern: RegExp; name: string }[] = [
-  { pattern: /\b(?:MÔN|ĐỀ\s*KIỂM\s*TRA\s*MÔN)?\s*[:\-]?\s*TOÁN(?:\s*HỌC)?\b/i, name: 'Toán học' },
-  { pattern: /\bNGỮ\s*VĂN\b/i, name: 'Ngữ văn' },
-  { pattern: /\bTIẾNG\s*ANH\b/i, name: 'Tiếng Anh' },
-  { pattern: /\bVẬT\s*L[ÍÝ]\b/i, name: 'Vật lí' },
-  { pattern: /\bH[ÓO]A\s*HỌC\b/i, name: 'Hóa học' },
-  { pattern: /\bSINH\s*HỌC\b/i, name: 'Sinh học' },
-  { pattern: /\bLỊCH\s*SỬ\s*VÀ\s*ĐỊA\s*L[ÍÝ]\b/i, name: 'Lịch sử và Địa lí' },
-  { pattern: /\bKHOA\s*HỌC\s*TỰ\s*NHIÊN|\bKHTN\b/i, name: 'Khoa học tự nhiên' },
-  { pattern: /\bLỊCH\s*SỬ\b/i, name: 'Lịch sử' },
-  { pattern: /\bĐỊA\s*L[ÍÝ]\b/i, name: 'Địa lí' },
-  { pattern: /\bTIN\s*HỌC\b/i, name: 'Tin học' },
-  { pattern: /\bCÔNG\s*NGHỆ\b/i, name: 'Công nghệ' },
-  { pattern: /\b(?:GIÁO\s*DỤC\s*CÔNG\s*DÂN|GDCD|GIÁO\s*DỤC\s*KINH\s*TẾ\s*VÀ\s*PHÁP\s*LUẬT|GDKT\s*&\s*PL)\b/i, name: 'Giáo dục công dân' },
-];
-
 /**
- * Phân tích bảng Ma trận (hoặc Đặc tả) HTML người dùng tải lên để đồng bộ tự động:
- * - Môn học (subject), Khối lớp (grade), Kỳ kiểm tra (examType), Thời gian (duration)
- * - Số lượng câu hỏi từng phần (Dạng I, Dạng II, Dạng III, Tự luận) theo đúng mức độ Biết / Hiểu / Vận dụng
+ * Phân tích bảng Ma trận (hoặc Đặc tả) HTML: Môn, Lớp, Kỳ, Thời gian và số câu từng dạng × mức độ.
+ * Chỉ trả về questionConfig khi đọc được số liệu đáng tin cậy (không còn đoán / bịa tự luận).
  */
 export const parseMatrixMetadataAndConfig = (htmlOrText: string): ParsedMatrixMetadata => {
   const result: ParsedMatrixMetadata = {};
   if (!htmlOrText || !htmlOrText.trim()) return result;
-
-  const plainText = htmlOrText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-  const headerArea = plainText.slice(0, 1500);
-
-  // 1. Detect Subject (from header first, then fallback to content keywords)
-  for (const s of KNOWN_SUBJECTS) {
-    if (s.pattern.test(headerArea)) {
-      result.subject = s.name;
-      break;
-    }
+  const contract = parseMatrixContract(htmlOrText);
+  Object.assign(result, contract.meta);
+  if (contract.ok && contract.questionConfig && contract.confidence !== 'low') {
+    result.questionConfig = contract.questionConfig;
   }
-  if (!result.subject) {
-    if (/\b(hàm\s*số|đạo\s*hàm|nguyên\s*hàm|tích\s*phân|phương\s*trình|vectơ|toạ\s*độ|cấp\s*số|lượng\s*giác|đa\s*thức|tam\s*giác|xác\s*suất)\b/i.test(plainText)) {
-      result.subject = 'Toán học';
-    } else if (/\b(điện\s*trường|từ\s*trường|dao\s*động|sóng\s*cơ|quang\s*học|nhiệt\s*học|động\s*lực\s*học|con\s*lắc)\b/i.test(plainText)) {
-      result.subject = 'Vật lí';
-    } else if (/\b(nguyên\s*tử|bảng\s*tuần\s*hoàn|liên\s*kết\s*hóa\s*học|oxi\s*hóa|este|cacbohidrat|polime|hidrocacbon|kim\s*loại)\b/i.test(plainText)) {
-      result.subject = 'Hóa học';
-    } else if (/\b(tế\s*bào|di\s*truyền|nhiễm\s*sắc\s*thể|sinh\s*thái|tiến\s*hóa|quang\s*hợp|hô\s*hấp)\b/i.test(plainText)) {
-      result.subject = 'Sinh học';
-    } else if (/\b(thuật\s*toán|lập\s*trình|cơ\s*sở\s*dữ\s*liệu|mạng\s*máy\s*tính|python)\b/i.test(plainText)) {
-      result.subject = 'Tin học';
-    }
-  }
-
-  // 2. Detect Grade (Khối / Lớp 1..12)
-  const gradeMatch =
-    headerArea.match(/\b(?:LỚP|KHỐI(?:\s*LỚP)?)\s*[:\-]?\s*(1[0-2]|[1-9])\b/i) ||
-    headerArea.match(/\b(?:TOÁN|VẬT\s*LÍ|HÓA\s*HỌC|SINH\s*HỌC|TIN\s*HỌC|CÔNG\s*NGHỆ|LỊCH\s*SỬ|ĐỊA\s*LÍ|NGỮ\s*VĂN|TIẾNG\s*ANH|KHTN)\s+(1[0-2]|[6-9])\b/i);
-  if (gradeMatch) {
-    result.grade = gradeMatch[1];
-  }
-
-  // 3. Detect Exam Type
-  if (/GIỮA\s*(?:HỌC\s*)?K[ÌỲ]\s*(?:II|2)\b/i.test(headerArea)) {
-    result.examType = 'Giữa kỳ 2';
-  } else if (/CUỐI\s*(?:HỌC\s*)?K[ÌỲ]\s*(?:II|2)\b/i.test(headerArea)) {
-    result.examType = 'Cuối kỳ 2';
-  } else if (/GIỮA\s*(?:HỌC\s*)?K[ÌỲ]\s*(?:I|1)\b/i.test(headerArea)) {
-    result.examType = 'Giữa kỳ 1';
-  } else if (/CUỐI\s*(?:HỌC\s*)?K[ÌỲ]\s*(?:I|1)\b/i.test(headerArea)) {
-    result.examType = 'Cuối kỳ 1';
-  }
-
-  // 4. Detect Duration
-  const durMatch = headerArea.match(/(\d{2,3})\s*phút/i);
-  if (durMatch) {
-    const dur = parseInt(durMatch[1], 10);
-    if (dur >= 15 && dur <= 180) {
-      result.duration = dur;
-    }
-  }
-
-  // 5. Parse QuestionConfig & Topics from HTML Table Grid
-  try {
-    if (typeof DOMParser !== 'undefined' && /<table/i.test(htmlOrText)) {
-      const doc = new DOMParser().parseFromString(htmlOrText, 'text/html');
-      const table = doc.querySelector('table');
-      if (table && table.rows.length >= 2) {
-        // Build 2D grid expanding rowSpan & colSpan
-        interface GridCell {
-          text: string;
-          rOrigin: number;
-          cOrigin: number;
-        }
-        const grid: GridCell[][] = [];
-        const trList = Array.from(table.rows);
-
-        for (let r = 0; r < trList.length; r++) {
-          if (!grid[r]) grid[r] = [];
-          let cCursor = 0;
-          const cells = Array.from(trList[r].cells);
-
-          for (const cell of cells) {
-            while (grid[r][cCursor] !== undefined) {
-              cCursor++;
-            }
-            const rs = Math.max(1, cell.rowSpan || 1);
-            const cs = Math.max(1, cell.colSpan || 1);
-            const cellText = (cell.textContent || '').replace(/\s+/g, ' ').trim();
-
-            for (let dr = 0; dr < rs; dr++) {
-              for (let dc = 0; dc < cs; dc++) {
-                const rr = r + dr;
-                const cc = cCursor + dc;
-                if (!grid[rr]) grid[rr] = [];
-                grid[rr][cc] = { text: cellText, rOrigin: r, cOrigin: cCursor };
-              }
-            }
-            cCursor += cs;
-          }
-        }
-
-        const numRows = grid.length;
-        const numCols = Math.max(...grid.map(row => row.length));
-
-        // Identify header row count (rows before first data row)
-        let headerRows = 1;
-        for (let r = 0; r < Math.min(5, numRows); r++) {
-          const rowJoined = grid[r].map(c => c?.text || '').join(' ');
-          const firstCol = grid[r][0]?.text || '';
-          if (r > 0 && /^1\.?$/.test(firstCol)) break;
-          if (
-            /\b(tt|stt|chương|chủ đề|nội dung|đơn vị|mức độ|tnkq|nhiều lựa chọn|đúng|trả lời ngắn|tự luận|biết|hiểu|vận dụng|nb|th|vd|vdc)\b/i.test(
-              rowJoined
-            )
-          ) {
-            headerRows = r + 1;
-          }
-        }
-
-        type QTypeKey = 'type1' | 'type2' | 'type3' | 'essay';
-        type LevelKey = 'biet' | 'hieu' | 'van_dung' | 'van_dung_cao';
-        const colMapping = new Map<number, { type: QTypeKey; level: LevelKey }>();
-        const presentTypes = new Set<QTypeKey>();
-
-        for (let c = 0; c < numCols; c++) {
-          const headerStack: string[] = [];
-          for (let r = 0; r < headerRows; r++) {
-            const t = grid[r]?.[c]?.text || '';
-            if (t && headerStack[headerStack.length - 1] !== t) {
-              headerStack.push(t);
-            }
-          }
-          const fullHeader = headerStack.join(' | ');
-          const bottomHeader = headerStack[headerStack.length - 1] || '';
-
-          // Skip summary / total / percentage / score columns
-          if (/\b(tổng|tỉ\s*lệ|%|điểm|tt|stt|chương|chủ\s*đề|nội\s*dung|đơn\s*vị|yêu\s*cầu\s*cần\s*đạt)\b/i.test(bottomHeader)) {
-            continue;
-          }
-          if (/\b(tổng\s*số|tổng\s*cộng|tỉ\s*lệ\s*%)\b/i.test(fullHeader) && !/\b(nhiều\s*lựa\s*chọn|đúng|trả\s*lời\s*ngắn|tự\s*luận)\b/i.test(fullHeader)) {
-            continue;
-          }
-
-          let qType: QTypeKey | null = null;
-          if (/nhiều\s*lựa\s*chọn|4\s*lựa\s*chọn|phần\s*i\b|dạng\s*i\b/i.test(fullHeader)) {
-            qType = 'type1';
-          } else if (/đúng\s*[-–/]\s*sai|đúng\s*sai|phần\s*ii\b|dạng\s*ii\b/i.test(fullHeader)) {
-            qType = 'type2';
-          } else if (/trả\s*lời\s*ngắn|điền\s*khuyết|phần\s*iii\b|dạng\s*iii\b/i.test(fullHeader)) {
-            qType = 'type3';
-          } else if (/tự\s*luận|phần\s*iv\b|dạng\s*iv\b/i.test(fullHeader)) {
-            qType = 'essay';
-          } else if (/\btnkq\b|trắc\s*nghiệm/i.test(fullHeader)) {
-            qType = 'type1';
-          }
-
-          let level: LevelKey | null = null;
-          if (/vận\s*dụng\s*cao|\bvdc\b/i.test(bottomHeader)) {
-            level = 'van_dung_cao';
-          } else if (/vận\s*dụng|\bvd\b/i.test(bottomHeader)) {
-            level = 'van_dung';
-          } else if (/thông\s*hiểu|\bhiểu\b|\bth\b/i.test(bottomHeader)) {
-            level = 'hieu';
-          } else if (/nhận\s*biết|\bbiết\b|\bnb\b/i.test(bottomHeader)) {
-            level = 'biet';
-          }
-
-          if (qType && level) {
-            colMapping.set(c, { type: qType, level });
-            presentTypes.add(qType);
-          }
-        }
-
-        if (colMapping.size > 0) {
-          const config: QuestionConfig = {
-            type1: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-            type2: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-            type3: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-            essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-          };
-
-          // Find if there is a "Tổng số câu" / "Tổng số lệnh hỏi" footer row
-          let totalCountRowIdx = -1;
-          let firstFooterRowIdx = numRows;
-          for (let r = headerRows; r < numRows; r++) {
-            const rowLabel = `${grid[r]?.[0]?.text || ''} ${grid[r]?.[1]?.text || ''} ${grid[r]?.[2]?.text || ''}`;
-            if (/\b(tổng\s*số\s*câu|tổng\s*số\s*lệnh\s*hỏi|số\s*câu|tổng\s*số\s*ý|tổng\s*điểm|tổng\s*số\s*điểm|tỉ\s*lệ)\b/i.test(rowLabel)) {
-              if (firstFooterRowIdx === numRows) firstFooterRowIdx = r;
-              if (totalCountRowIdx === -1 && /\b(tổng\s*số\s*câu|tổng\s*số\s*lệnh\s*hỏi|số\s*câu|tổng\s*cộng)\b/i.test(rowLabel) && !/điểm|tỉ\s*lệ/i.test(rowLabel)) {
-                totalCountRowIdx = r;
-              }
-            }
-          }
-
-          // Extract topics list from body rows (columns 1 & 2)
-          const topicsList: string[] = [];
-          for (let r = headerRows; r < firstFooterRowIdx; r++) {
-            const chap = grid[r]?.[1]?.text || '';
-            const lesson = grid[r]?.[2]?.text || '';
-            const line = lesson ? (chap ? `${chap}: ${lesson}` : lesson) : chap;
-            if (line && !topicsList.includes(line)) {
-              topicsList.push(line);
-            }
-          }
-          if (topicsList.length > 0) {
-            result.topicsSummary = topicsList.join('\n');
-          }
-
-          // Count questions per mapped column from body rows OR footer row
-          const visitedCells = new Set<string>();
-          const bodyCounts: QuestionConfig = {
-            type1: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-            type2: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-            type3: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-            essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-          };
-          const type2UniqueQuestionNums = new Set<string>();
-
-          for (let r = headerRows; r < firstFooterRowIdx; r++) {
-            for (const [c, mapInfo] of colMapping.entries()) {
-              const cell = grid[r]?.[c];
-              if (!cell || !cell.text) continue;
-              const originKey = `${cell.rOrigin}_${cell.cOrigin}`;
-              if (visitedCells.has(originKey)) continue;
-              visitedCells.add(originKey);
-
-              const txt = cell.text.trim();
-              if (!txt || txt === '-' || txt === '–') continue;
-
-              // Check for Roman question codes like I.1, II.1a, III.2, IV.1
-              const romanCodes = Array.from(txt.matchAll(/\b(?:I|II|III|IV)\.\d+[a-d]?\b/gi));
-              if (romanCodes.length > 0) {
-                bodyCounts[mapInfo.type][mapInfo.level] += romanCodes.length;
-                if (mapInfo.type === 'type2') {
-                  for (const rc of romanCodes) {
-                    const qNumMatch = rc[0].match(/II\.(\d+)/i);
-                    if (qNumMatch) type2UniqueQuestionNums.add(qNumMatch[1]);
-                  }
-                }
-                continue;
-              }
-
-              // Check for "Câu 1, Câu 2" codes
-              const cauCodes = Array.from(txt.matchAll(/\b(?:Câu|C)\s*\d+[a-d]?\b/gi));
-              if (cauCodes.length > 0) {
-                bodyCounts[mapInfo.type][mapInfo.level] += cauCodes.length;
-                continue;
-              }
-
-              // Check for integer count in cell (e.g. "2", "4 (1,0đ)", "2 câu", "1 (TD1)")
-              const numMatch = txt.match(/^(\d{1,2})(?![.,]\d)/);
-              if (numMatch) {
-                bodyCounts[mapInfo.type][mapInfo.level] += parseInt(numMatch[1], 10);
-              }
-            }
-          }
-
-          // Also read footer row if available
-          const footerCounts: QuestionConfig = {
-            type1: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-            type2: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-            type3: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-            essay: { biet: 0, hieu: 0, van_dung: 0, van_dung_cao: 0 },
-          };
-          if (totalCountRowIdx !== -1) {
-            const visitedFooter = new Set<string>();
-            for (const [c, mapInfo] of colMapping.entries()) {
-              const cell = grid[totalCountRowIdx]?.[c];
-              if (!cell || !cell.text) continue;
-              const originKey = `${cell.rOrigin}_${cell.cOrigin}`;
-              if (visitedFooter.has(originKey)) continue;
-              visitedFooter.add(originKey);
-
-              const m = cell.text.match(/(\d{1,2})/);
-              if (m) {
-                footerCounts[mapInfo.type][mapInfo.level] += parseInt(m[1], 10);
-              }
-            }
-          }
-
-          // Choose best count for each type (prefer bodyCounts if > 0, else footerCounts)
-          (['type1', 'type2', 'type3', 'essay'] as QTypeKey[]).forEach(tKey => {
-            const bSum =
-              bodyCounts[tKey].biet +
-              bodyCounts[tKey].hieu +
-              bodyCounts[tKey].van_dung +
-              bodyCounts[tKey].van_dung_cao;
-            const fSum =
-              footerCounts[tKey].biet +
-              footerCounts[tKey].hieu +
-              footerCounts[tKey].van_dung +
-              footerCounts[tKey].van_dung_cao;
-
-            const chosen = bSum > 0 ? bodyCounts[tKey] : footerCounts[tKey];
-            config[tKey] = { ...chosen };
-          });
-
-          // Normalize type2 (Đúng - Sai): if counted in sub-items (4 ý = 1 câu), convert to question count
-          const t2Sum =
-            config.type2.biet +
-            config.type2.hieu +
-            config.type2.van_dung +
-            config.type2.van_dung_cao;
-          if (type2UniqueQuestionNums.size > 0 && t2Sum > type2UniqueQuestionNums.size) {
-            const totalQ = type2UniqueQuestionNums.size;
-            const bietQ = Math.round((config.type2.biet / t2Sum) * totalQ);
-            const hieuQ = Math.round((config.type2.hieu / t2Sum) * totalQ);
-            const vdQ = Math.max(0, totalQ - bietQ - hieuQ);
-            config.type2 = { biet: bietQ, hieu: hieuQ, van_dung: vdQ, van_dung_cao: 0 };
-          } else if (t2Sum >= 8 && t2Sum % 4 === 0) {
-            const totalQ = t2Sum / 4;
-            const bietQ = Math.round((config.type2.biet / t2Sum) * totalQ);
-            const hieuQ = Math.round((config.type2.hieu / t2Sum) * totalQ);
-            const vdQ = Math.max(0, totalQ - bietQ - hieuQ);
-            config.type2 = { biet: bietQ, hieu: hieuQ, van_dung: vdQ, van_dung_cao: 0 };
-          }
-
-          const totalExtracted =
-            config.type1.biet + config.type1.hieu + config.type1.van_dung + config.type1.van_dung_cao +
-            config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao +
-            config.type3.biet + config.type3.hieu + config.type3.van_dung + config.type3.van_dung_cao +
-            config.essay.biet + config.essay.hieu + config.essay.van_dung + config.essay.van_dung_cao;
-
-          if (totalExtracted > 0) {
-            result.questionConfig = config;
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('[DocxMathParser] Matrix table config parse warning:', err);
-  }
-
+  if (contract.topicsSummary) result.topicsSummary = contract.topicsSummary;
   return result;
 };
-

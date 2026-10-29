@@ -12,9 +12,10 @@ import {
   PROVIDER_FALLBACK_MODELS,
   GRADE_NO_ESSAY,
   getSubjectFootnotes,
+  getSystemInstruction,
   AiProvider,
 } from '../constants';
-import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate, ReferenceUsageMode } from '../types';
+import { InputData, QuestionConfig, ExtractedQuestion, MatrixTemplate, ReferenceUsageMode, describeDungSaiLevels, MATRIX_FULL_COLUMNS_RULE, getDungSaiQuestionCount, getDungSaiLevelTotals } from '../types';
 import { fetchTemplateHtml, buildMatrixPromptForCustomTemplate, buildSpecsPromptForCustomTemplate } from './matrixTemplates';
 import { FIGURE_JSON_HTML_INSTRUCTIONS, renderFiguresInHtml } from './figureEngine';
 import {
@@ -22,6 +23,13 @@ import {
   buildCv7991MatrixThead, buildCv7991SpecsThead, cv7991MatrixColumnCount, cv7991SpecsColumnCount, applyCv7991Thead,
 } from './cv7991Template';
 import { extractQuestionsLocally } from './docxMathParser';
+import {
+  MatrixContract, QTYPES, TYPE_LABEL, fmtNum, parseMatrixContract, resolveContracts,
+  buildContractPromptBlock, buildSpecsTheadFromContract, contractMatchesConfig,
+} from './matrixContract';
+import { validateExamHtml, hasBlockingIssues, ExamIssue, TRUNCATION_MARKER } from './examValidator';
+import { UserFacingError } from './errors';
+export { UserFacingError };
 
 // --- Dual AI Provider & Storage Keys ---
 const GOOGLE_AI_PROVIDER_KEY = 'google_ai_provider';
@@ -253,12 +261,17 @@ const getErrorText = (error: any): string => {
 };
 
 export const parseApiError = (error: any): GeminiApiErrorType => {
+  // Lỗi đọc JSON (thường do AI bị cắt giữa chừng) hoặc lỗi nội dung đã giải thích → không phải lỗi máy chủ.
+  // Trước đây "…JSON at position 15003" bị coi là lỗi 500 vì chứa chuỗi "500" → thử lại mọi model rồi báo "AI quá tải".
+  if (error instanceof SyntaxError || error instanceof UserFacingError) return 'UNKNOWN';
   const text = getErrorText(error);
   const status = String(error?.status || error?.code || '').toLowerCase();
+  // Mã HTTP phải đứng riêng (không nằm trong một số dài hơn như 15003, 40021)
+  const hasCode = (code: string) => new RegExp(`(^|[^0-9.,])${code}(?![0-9])`).test(text);
 
   if (
     status === '429' ||
-    text.includes('429') ||
+    hasCode('429') ||
     text.includes('resource_exhausted') ||
     text.includes('quota') ||
     text.includes('rate limit') ||
@@ -269,7 +282,7 @@ export const parseApiError = (error: any): GeminiApiErrorType => {
 
   if (
     status === '503' ||
-    text.includes('503') ||
+    hasCode('503') ||
     text.includes('unavailable') ||
     text.includes('service unavailable') ||
     text.includes('high demand') ||
@@ -285,10 +298,10 @@ export const parseApiError = (error: any): GeminiApiErrorType => {
     status === '502' ||
     status === '504' ||
     status === '404' ||
-    text.includes('500') ||
-    text.includes('502') ||
-    text.includes('504') ||
-    text.includes('404') ||
+    hasCode('500') ||
+    hasCode('502') ||
+    hasCode('504') ||
+    hasCode('404') ||
     text.includes('not_found') ||
     text.includes('deadline_exceeded') ||
     text.includes('deadline exceeded') ||
@@ -302,13 +315,13 @@ export const parseApiError = (error: any): GeminiApiErrorType => {
     return 'TRANSIENT_SERVER_ERROR';
   }
 
-  if (status === '403' || text.includes('permission_denied') || text.includes('403')) {
+  if (status === '403' || text.includes('permission_denied') || hasCode('403')) {
     return 'PERMISSION_DENIED';
   }
 
   if (
     status === '401' ||
-    text.includes('401') ||
+    hasCode('401') ||
     text.includes('api_key_invalid') ||
     text.includes('api key not valid') ||
     text.includes('invalid api key')
@@ -316,7 +329,7 @@ export const parseApiError = (error: any): GeminiApiErrorType => {
     return 'INVALID_API_KEY';
   }
 
-  if (status === '400' || text.includes('invalid_argument') || text.includes('400')) {
+  if (status === '400' || text.includes('invalid_argument') || hasCode('400')) {
     return 'INVALID_ARGUMENT';
   }
 
@@ -345,7 +358,11 @@ export const getFriendlyGeminiErrorMessage = (
   error: any,
   provider: AiProvider = getAiProvider()
 ): string => {
+  if (error instanceof UserFacingError) return error.message;
   const errorType = parseApiError(error);
+  if (/payload size|request entity too large|exceeds the (?:maximum|limit)/i.test(getErrorText(error))) {
+    return 'File quá lớn để gửi cho AI (giới hạn khoảng 14 MB). Hãy nén PDF, giảm độ phân giải ảnh hoặc tách đề thành nhiều phần.';
+  }
   if (errorType === 'INVALID_API_KEY') {
     return 'API Key không hợp lệ hoặc đã hết hạn. Vui lòng kiểm tra lại trong Cài đặt.';
   }
@@ -414,6 +431,7 @@ const callWithRetry = async <T>(
   throw lastError;
 };
 
+
 // --- Centralized Fallback Wrapper: try models in order and manage fallbackNotice ---
 export interface FallbackOptions {
   /** Giới hạn số model thử trong chuỗi dự phòng (mặc định: thử hết). */
@@ -450,6 +468,7 @@ export const callWithFallback = async <T = string>(
         setFallbackNotice(null);
         return result;
       } catch (err: any) {
+        if (err instanceof UserFacingError) throw err;
         lastError = err;
         const errorType = parseApiError(err);
         console.warn(`[ExamCraft] (${provider}) Model ${model} failed (${errorType}):`, err.message || err);
@@ -532,24 +551,44 @@ const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
+// --- Kiểm tra output bị cắt do hết token (finishReason = MAX_TOKENS) ---
+export const getFinishReason = (response: any): string =>
+  String(response?.candidates?.[0]?.finishReason || response?.candidates?.[0]?.finish_reason || '');
+export const wasTruncated = (response: any): boolean => /MAX_TOKENS/i.test(getFinishReason(response));
+const stripCodeFences = (text: string): string => text.replace(/```html/gi, '').replace(/```/g, '');
+
+
+const MATRIX_CONVERSION_RULES = `
+    YÊU CẦU KỸ THUẬT (BẮT BUỘC):
+    - Chép NGUYÊN VĂN mọi ô: tên chương/bài, mã câu (I.1, II.1a, Câu 1, C1a,b…), các con số, điểm, tỉ lệ %. KHÔNG tóm tắt, KHÔNG làm tròn, KHÔNG tự sửa số liệu.
+    - Giữ nguyên cấu trúc gộp ô (rowspan, colspan) và đủ số cột ở mọi dòng (ô trống vẫn phải có <td></td>).
+    - Các dòng tiêu đề cột đặt trong <thead> dùng <th>; dữ liệu đặt trong <tbody>.
+    - Nếu tài liệu có CẢ "Ma trận" VÀ "Bản đặc tả" thì xuất THÀNH 2 BẢNG RIÊNG, mỗi bảng có tiêu đề <h2> ngay phía trên (VD: <h2>MA TRẬN ĐỀ KIỂM TRA…</h2> và <h2>BẢN ĐẶC TẢ ĐỀ KIỂM TRA…</h2>). Giữ các dòng tiêu đề / ghi chú (Môn, Lớp, Kỳ kiểm tra, Thời gian) dưới dạng <p>.
+    - Font Times New Roman 13pt; border 1px solid black.
+    - Output: chỉ mã HTML (<!DOCTYPE html>…), KHÔNG kèm markdown \`\`\`, KHÔNG giải thích.
+    - Nếu không đọc được, trả về thông báo lỗi trong thẻ <p>.`;
+
+const TRUNCATED_MATRIX_MESSAGE =
+  'Bảng quá dài nên AI chỉ chuyển được một phần (bị cắt giữa bảng). Hãy: (a) tải lên file Word .docx gốc (app đọc trực tiếp, không qua AI), hoặc (b) tách riêng Ma trận và Đặc tả thành 2 file rồi dùng lối tắt "Ma trận + Đặc tả".';
+
 // --- Service Functions ---
 
 export const convertMatrixFileToHtml = async (file: File): Promise<string> => {
+  const lowerName = (file.name || '').toLowerCase();
+  if (/\.docx?$/.test(lowerName) || /wordprocessingml|msword/.test(file.type || '')) {
+    // Gemini không đọc được Word qua inlineData → báo rõ thay vì gửi bytes rồi nhận bảng rác
+    throw new UserFacingError(
+      'Không đọc được file Word này. Nếu là file .doc đời cũ, hãy mở bằng Word → "Lưu thành" (Save As) định dạng .docx rồi tải lại; hoặc xuất ra PDF.'
+    );
+  }
   const base64Data = await fileToBase64(file);
+  const mimeType = file.type || (lowerName.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
 
   const prompt = `
     Bạn là một chuyên gia chuyển đổi dữ liệu.
-    Tài liệu đính kèm là một **MA TRẬN ĐỀ THI** (dạng ảnh, PDF hoặc Word).
-    Nhiệm vụ của bạn là:
-    1. Đọc nội dung bảng ma trận trong tài liệu.
-    2. Chuyển đổi toàn bộ nội dung đó thành một bảng **HTML Table** chuẩn.
-    
-    YÊU CẦU KỸ THUẬT:
-    - Giữ nguyên cấu trúc merge cells (rowspan, colspan) của bản gốc.
-    - Font chữ: Times New Roman, size 13pt.
-    - Table border: 1px solid black.
-    - Output: Chỉ trả về mã HTML của bảng (<table>...</table>) hoặc (<!DOCTYPE html>...), KHÔNG bao gồm markdown \`\`\`.
-    - Nếu không đọc được, hãy trả về thông báo lỗi trong thẻ <p>.
+    Tài liệu đính kèm là **MA TRẬN ĐỀ KIỂM TRA** (có thể kèm **BẢN ĐẶC TẢ**) dạng ảnh hoặc PDF.
+    Nhiệm vụ: đọc các bảng trong tài liệu và chuyển thành **HTML Table** chuẩn, giống hệt bản gốc.
+    ${MATRIX_CONVERSION_RULES}
   `;
 
   return callWithFallback(async (ai, model) => {
@@ -557,18 +596,19 @@ export const convertMatrixFileToHtml = async (file: File): Promise<string> => {
       model,
       contents: {
         parts: [
-          { inlineData: { mimeType: file.type || 'application/octet-stream', data: base64Data } },
+          { inlineData: { mimeType, data: base64Data } },
           { text: prompt }
         ]
       },
       config: createGeminiConfig({
         model,
         thinkingLevel: ThinkingLevel.LOW,
-        maxOutputTokens: 16384,
+        maxOutputTokens: 32768,
+        temperature: 0,
       }),
     });
-    const text = response.text || "";
-    return text.replace(/```html/g, '').replace(/```/g, '');
+    if (wasTruncated(response)) throw new UserFacingError(TRUNCATED_MATRIX_MESSAGE);
+    return stripCodeFences(response.text || "");
   });
 };
 
@@ -579,24 +619,21 @@ export const convertMatrixTextToHtml = async (
 ): Promise<string> => {
   const hasImages = images && images.length > 0;
 
+  const MAX_CHARS = 60000;
+  if (text.length > MAX_CHARS) {
+    console.warn(`[MatrixUpload] Văn bản ma trận dài ${text.length} ký tự, chỉ gửi ${MAX_CHARS} ký tự đầu cho AI.`);
+  }
   const prompt = `
     Bạn là một chuyên gia chuyển đổi dữ liệu.
-    Nội dung dưới đây là **MA TRẬN ĐỀ THI** được trích xuất từ file Word (.docx).
+    Nội dung dưới đây là **MA TRẬN ĐỀ KIỂM TRA** (có thể kèm **BẢN ĐẶC TẢ**) được trích xuất từ file Word.
     ${hasImages ? `Có ${images!.length} hình ảnh đính kèm (bao gồm công thức toán đã chuyển thành hình). Hãy đọc kỹ các hình để hiểu nội dung.` : ''}
-    
-    Nhiệm vụ của bạn là:
-    1. Đọc nội dung ma trận từ text dưới đây.
-    2. Chuyển đổi toàn bộ thành một bảng **HTML Table** chuẩn.
-    
-    YÊU CẦU KỸ THUẬT:
-    - Giữ nguyên cấu trúc merge cells (rowspan, colspan) của bản gốc.
-    - Font chữ: Times New Roman, size 13pt.
-    - Table border: 1px solid black.
-    - Output: Chỉ trả về mã HTML của bảng (<table>...</table>) hoặc (<!DOCTYPE html>...), KHÔNG bao gồm markdown \`\`\`.
+    Nhiệm vụ: dựng lại các bảng thành **HTML Table** chuẩn, giống hệt bản gốc.
+    ${MATRIX_CONVERSION_RULES}
     - Nếu text chứa LaTeX ($...$), giữ nguyên LaTeX trong bảng.
-    
-    **NỘI DUNG MA TRẬN:**
-    ${text.substring(0, 20000)}
+
+    **NỘI DUNG FILE:**
+    ${text.substring(0, MAX_CHARS)}
+    ${text.length > MAX_CHARS ? '\n[... phần cuối file quá dài đã bị lược bớt ...]' : ''}
   `;
 
   const parts: any[] = [];
@@ -624,11 +661,12 @@ export const convertMatrixTextToHtml = async (
       config: createGeminiConfig({
         model,
         thinkingLevel: ThinkingLevel.LOW,
-        maxOutputTokens: 16384,
+        maxOutputTokens: 32768,
+        temperature: 0,
       }),
     });
-    const resultText = response.text || "";
-    return resultText.replace(/```html/g, '').replace(/```/g, '');
+    if (wasTruncated(response)) throw new UserFacingError(TRUNCATED_MATRIX_MESSAGE);
+    return stripCodeFences(response.text || "");
   });
 };
 
@@ -914,13 +952,15 @@ export const generateStep1Matrix = async (
 
   const totalEssayQuestions = config.essay.biet + config.essay.hieu + config.essay.van_dung + config.essay.van_dung_cao;
   const isGradeNoEssay = GRADE_NO_ESSAY.includes(data.grade);
-  const hasEssay = !isGradeNoEssay && totalEssayQuestions > 0;
+  const hasEssay = totalEssayQuestions > 0; // Tự luận luôn được tính khi người dùng nhập > 0
+  void isGradeNoEssay;
 
   // Gộp VD + VDC thành 3 mức: Biết, Hiểu, VD (theo chuẩn CV 7991)
   const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
-  const type2QuestionsCount = config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao;
+  const type2QuestionsCount = getDungSaiQuestionCount(config);
   const type2SubItemsTotal = type2QuestionsCount * 4; // Mỗi câu Dạng II gồm 4 ý/lệnh hỏi (a, b, c, d)
-  const type2Total = { biet: config.type2.biet, hieu: config.type2.hieu, vd: config.type2.van_dung + config.type2.van_dung_cao };
+  const type2LevelTotals = getDungSaiLevelTotals(config);
+  const type2Total = { biet: type2LevelTotals.biet, hieu: type2LevelTotals.hieu, vd: type2LevelTotals.van_dung };
   const type3Total = { biet: config.type3.biet, hieu: config.type3.hieu, vd: config.type3.van_dung + config.type3.van_dung_cao };
   const essayTotal = { biet: config.essay.biet, hieu: config.essay.hieu, vd: config.essay.van_dung + config.essay.van_dung_cao };
 
@@ -965,6 +1005,8 @@ export const generateStep1Matrix = async (
     + Theo quy định chuẩn CV 7991 của Bộ GD&ĐT: Mỗi câu Dạng II gồm **4 lệnh hỏi/ý (a, b, c, d)**.
     + Tổng số lệnh hỏi/ý Dạng II trong ma trận là **${type2SubItemsTotal} ý** (gồm các mã từ II.1a -> II.${type2QuestionsCount}d).
     + Các ý a, b, c, d được phân bổ vào các mức độ Biết, Hiểu, VD của các bài học tương ứng (thông thường ý a, b ở Nhận biết, ý c ở Thông hiểu, ý d ở Vận dụng).
+    + ${describeDungSaiLevels(config)}
+  ${MATRIX_FULL_COLUMNS_RULE}
 
   | Dạng câu hỏi | Số câu | Số lệnh hỏi (ý) | Quy cách chi tiết |
   |---|---|---|---|
@@ -1081,7 +1123,7 @@ export const generateStep1Matrix = async (
   }
 
   // --- TEMPLATE 1: Mẫu chuẩn CV 7991 (đúng Phụ lục CV 7991/BGDĐT-GDTrH) ---
-  const cvLayout = computeCv7991Layout(config, !isGradeNoEssay);
+  const cvLayout = computeCv7991Layout(config, true);
   const useCv = cvLayout.types.length > 0;
   const cvPrompt = useCv
     ? buildCv7991MatrixPrompt({ data, layout: cvLayout, footnotes, selectedChapters, totalSelectedPeriods })
@@ -1108,6 +1150,83 @@ export const generateStep1Matrix = async (
 
 
 
+const CV7991_CSS_INLINE = 'body { font-family: "Times New Roman", serif; font-size: 13pt; margin: 20px; } h2 { text-align: center; font-weight: bold; text-transform: uppercase; } table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid black; padding: 3px 5px; text-align: center; vertical-align: middle; } .left-align { text-align: left; vertical-align: top; } .bold { font-weight: bold; }';
+
+/**
+ * BẢN ĐẶC TẢ cho MA TRẬN NGƯỜI DÙNG TẢI LÊN:
+ * giữ đúng cấu trúc cột (dạng × mức độ, kể cả VDC), đúng hàng bài học, chép nguyên mã/số câu;
+ * <thead> dựng bằng code từ chính ma trận (không ép khung CV 7991 / mẫu 2-3-4).
+ */
+const generateSpecsFromUploadedMatrix = async (
+  matrixContent: string,
+  data: InputData,
+  selectedLessonIds: Set<string>,
+): Promise<string> => {
+  const contract = parseMatrixContract(matrixContent, { prefer: 'matrix' });
+  const head = contract.ok ? buildSpecsTheadFromContract(contract) : null;
+  const footnotes = getSubjectFootnotes(data.subject);
+  const objectivesMap: string[] = [];
+  data.chapters.forEach(c => (c.lessons || []).forEach(l => {
+    if (selectedLessonIds.has(l.id)) {
+      objectivesMap.push(`- Bài "${l.name}": Biết: ${l.objectives?.biet || '...'} | Hiểu: ${l.objectives?.hieu || '...'} | Vận dụng: ${l.objectives?.van_dung || '...'} | Vận dụng cao: ${l.objectives?.van_dung_cao || '...'}`);
+    }
+  }));
+  const levelNames = contract.hasVDC ? 'Biết / Hiểu / Vận dụng / Vận dụng cao' : 'Biết / Hiểu / Vận dụng';
+  const cellExample = contract.codeStyle === 'roman' ? 'VD: "I.1, I.2", "II.1a, II.1b"'
+    : contract.codeStyle === 'cau' ? 'VD: "Câu 1, 2", "Câu 1a, 1b"'
+    : contract.codeStyle === 'count' ? 'VD: số lệnh hỏi "2", "1"' : '';
+
+  const prompt = `
+  Dựa trên **MA TRẬN ĐỀ KIỂM TRA do người dùng tải lên** (HTML) dưới đây, hãy lập **BẢN ĐẶC TẢ ĐỀ KIỂM TRA** (Full HTML Document)
+  cho môn **${data.subject || '(theo tiêu đề ma trận)'}**, **lớp ${data.grade || '(theo tiêu đề ma trận)'}**, ${data.examType}.
+
+  **NGUYÊN TẮC BẮT BUỘC — BÁM 100% MA TRẬN TẢI LÊN:**
+  1. Giữ NGUYÊN danh sách Chủ đề/Chương và Nội dung/đơn vị kiến thức (đúng tên, đúng thứ tự, không thêm/bớt/gộp).
+  2. Giữ NGUYÊN các dạng câu hỏi và các cột mức độ của ma trận (${levelNames}); không thêm dạng, không bỏ cột${contract.hasVDC ? ', cột Vận dụng cao giữ RIÊNG' : ''}.
+  3. Mỗi ô câu hỏi (cùng hàng bài học, cùng dạng, cùng mức) ghi Y NGUYÊN nội dung ô tương ứng trong ma trận${cellExample ? ` (${cellExample})` : ''}; ô trống để trống. Không đổi cách đánh mã.
+  4. Thêm cột **"Yêu cầu cần đạt"** (class="left-align") cho mỗi đơn vị kiến thức: ghi yêu cầu cần đạt cho TỪNG mức độ có câu hỏi ở hàng đó, mỗi mức một dòng bắt đầu bằng <b>- Biết:</b> / <b>- Hiểu:</b> / <b>- Vận dụng:</b>${contract.hasVDC ? ' / <b>- Vận dụng cao:</b>' : ''}; dùng động từ đo được, đúng Chương trình GDPT 2018 môn ${data.subject || 'học'} lớp ${data.grade || ''}.
+  5. KHÔNG có cột Tổng / Tỉ lệ % theo hàng. Cuối bảng thêm các dòng "Tổng số câu", "Tổng số điểm", "Tỉ lệ %" chép đúng số liệu tương ứng của ma trận cho các cột mức độ.
+  ${head ? `6. Bảng có đúng **${head.columnCount} cột**. Dùng NGUYÊN VĂN phần <thead> sau (không sửa, không thêm/bớt cột):
+\`\`\`
+${head.thead}
+\`\`\`` : ''}
+
+  ${contract.ok ? buildContractPromptBlock(contract, { maxYccd: 0 }) : ''}
+
+  **MA TRẬN ĐẦU VÀO (NGUỒN CHUẨN DUY NHẤT):**
+  ${matrixContent}
+
+  ${objectivesMap.length ? `**YÊU CẦU CẦN ĐẠT THAM KHẢO THEO BÀI:**\n  ${objectivesMap.join('\n  ')}` : ''}
+
+  **YÊU CẦU OUTPUT:**
+  1. Full HTML Document (<!DOCTYPE html>…), CSS trong <style>: ${CV7991_CSS_INLINE}
+  2. Trên bảng: <h2>BẢN ĐẶC TẢ ĐỀ KIỂM TRA …</h2> — giữ đúng môn/lớp/kỳ kiểm tra như tiêu đề ma trận; năm học giữ như ma trận (nếu ma trận để trống thì ghi "20... - 20...").
+  3. Dưới bảng: chú thích năng lực — nếu ma trận có chú thích năng lực thì chép lại đúng như ma trận, nếu không thì dùng: ${footnotes.replace(/\n/g, ' ')}
+  4. Chỉ trả về HTML, không giải thích.
+
+  **KIỂM TRA TRƯỚC KHI TRẢ KẾT QUẢ:** tập mã câu/số câu ở từng cột của đặc tả phải TRÙNG KHỚP với ma trận; danh sách bài học trùng khớp ma trận.
+  `;
+
+  return callWithFallback(async (ai, model) => {
+    const response = await ai.models.generateContent({
+      model,
+      contents: prompt,
+      config: createGeminiConfig({
+        model,
+        systemInstruction: getSystemInstruction(true),
+        thinkingLevel: ThinkingLevel.MEDIUM,
+        maxOutputTokens: 32768,
+        temperature: 0.1,
+      }),
+    });
+    if (wasTruncated(response)) {
+      throw new UserFacingError('Bản đặc tả quá dài nên AI bị cắt giữa chừng. Vui lòng bấm tạo lại hoặc chọn model Pro trong Cài đặt.');
+    }
+    const text = stripCodeFences(response.text || 'Lỗi tạo đặc tả.');
+    return head ? applyCv7991Thead(text, head.thead, head.columnCount) : text;
+  });
+};
+
 export const generateStep2Specs = async (
   matrixContent: string,
   data: InputData,
@@ -1115,6 +1234,10 @@ export const generateStep2Specs = async (
   template: MatrixTemplate = 'template1',
   isUploadedMatrix: boolean = false
 ): Promise<string> => {
+  // Ma trận do người dùng tải lên → đặc tả theo đúng cấu trúc của ma trận đó (bỏ qua mẫu/thang điểm mặc định)
+  if (isUploadedMatrix && matrixContent && /<table/i.test(matrixContent)) {
+    return generateSpecsFromUploadedMatrix(matrixContent, data, selectedLessonIds);
+  }
 
   const objectivesMap: string[] = [];
   data.chapters.forEach(c => (c.lessons || []).forEach(l => {
@@ -1126,11 +1249,11 @@ export const generateStep2Specs = async (
   const config = data.questionConfig;
   const totalEssayQuestions = config.essay.biet + config.essay.hieu + config.essay.van_dung + config.essay.van_dung_cao;
   const isGradeNoEssay = GRADE_NO_ESSAY.includes(data.grade);
-  const allowEssay = isUploadedMatrix ? totalEssayQuestions > 0 : !isGradeNoEssay;
+  const allowEssay = totalEssayQuestions > 0; void isGradeNoEssay;
   const hasEssay = allowEssay && totalEssayQuestions > 0;
 
   const type1Total = { biet: config.type1.biet, hieu: config.type1.hieu, vd: config.type1.van_dung + config.type1.van_dung_cao };
-  const type2QuestionsCount = config.type2.biet + config.type2.hieu + config.type2.van_dung + config.type2.van_dung_cao;
+  const type2QuestionsCount = getDungSaiQuestionCount(config);
   const type2SubItemsTotal = type2QuestionsCount * 4; // Mỗi câu Dạng II gồm 4 ý/lệnh hỏi (a, b, c, d)
   const type3Total = { biet: config.type3.biet, hieu: config.type3.hieu, vd: config.type3.van_dung + config.type3.van_dung_cao };
   const essayTotal = { biet: config.essay.biet, hieu: config.essay.hieu, vd: config.essay.van_dung + config.essay.van_dung_cao };
@@ -1155,6 +1278,8 @@ export const generateStep2Specs = async (
     + Gồm **${type2QuestionsCount} câu** Đúng/Sai. Mỗi câu gồm **4 ý lệnh hỏi (a, b, c, d)**.
     + Tổng số ý Dạng II cần đặc tả là **${type2SubItemsTotal} ý** (tương ứng các mã từ II.1a -> II.${type2QuestionsCount}d).
     + Mỗi dòng đặc tả (NB, TH, VD) gắn với các ý tương ứng theo đúng ô của Ma trận đầu vào.
+    + ${describeDungSaiLevels(config)}
+  ${MATRIX_FULL_COLUMNS_RULE}
 
   | Dạng câu hỏi | Số câu | Số lệnh hỏi (ý) | Quy cách |
   |---|---|---|---|
@@ -1348,7 +1473,60 @@ export const extractQuestionsFromReference = async (
   }
 };
 
-export const generateStep3Exam = async (
+/**
+ * Chọn HỢP ĐỒNG SỐ LIỆU dùng để sinh đề:
+ *  - Ma trận tải lên: luôn dùng (đọc được) — đặc tả khớp ma trận thì ưu tiên đặc tả vì có Yêu cầu cần đạt.
+ *  - Ma trận do AI sinh: chỉ dùng khi số câu trong bảng khớp đúng cấu hình (để lấy thêm bài học/mức của từng câu).
+ */
+export const pickExamContract = (
+  matrixContent: string | undefined,
+  specsContent: string | undefined,
+  questionConfig: QuestionConfig,
+  isUploadedMatrix: boolean
+): MatrixContract | null => {
+  const { primary } = resolveContracts(matrixContent, specsContent);
+  if (!primary || !primary.ok) return null;
+  if (isUploadedMatrix) return primary;
+  return contractMatchesConfig(primary, questionConfig) ? primary : null;
+};
+
+const TYPE_KEY_TO_ROMAN: Record<string, 'I' | 'II' | 'III' | 'IV'> = { type1: 'I', type2: 'II', type3: 'III', essay: 'IV' };
+
+const buildContractStructureInstructions = (contract: MatrixContract): string => {
+  if (contract.sections) {
+    // Ma trận theo kĩ năng (Ngữ văn: Đọc hiểu / Viết; Tiếng Anh: Listening / Reading …)
+    const roman = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
+    const lines: string[] = [buildContractPromptBlock(contract), '', '**CẤU TRÚC ĐỀ BẮT BUỘC (đúng theo hợp đồng số liệu trên):**'];
+    contract.sections.forEach((sec, i) => {
+      lines.push(`- **PHẦN ${roman[i] || i + 1}. ${sec.name.toUpperCase()}${sec.points !== undefined ? ` (${fmtNum(sec.points)} điểm)` : ''}:** đúng ${sec.questions.length} câu.`);
+    });
+    lines.push(contract.continuousNumbering
+      ? '- Đánh số câu LIÊN TỤC qua các phần. Câu trắc nghiệm có đủ 4 phương án A, B, C, D.'
+      : '- Mỗi phần đánh số lại từ "Câu 1". Phần đọc hiểu phải có văn bản/ngữ liệu đọc hiểu trước các câu hỏi; phần viết ghi rõ yêu cầu bài viết.');
+    lines.push('- Hướng dẫn chấm: có đáp án/gợi ý và biểu điểm chi tiết cho từng câu, tổng điểm mỗi phần đúng như hợp đồng.');
+    return lines.join('\n') + '\n';
+  }
+  // Điểm từng phần: theo file; file không ghi điểm → thang mặc định CV 7991
+  const pts: Partial<Record<'I' | 'II' | 'III' | 'IV', number>> = { ...contract.points.byType };
+  if (!contract.points.fromFile && contract.questionConfig) {
+    computeCv7991Layout(contract.questionConfig, true).types.forEach(t => { pts[TYPE_KEY_TO_ROMAN[t.key]] = t.points; });
+  }
+  const p = (t: 'I' | 'II' | 'III' | 'IV') => (pts[t] !== undefined ? ` (${fmtNum(pts[t]!)} điểm)` : '');
+  const q = contract.questionCount;
+  const lines: string[] = [];
+  lines.push(buildContractPromptBlock(contract));
+  lines.push('');
+  lines.push('**CẤU TRÚC ĐỀ BẮT BUỘC (đúng theo hợp đồng số liệu trên):**');
+  if (q.I) lines.push(`- **PHẦN I. ${TYPE_LABEL.I.toUpperCase()}${p('I')}:** đúng ${q.I} câu (Câu 1 → Câu ${q.I}); mỗi câu có đúng 4 phương án A, B, C, D và chỉ 1 phương án đúng.`);
+  if (q.II) lines.push(`- **PHẦN II. ${TYPE_LABEL.II.toUpperCase()}${p('II')}:** đúng ${q.II} câu (Câu 1 → Câu ${q.II}); mỗi câu gồm 1 đề dẫn chung và ĐÚNG 4 ý a), b), c), d); mức độ từng ý đúng như hợp đồng.`);
+  if (q.III) lines.push(`- **PHẦN III. ${TYPE_LABEL.III.toUpperCase()}${p('III')}:** đúng ${q.III} câu (Câu 1 → Câu ${q.III}); mỗi câu có đáp án ngắn, xác định duy nhất (ưu tiên đáp án là số).`);
+  if (q.IV) lines.push(`- **PHẦN IV. ${TYPE_LABEL.IV.toUpperCase()}${p('IV')}:** đúng ${q.IV} câu (Câu 1 → Câu ${q.IV}); câu có nhiều ý thì ghi a), b)… đúng số ý trong hợp đồng; ghi điểm từng câu theo hợp đồng.`);
+  lines.push('- Tiêu đề mỗi phần ghi đúng dạng "PHẦN I. …", "PHẦN II. …" (giữ số La Mã theo dạng câu hỏi như trên, kể cả khi ma trận không có một phần nào đó).');
+  lines.push('- Mỗi câu hỏi PHẢI đúng đơn vị kiến thức, đúng mức độ (và đúng Yêu cầu cần đạt nếu có) đã ghi cho câu đó trong hợp đồng.');
+  return lines.join('\n') + '\n';
+};
+
+const generateStep3ExamRaw = async (
   specsContent: string,
   questionConfig: QuestionConfig,
   inputData: InputData,
@@ -1357,25 +1535,46 @@ export const generateStep3Exam = async (
   extractedQuestions?: ExtractedQuestion[],
   referenceMode: ReferenceUsageMode = 'exact',
   matrixContent?: string,
-  isUploadedMatrix: boolean = false
- ): Promise<string> => {
+  isUploadedMatrix: boolean = false,
+  opts: { concise?: boolean } = {}
+): Promise<{ raw: string; contract: MatrixContract | null; counts: { type1: number; type2: number; type3: number; essay: number } }> => {
 
   const counts = {
     type1: questionConfig.type1.biet + questionConfig.type1.hieu + questionConfig.type1.van_dung + questionConfig.type1.van_dung_cao,
-    type2: questionConfig.type2.biet + questionConfig.type2.hieu + questionConfig.type2.van_dung + questionConfig.type2.van_dung_cao,
+    type2: getDungSaiQuestionCount(questionConfig),
     type3: questionConfig.type3.biet + questionConfig.type3.hieu + questionConfig.type3.van_dung + questionConfig.type3.van_dung_cao,
     essay: questionConfig.essay.biet + questionConfig.essay.hieu + questionConfig.essay.van_dung + questionConfig.essay.van_dung_cao,
   };
 
+  // ===== HỢP ĐỒNG SỐ LIỆU: nguồn chuẩn số câu / mức độ / bài học của từng câu =====
+  const contract = pickExamContract(matrixContent, specsContent, questionConfig, isUploadedMatrix);
+  if (contract) {
+    counts.type1 = contract.questionCount.I;
+    counts.type2 = contract.questionCount.II;
+    counts.type3 = contract.questionCount.III;
+    counts.essay = contract.questionCount.IV; // số CÂU tự luận (không phải số lệnh hỏi)
+  }
+
   // Build a clear whitelist of allowed parts
   const allowedParts: string[] = [];
+  if (contract?.sections) {
+    const roman = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
+    contract.sections.forEach((sec, i) => allowedParts.push(`PHẦN ${roman[i] || i + 1} (${sec.name})`));
+  } else {
   if (counts.type1 > 0) allowedParts.push('PHẦN I (Trắc nghiệm nhiều lựa chọn)');
   if (counts.type2 > 0) allowedParts.push('PHẦN II (Đúng/Sai)');
   if (counts.type3 > 0) allowedParts.push('PHẦN III (Trả lời ngắn)');
   if (counts.essay > 0) allowedParts.push('PHẦN IV (Tự luận)');
+  }
 
   let structureInstructions = "**CẤU TRÚC ĐỀ THI & ĐÁP ÁN CẦN TẠO (BÁM SÁT 100% MA TRẬN & ĐẶC TẢ):**\n";
 
+  if (contract) {
+    structureInstructions += buildContractStructureInstructions(contract);
+  } else if (isUploadedMatrix) {
+    // Ma trận tải lên nhưng máy không đọc được số liệu → để AI bám trực tiếp bảng, KHÔNG dùng cấu hình mặc định
+    structureInstructions += `- Đọc KỸ Ma trận và Bảng đặc tả ở trên: tạo ĐÚNG số phần, số câu, số ý và mức độ như trong bảng (mỗi mã câu / mỗi lệnh hỏi trong bảng tương ứng đúng 1 câu / 1 ý trong đề).\n- Dạng nào bảng không có thì KHÔNG tạo. Thang điểm theo dòng "Tổng số điểm" của bảng (nếu có).\n- Tiêu đề phần ghi dạng "PHẦN I. …", "PHẦN II. …"; Phần I mỗi câu 4 phương án A–D; Phần II mỗi câu 4 ý a) b) c) d).\n`;
+  } else {
   if (counts.type1 > 0) {
     structureInstructions += `- **PHẦN I (Trắc nghiệm nhiều lựa chọn):** Tạo đúng ${counts.type1} câu hỏi (Nhận biết: ${questionConfig.type1.biet}, Thông hiểu: ${questionConfig.type1.hieu}, Vận dụng: ${questionConfig.type1.van_dung + questionConfig.type1.van_dung_cao}) và Đáp án Phần I.\n`;
   } else {
@@ -1384,6 +1583,8 @@ export const generateStep3Exam = async (
 
   if (counts.type2 > 0) {
     structureInstructions += `- **PHẦN II (Đúng/Sai):** Tạo đúng ${counts.type2} câu hỏi (mỗi câu 4 ý a,b,c,d) và Đáp án Phần II (BẮT BUỘC có bảng thông tin hướng dẫn giải chi tiết và đủ 4 đáp án a, b, c, d cho mỗi câu).\n`;
+    const dsLevels = describeDungSaiLevels(questionConfig);
+    if (dsLevels) structureInstructions += `  ${dsLevels}\n`;
   } else {
     structureInstructions += `- **PHẦN II:** KHÔNG ĐƯỢC TẠO (Số câu = 0). Bỏ qua hoàn toàn.\n`;
   }
@@ -1398,6 +1599,10 @@ export const generateStep3Exam = async (
     structureInstructions += `- **PHẦN IV (Tự luận):** Tạo đúng ${counts.essay} câu hỏi (Nhận biết: ${questionConfig.essay.biet}, Thông hiểu: ${questionConfig.essay.hieu}, Vận dụng: ${questionConfig.essay.van_dung + questionConfig.essay.van_dung_cao}) và Đáp án/Hướng dẫn chấm chi tiết Phần IV.\n`;
   } else {
     structureInstructions += `- **PHẦN IV (Tự luận):** ⛔ CẤM TẠO. Số câu = 0. TUYỆT ĐỐI KHÔNG SINH RA BẤT KỲ CÂU TỰ LUẬN NÀO.\n`;
+  }
+  } // end: không có hợp đồng số liệu
+  if (opts.concise) {
+    structureInstructions += `\n**⚠️ GIỚI HẠN ĐỘ DÀI:** Lần trước đề bị cắt cụt vì quá dài. Lần này viết lời giải/hướng dẫn chấm NGẮN GỌN (chỉ các bước chính), KHÔNG lặp lại đề bài trong phần đáp án — nhưng vẫn phải ĐỦ tất cả câu và đủ đáp án.\n`;
   }
 
   structureInstructions += `\n**⚠️ DANH SÁCH PHẦN ĐƯỢC PHÉP TẠO (WHITELIST):** ${allowedParts.length > 0 ? allowedParts.join(', ') : 'Theo đúng các phần có trong Ma trận & Bảng đặc tả'}.\n`;
@@ -1706,7 +1911,7 @@ export const generateStep3Exam = async (
        + Lập bảng Hướng dẫn chấm gồm các cột: Câu | Nội dung / Hướng dẫn giải chi tiết | Điểm.
 
   **NGUYÊN TẮC CHUNG (BẮT BUỘC TUÂN THỦ):**
-  1. **⛔ CẤM TẠO PHẦN THỪA (QUAN TRỌNG NHẤT):** Đề thi CHỈ ĐƯỢC CHỨA các phần có trong WHITELIST ở trên: [${allowedParts.join(', ')}]. Nếu PHẦN IV (Tự luận) KHÔNG có trong whitelist → TUYỆT ĐỐI KHÔNG tạo câu tự luận, không tạo tiêu đề "PHẦN IV", không nhắc đến tự luận.
+  1. **⛔ CẤM TẠO PHẦN THỪA (QUAN TRỌNG NHẤT):** Đề thi CHỈ ĐƯỢC CHỨA các phần có trong WHITELIST ở trên: [${allowedParts.join(', ')}].${contract?.sections ? '' : ' Nếu PHẦN IV (Tự luận) KHÔNG có trong whitelist → TUYỆT ĐỐI KHÔNG tạo câu tự luận, không tạo tiêu đề "PHẦN IV", không nhắc đến tự luận.'}
   2. **CÔNG THỨC TOÁN (BẮT BUỘC — vì đề sẽ được chuyển sang MathType trong Word):**
      - MỌI công thức và ký hiệu toán/lý/hoá PHẢI viết bằng LaTeX, bọc trong dấu $ ... $ (công thức trong dòng) hoặc $$ ... $$ (công thức đứng riêng một dòng).
      - TUYỆT ĐỐI KHÔNG dùng ký tự Unicode để thay cho công thức: không viết x², √x, ≤, ≥, ≠, ≈, π, a⁻¹, ½... Thay vào đó viết $x^2$, $\\sqrt{x}$, $\\le$, $\\ge$, $\\ne$, $\\approx$, $\\pi$, $a^{-1}$, $\\frac{1}{2}$.
@@ -1749,14 +1954,123 @@ export const generateStep3Exam = async (
       contents: [{ role: 'user', parts }],
       config: createGeminiConfig({
         model,
-        systemInstruction: SYSTEM_INSTRUCTION,
+        systemInstruction: getSystemInstruction(isUploadedMatrix),
         thinkingLevel: ThinkingLevel.MEDIUM,
-        maxOutputTokens: 16384,
+        maxOutputTokens: 32768,
         temperature: 0.7,
       }),
     });
     const text = response.text || "Lỗi tạo đề thi.";
     const cleaned = text.replace(/^```html\s*/i, '').replace(/\s*```$/i, '');
-    return renderFiguresInHtml(cleaned);
+    return { raw: wasTruncated(response) ? cleaned + TRUNCATION_MARKER : cleaned, contract, counts };
   });
 };
+
+/** Sửa đề theo danh sách lỗi cụ thể do bộ kiểm tra phát hiện (1 lần). */
+export const repairStep3Exam = async (
+  rawExamHtml: string,
+  issues: ExamIssue[],
+  inputData: InputData,
+  structureBlock: string,
+  isUploadedMatrix: boolean = false
+): Promise<string> => {
+  const prompt = `
+  Đề kiểm tra (HTML) dưới đây của môn **${inputData.subject}** lớp **${inputData.grade}** (${inputData.examType}) đã được máy kiểm tra và phát hiện các lỗi cấu trúc sau:
+  ${issues.map(i => `- ${i.message}`).join('\n  ')}
+
+  ${structureBlock}
+
+  **NHIỆM VỤ:** Trả về TOÀN BỘ đề đã sửa (Full HTML Document), sao cho hết các lỗi trên:
+  - Giữ nguyên các câu đã đúng (nội dung, công thức LaTeX, các thẻ <script type="application/json" class="figure-json"> nếu có).
+  - Bổ sung câu/ý/phương án còn thiếu, xoá câu/phần thừa, đánh số lại Câu 1, Câu 2… liên tục trong từng phần.
+  - Cập nhật phần ĐÁP ÁN / HƯỚNG DẪN CHẤM cho khớp đề sau khi sửa.
+  - Chỉ trả về HTML, không giải thích.
+
+  **ĐỀ CẦN SỬA:**
+  ${rawExamHtml.replace(TRUNCATION_MARKER, '')}
+  `;
+  return callWithFallback(async (ai, model) => {
+    const response = await ai.models.generateContent({
+      model,
+      contents: prompt,
+      config: createGeminiConfig({
+        model,
+        systemInstruction: getSystemInstruction(isUploadedMatrix),
+        thinkingLevel: ThinkingLevel.MEDIUM,
+        maxOutputTokens: 32768,
+        temperature: 0.2,
+      }),
+    });
+    const text = (response.text || '').replace(/^```html\s*/i, '').replace(/\s*```$/i, '');
+    return wasTruncated(response) ? text + TRUNCATION_MARKER : text;
+  });
+};
+
+export interface ExamGenerationResult {
+  html: string;
+  issues: ExamIssue[];
+  repaired: boolean;
+  usedContract: boolean;
+}
+
+const issueScore = (issues: ExamIssue[]) => issues.reduce((s, i) => s + (i.severity === 'error' ? 10 : 1), 0);
+
+/**
+ * Sinh đề + KIỂM TRA HẬU SINH bằng code + tự sửa 1 lần nếu sai cấu trúc.
+ * Trả về cả danh sách lỗi còn lại để giao diện hiển thị cho người dùng.
+ */
+export const generateStep3ExamChecked = async (
+  specsContent: string,
+  questionConfig: QuestionConfig,
+  inputData: InputData,
+  referenceText?: string,
+  referenceImages?: { base64: string; mimeType: string }[],
+  extractedQuestions?: ExtractedQuestion[],
+  referenceMode: ReferenceUsageMode = 'exact',
+  matrixContent?: string,
+  isUploadedMatrix: boolean = false
+): Promise<ExamGenerationResult> => {
+  const args = [specsContent, questionConfig, inputData, referenceText, referenceImages, extractedQuestions, referenceMode, matrixContent, isUploadedMatrix] as const;
+  let { raw, contract, counts } = await generateStep3ExamRaw(...args);
+  // Ma trận tải lên mà không đọc được số liệu → không áp số câu (có thể sai), chỉ kiểm tra định dạng
+  const expect = contract?.sections
+    // Ma trận theo kĩ năng: kiểm tra tổng số câu + định dạng (phần đặt tên theo kĩ năng, không theo Dạng I–IV)
+    ? { counts: null, total: contract.sections.reduce((n, sec) => n + sec.questions.length, 0) }
+    : {
+      counts: isUploadedMatrix && !contract ? null : { I: counts.type1, II: counts.type2, III: counts.type3, IV: counts.essay },
+    };
+  let issues = validateExamHtml(raw, expect);
+  let repaired = false;
+
+  if (hasBlockingIssues(issues)) {
+    try {
+      let candidate: string;
+      if (issues.some(i => i.code === 'TRUNCATED')) {
+        // Bị cắt do quá dài → sinh lại với lời giải ngắn gọn
+        candidate = (await generateStep3ExamRaw(...args, { concise: true })).raw;
+      } else {
+        const block = contract
+          ? buildContractStructureInstructions(contract)
+          : expect.counts
+            ? `Cấu trúc yêu cầu: ${QTYPES.filter(t => expect.counts![t] > 0).map(t => `Phần ${t} (${TYPE_LABEL[t]}): ${expect.counts![t]} câu`).join('; ')}. Không có phần nào khác.`
+            : 'Cấu trúc yêu cầu: đúng như Ma trận / Bảng đặc tả đã cung cấp (đủ 4 phương án A–D cho Phần I, đủ 4 ý a–d cho Phần II, có đáp án).';
+        candidate = await repairStep3Exam(raw, issues, inputData, block, isUploadedMatrix);
+      }
+      const candidateIssues = validateExamHtml(candidate, expect);
+      if (issueScore(candidateIssues) < issueScore(issues)) {
+        raw = candidate;
+        issues = candidateIssues;
+        repaired = true;
+      }
+    } catch (err) {
+      console.warn('[ExamCraft] Tự sửa đề thất bại, giữ bản đầu tiên:', err);
+    }
+  }
+
+  return { html: renderFiguresInHtml(raw.replace(TRUNCATION_MARKER, '')), issues, repaired, usedContract: !!contract };
+};
+
+/** Giữ API cũ: chỉ trả về HTML đề (đã kiểm tra + tự sửa). */
+export const generateStep3Exam = async (
+  ...args: Parameters<typeof generateStep3ExamChecked>
+): Promise<string> => (await generateStep3ExamChecked(...args)).html;
