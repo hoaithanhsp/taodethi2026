@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
-import { normalizeMathForWord, renderMarkdownPreservingMath } from './mathExportUtils';
+import { renderMarkdownPreservingMath } from './mathExportUtils';
+import { prepareMathForWord } from './wordEquation';
 import { extractFiguresToPlaceholders, restoreFiguresAsPngForWord } from './figureEngine';
 // @ts-ignore
 import { asBlob } from 'html-docx-js-typescript';
@@ -104,8 +105,8 @@ export const exportToDoc = async (content: string, fileName: string) => {
   // Đảm bảo mọi bảng (trừ bảng biến thiên .bbt-table) đều có border="1" để hiển thị rõ khung bảng trong Word
   fullHtml = fullHtml.replace(/<table(?![^>]*bbt-table)(?![^>]*border=)/gi, '<table border="1" cellspacing="0" cellpadding="5"');
 
-  // Chuẩn hoá LaTeX cho Word/MathType (áp dụng cho cả nhánh HTML lẫn Markdown)
-  fullHtml = normalizeMathForWord(fullHtml);
+  // Chuẩn hoá công thức cho Word: LaTeX $...$ hoặc Equation (theo lựa chọn của giáo viên)
+  fullHtml = prepareMathForWord(fullHtml);
 
   // Chuyển các hình vẽ (BBT, đồ thị, hình 3D) thành ảnh PNG 200 DPI nhúng vào Word
   fullHtml = await restoreFiguresAsPngForWord(fullHtml, figures, 200);
@@ -128,7 +129,7 @@ export const exportToDoc = async (content: string, fileName: string) => {
     console.error("DOCX generation failed, fallback to .doc", error);
     // Fallback sang .doc
     try {
-      const fallbackHtml = fullHtml || normalizeMathForWord(content.includes('<!DOCTYPE html>') ? content : `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${renderMarkdownPreservingMath(md, content)}</body></html>`);
+      const fallbackHtml = fullHtml || prepareMathForWord(content.includes('<!DOCTYPE html>') ? content : `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${renderMarkdownPreservingMath(md, content)}</body></html>`);
       const blob = new Blob(['\ufeff', fallbackHtml], { type: 'application/msword' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');

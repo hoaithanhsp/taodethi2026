@@ -12,7 +12,9 @@ import { generateStep1Matrix, generateStep2Specs, generateStep3ExamChecked, extr
 import { parseDocxWithMath, extractQuestionsLocally, extractDocxTablesAndHtml, splitMatrixAndSpecsHtml, isLegacyBinaryDoc } from './services/docxMathParser';
 import { resolveContracts, ResolvedContracts, summarizeContract, sameSubject, fmtNum, QTYPES } from './services/matrixContract';
 import type { ExamIssue } from './services/examValidator';
-import { normalizeMathForWord, renderMarkdownPreservingMath } from './services/mathExportUtils';
+import { renderMarkdownPreservingMath } from './services/mathExportUtils';
+import { prepareMathForWord } from './services/wordEquation';
+import MathFormatSelect from './components/MathFormatSelect';
 import { extractFiguresToPlaceholders, restoreFiguresAsPngForWord } from './services/figureEngine';
 // @ts-ignore
 import { asBlob } from 'html-docx-js-typescript';
@@ -1091,8 +1093,8 @@ const App: React.FC = () => {
       // Đảm bảo mọi bảng (trừ bảng biến thiên .bbt-table) đều có border="1" để hiển thị rõ khung bảng trong Word
       sourceHTML = sourceHTML.replace(/<table(?![^>]*bbt-table)(?![^>]*border=)/gi, '<table border="1" cellspacing="0" cellpadding="5"');
 
-      // Chuẩn hoá LaTeX: tách công thức khỏi chữ + tách ranh giới cho MathType
-      sourceHTML = normalizeMathForWord(sourceHTML);
+      // Chuẩn hoá công thức: LaTeX $...$ hoặc Equation của Word (theo lựa chọn của giáo viên)
+      sourceHTML = prepareMathForWord(sourceHTML);
 
       // Chuyển các hình vẽ (BBT, đồ thị, hình 3D) thành ảnh PNG 300 DPI nhúng vào Word
       sourceHTML = await restoreFiguresAsPngForWord(sourceHTML, figures, 300);
@@ -1113,7 +1115,7 @@ const App: React.FC = () => {
     } catch (error) {
       console.error('Lỗi xuất file Word (.docx), fallback sang .doc:', error);
       // Fallback: xuất .doc nếu .docx thất bại
-      const fallbackHtml = normalizeMathForWord(sourceHTML || (content.includes('<!DOCTYPE html>') ? content : `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${renderMarkdownPreservingMath(mdParser, content)}</body></html>`));
+      const fallbackHtml = sourceHTML || prepareMathForWord((content.includes('<!DOCTYPE html>') ? content : `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${renderMarkdownPreservingMath(mdParser, content)}</body></html>`));
       const blob = new Blob(['\ufeff', fallbackHtml], { type: 'application/msword' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -1879,6 +1881,7 @@ const App: React.FC = () => {
             </>
           )}
 
+          <MathFormatSelect />
           <Button variant="secondary" onClick={() => handleDownloadWord(content, title)} icon={<FileText className="w-4 h-4" />}>
             Tải Word (.docx)
           </Button>

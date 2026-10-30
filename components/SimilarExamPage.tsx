@@ -5,6 +5,7 @@ import MarkdownRenderer from './MarkdownRenderer';
 import BbtQuickGenerator from './BbtQuickGenerator';
 import { generateSimilarExam } from '../services/similarExamService';
 import { exportToDoc } from '../services/exportUtils';
+import MathFormatSelect from './MathFormatSelect';
 import { SimilarExamResult, SimilarExamFileData, DiagramMode, SolutionMode } from '../types';
 import { getSelectedModel } from '../services/geminiService';
 import { prepareExamSourceParts, isDocxSource } from '../services/examSourceService';
@@ -359,7 +360,8 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
               {activeTab === 'examContent' && 'NỘI DUNG ĐỀ THI'}
               {activeTab === 'detailedSolution' && 'HƯỚNG DẪN GIẢI CHI TIẾT'}
             </h2>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <MathFormatSelect />
               <button
                 onClick={handleExportWord}
                 className="flex items-center gap-1 px-3 py-1.5 bg-teal-50 text-teal-700 hover:bg-teal-100 rounded-lg text-sm font-medium transition-colors"

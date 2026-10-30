@@ -6,6 +6,7 @@ import MarkdownRenderer from './MarkdownRenderer';
 import BbtQuickGenerator from './BbtQuickGenerator';
 import { createVariantSession, generateVariantStep1, generateVariantNextStep, cloneVariantSession, countVariantQuestions } from '../services/variantsExamService';
 import { exportToDoc } from '../services/exportUtils';
+import MathFormatSelect from './MathFormatSelect';
 import { VariantFileData, VariantState } from '../types';
 import { getApiKey, getFriendlyGeminiErrorMessage, parseApiError, getAiProvider, getGeminiModelsToTry, getSelectedModel, setFallbackNotice, UserFacingError } from '../services/geminiService';
 import { prepareExamSourceParts, isDocxSource } from '../services/examSourceService';
@@ -291,6 +292,7 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
 
           {/* Actions */}
           <div className="ml-4 pl-4 border-l border-slate-200 flex items-center gap-2">
+            <MathFormatSelect />
             <button
               onClick={handleExport}
               disabled={!col1}
