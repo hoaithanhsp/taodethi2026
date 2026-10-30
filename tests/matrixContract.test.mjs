@@ -3,6 +3,7 @@
 import { build } from 'esbuild';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 
 // mammoth không cần cho các test này → thay bằng stub để chạy được trong mọi môi trường
@@ -19,7 +20,8 @@ const stubMammoth = {
 const out = await build({
   stdin: {
     contents: `export * from './services/docxMathParser.ts'; export * from './services/matrixContract.ts'; export * from './services/examValidator.ts'; export { prepareExamSourceParts } from './services/examSourceService.ts';`,
-    resolveDir: new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'),
+    // fileURLToPath giải mã %20 / chữ có dấu trong đường dẫn (vd. "DÁN VÀO CÁC APP")
+    resolveDir: fileURLToPath(new URL('..', import.meta.url)),
     loader: 'ts',
   },
   bundle: true, format: 'esm', write: false, platform: 'node', plugins: [stubMammoth], logLevel: 'error',
