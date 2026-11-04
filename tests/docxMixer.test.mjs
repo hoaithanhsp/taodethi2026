@@ -382,6 +382,33 @@ await t('đề giáo viên soạn: số câu tự động, dán từ web, lề k
   assert.ok((await readXml(bo.blob)).xml.includes('<w:numPr>'), 'tắt chuẩn hóa thì giữ số tự động');
 });
 
+await t('file mẫu tải về: trộn được ngay, không in hướng dẫn vào đề, không lộ thông tin ẩn', async () => {
+  const bytes = readFileSync(new URL('../public/templates/Mau_de_tron_de.docx', import.meta.url));
+  const meta = await JSZip.loadAsync(bytes);
+  const core = await meta.file('docProps/core.xml').async('string');
+  assert.ok(!/falundafa|<dc:creator>[^<]+|<cp:lastModifiedBy>[^<]+/.test(core), 'không còn thông tin tác giả');
+  const d = await m.loadDocxExam(bytes, 'mau.docx');
+  assert.deepEqual(d.questions.map(q => q.answer), ['A', 'B', 'C', 'D', 'ĐSSĐ', 'SĐSĐ', '22,4', '-6,5', '2025', '-86']);
+  assert.ok(d.questions.every(q => !q.pinned && !q.warnings.length), 'không khóa nhầm câu');
+  const s = { ...SETTINGS, count: 2 };
+  for (const p of m.planVersions(d, s, m.defaultOverrides(d))) {
+    const b = await m.buildVersion(d, p, s);
+    assert.deepEqual(b.problems, []);
+    const text = plain((await readXml(b.blob)).xml);
+    for (const leak of ['Đáp án đúng PHẦN I', 'Nhận định đúng ở PHẦN II', '(Các câu hỏi phần', '22,4', '-86']) assert.ok(!text.includes(leak), leak);
+    assert.equal(text.split('PHẦN I.').length, 2, 'chỉ còn 1 tiêu đề PHẦN I');
+  }
+});
+
+await t('phần không ghi "Câu" và không lặp lại vẫn được giữ trong đề', async () => {
+  const q = P(R('Câu 1. Hỏi')) + P(R('A. a')) + P(R('B. b')) + P(R('C. c')) + P(R('D. d'));
+  const d = await m.loadDocxExam(await makeDocx(P(R('PHẦN I. Trắc nghiệm')) + q + P(R('PHẦN IV. TỰ LUẬN')) + P(R('Chứng minh rằng tổng ba góc bằng 180 độ.'))), 'tl.docx');
+  const s = { ...SETTINGS, count: 1 };
+  const [p] = m.planVersions(d, s, m.defaultOverrides(d));
+  const text = plain((await readXml((await m.buildVersion(d, p, s)).blob)).xml);
+  assert.ok(text.includes('Chứng minh rằng tổng ba góc') && text.includes('PHẦN IV'));
+});
+
 /* ------------------- Đối chiếu file mẫu thật (MathType, hình, bảng) ------------------- */
 const SAMPLE_DIR = fileURLToPath(new URL('../trộn đề/mẫu kết quả sau khi trộn/', import.meta.url));
 if (existsSync(SAMPLE_DIR)) {

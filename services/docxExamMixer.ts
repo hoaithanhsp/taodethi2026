@@ -792,6 +792,8 @@ interface APart {
   heading: Element[];
   questions: AQuestion[];
   sects: Array<{ position: number; sect: Element }>;
+  /** Dàn ý/hướng dẫn đầu file (như file mẫu), không phải nội dung đề */
+  outline?: boolean;
 }
 
 interface Analysis {
@@ -972,7 +974,7 @@ const analyzeQuestion = (q: AQuestion, part: APart, env: DocEnv) => {
   const stemText = stemBlocks.filter(b => b.nodeName === 'w:p' && !q.slots?.some(s => s.para === b)).map(blockText).join(' ').replace(QUESTION_LABEL, '');
   q.pinned = kind === 'essay';
   q.lockOptions = false;
-  if (REF_QUESTION_RE.test(stemText) && q.group === null) {
+  if (REF_QUESTION_RE.test(stemText.replace(/nội\s*dung\s*c[âa]u\s*hỏi\s*\d*/gi, '')) && q.group === null) {
     q.pinned = true;
     q.warnings.push('Câu có nhắc tới câu khác nên giữ nguyên vị trí.');
   }
@@ -1180,6 +1182,13 @@ const analyze = (dom: Document, env: DocEnv): Analysis => {
   for (const p of a.parts) {
     if (!p.kind && p.heading.length) p.kind = partKindOf(p.heading.map(blockText).join(' '));
   }
+
+  // Dàn ý/hướng dẫn đầu file: phần không có câu nào mà "PHẦN I" đó còn xuất hiện lại phía sau.
+  // Phần trống không lặp lại (ví dụ tự luận không ghi "Câu") vẫn là nội dung đề, phải giữ.
+  a.parts.forEach((p, i) => {
+    if (!p.questions.length && p.roman && a.parts.slice(i + 1).some(later => later.roman === p.roman)) p.outline = true;
+  });
+  if (a.parts.some(p => p.outline)) a.notes.push('Đã bỏ phần hướng dẫn soạn đề ở đầu file; đề học sinh sẽ không có phần này.');
 
   // Ngắt section nằm trong câu: giữ theo VỊ TRÍ, không để đi theo câu
   for (const p of a.parts) {
@@ -2049,6 +2058,7 @@ const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): s
   }
 
   for (const part of a.parts) {
+    if (part.outline) continue;
     part.heading.forEach((n, i) => {
       if (s.normalizeFormat && n.nodeName === 'w:p' && !isBlank(n)) {
         normalizeParagraphFonts(n);

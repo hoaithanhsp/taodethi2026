@@ -22,6 +22,8 @@ import {
 
 const MAX_VERSIONS = 24;
 const ANSWER_FILE = 'ĐÁP ÁN CÁC MÃ ĐỀ.xlsx';
+const TEMPLATE_URL = '/templates/Mau_de_tron_de.docx';
+const TEMPLATE_FILE = 'File mẫu trộn đề.docx';
 const versionFile = (code: string) => `Mã Đề_${code}.docx`;
 const KIND_LABEL: Record<MixKind, string> = { mc: 'Trắc nghiệm', tf: 'Đúng – Sai', short: 'Trả lời ngắn', essay: 'Tự luận' };
 const SOURCE_LABEL: Record<string, string> = { key: 'từ bảng đáp án', solution: 'từ lời giải', mark: 'từ dấu trong đề' };
@@ -204,6 +206,13 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
             Chọn file Word
           </button>
           <input ref={fileInput} type="file" accept=".docx" className="hidden" aria-label="Chọn file đề gốc" onChange={e => handleFile(e.target.files?.[0])} />
+          <div className="mt-3 text-sm text-slate-600">
+            Chưa biết trình bày đề thế nào?{' '}
+            <a href={TEMPLATE_URL} download={TEMPLATE_FILE} className="inline-flex items-center gap-1 font-semibold text-orange-700 hover:text-orange-900 underline underline-offset-2">
+              <Download className="w-4 h-4" /> Tải file mẫu (.docx)
+            </a>
+            <span className="block text-xs text-slate-500 mt-0.5">Soạn đề theo mẫu rồi tải lên để app đọc đúng câu hỏi và đáp án.</span>
+          </div>
           <div className="mt-5 text-left max-w-xl mx-auto text-xs text-slate-600 space-y-1">
             <p className="font-semibold text-slate-700">Để đọc đúng đáp án, đề gốc nên có một trong các dạng:</p>
             <p>• Bảng "ĐÁP ÁN" ở cuối file, hoặc dòng "Chọn A" trong lời giải.</p>
@@ -286,6 +295,7 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
             <div className="space-y-4">
               {doc.parts.map(part => {
                 const qs = doc.questions.filter(q => q.part === part.index);
+                if (!qs.length) return null;
                 return (
                   <div key={part.index}>
                     {part.title && <div className="font-semibold text-sm text-orange-800 bg-orange-50 rounded-md px-2 py-1.5 mb-2">{part.title.length > 130 ? `${part.title.slice(0, 130)}…` : part.title}</div>}
