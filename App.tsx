@@ -16,6 +16,7 @@ import { renderMarkdownPreservingMath } from './services/mathExportUtils';
 import { prepareMathForWord } from './services/wordEquation';
 import MathFormatSelect from './components/MathFormatSelect';
 import ShuffleExamPanel from './components/ShuffleExamPanel';
+import DocxMixPage from './components/DocxMixPage';
 import { extractFiguresToPlaceholders, restoreFiguresAsPngForWord } from './services/figureEngine';
 // @ts-ignore
 import { asBlob } from 'html-docx-js-typescript';
@@ -23,7 +24,7 @@ import MarkdownIt from 'markdown-it';
 import { GEMINI_MODELS, AGENT_PLATFORM_MODELS, DEFAULT_GEMINI_MODEL, DEFAULT_AGENT_PLATFORM_MODEL, AiProvider } from './constants';
 import { MATRIX_TEMPLATES } from './services/matrixTemplates';
 import { validateAccount, Account } from './data/accounts';
-import { ArrowRight, ArrowLeft, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, Lock, User, Gift, Phone, Shield, Copy, Shuffle, Sparkles, Layers, Zap, History, Save, Eye } from 'lucide-react';
+import { FileStack, ArrowRight, ArrowLeft, RotateCcw, FileText, Download, AlertCircle, Upload, Clock, Check, ChevronDown, ChevronRight, Filter, FileUp, Settings, Key, ExternalLink, Sun, Moon, X, Paperclip, Trash2, BookOpen, LogIn, Lock, User, Gift, Phone, Shield, Copy, Shuffle, Sparkles, Layers, Zap, History, Save, Eye } from 'lucide-react';
 
 const mdParser = new MarkdownIt({
   html: true,
@@ -217,6 +218,13 @@ const App: React.FC = () => {
    * Kiểm tra quyền sử dụng: đã đăng nhập HOẶC chưa hết lượt thử
    * Trả về true nếu được phép, false nếu cần đăng nhập
    */
+  // Trộn đề không cần API key; các chế độ AI thì vẫn phải nhập key trước khi dùng
+  useEffect(() => {
+    if ((appMode === 'cv7991' || appMode === 'similar' || appMode === 'variants') && !apiKey) {
+      setShowApiKeyModal(true);
+    }
+  }, [appMode, apiKey]);
+
   const checkAuthOrTrial = (): boolean => {
     if (isAuthenticated) return true;
     if (!trialUsed) {
@@ -2595,6 +2603,14 @@ const App: React.FC = () => {
                   Hủy
                 </button>
               )}
+              {!apiKey && (
+                <button
+                  onClick={() => { setShowApiKeyModal(false); setAppMode('mix'); }}
+                  className="w-full text-center text-sm font-semibold text-orange-700 hover:text-orange-900 py-2"
+                >
+                  Chỉ trộn đề Word (không cần API key)
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2701,6 +2717,7 @@ const App: React.FC = () => {
               {appMode === 'cv7991' && '🔧 Tạo đề theo CV 7991'}
               {appMode === 'similar' && '📋 Tạo đề tương tự'}
               {appMode === 'variants' && '🔀 Sinh 3 đề biến thể'}
+              {appMode === 'mix' && '🧩 Trộn đề Word'}
             </span>
           </div>
         </div>
@@ -2731,7 +2748,7 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* ===== HOME LANDING — 3 MODE CARDS ===== */}
+        {/* ===== HOME LANDING — 4 MODE CARDS ===== */}
         {appMode === 'home' && (
           <div className="absolute inset-0 overflow-y-auto">
             <div className="min-h-full flex flex-col items-center justify-center px-4 py-10 sm:py-16">
@@ -2745,12 +2762,12 @@ const App: React.FC = () => {
                   Chọn chế độ <span className="bg-gradient-to-r from-teal-600 via-blue-600 to-purple-600 bg-clip-text text-transparent">tạo đề thi</span>
                 </h1>
                 <p className="text-base sm:text-lg text-slate-500 max-w-xl mx-auto">
-                  3 công cụ AI mạnh mẽ giúp soạn đề chỉ trong vài phút
+                  4 công cụ mạnh mẽ giúp soạn và trộn đề chỉ trong vài phút
                 </p>
               </div>
 
-              {/* 3 Mode Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl w-full">
+              {/* 4 Mode Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 max-w-7xl w-full">
 
                 {/* Card 1: CV 7991 — TEAL */}
                 <div className="mode-card mode-card-teal card-stagger-1" onClick={() => setAppMode('cv7991')}>
@@ -2819,6 +2836,30 @@ const App: React.FC = () => {
                   </div>
                   <button className="mode-card-btn" onClick={(e) => { e.stopPropagation(); setAppMode('variants'); }}>
                     <Sparkles className="w-4 h-4" />
+                    Bắt đầu
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Card 4: Trộn đề Word — ORANGE */}
+                <div className="mode-card mode-card-orange card-stagger-4" onClick={() => setAppMode('mix')}>
+                  <div className="particle" style={{ width: 8, height: 8, background: '#f97316', top: '12%', left: '18%', animationDelay: '0.8s' }} />
+                  <div className="particle" style={{ width: 6, height: 6, background: '#ea580c', bottom: '22%', right: '12%', animationDelay: '2.2s' }} />
+                  <div className="mode-card-icon">
+                    <FileStack className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-xl font-extrabold text-orange-900 mb-2">Trộn đề Word</h3>
+                  <p className="text-sm text-orange-800/70 mb-5 leading-relaxed">
+                    Upload file đề Toán, Lí, Hóa, Sinh → tạo nhiều mã đề và bảng đáp án Excel
+                  </p>
+                  <div className="space-y-1.5 mb-6">
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#ea580c' }} /><span>Giữ nguyên MathType & hình ảnh</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#ea580c' }} /><span>Đảo câu, phương án, ý Đúng – Sai</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#ea580c' }} /><span>Đáp án theo từng mã đề (.xlsx)</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#ea580c' }} /><span>Không cần API, đề không rời máy</span></div>
+                  </div>
+                  <button className="mode-card-btn" onClick={(e) => { e.stopPropagation(); setAppMode('mix'); }}>
+                    <Shuffle className="w-4 h-4" />
                     Bắt đầu
                     <ArrowRight className="w-4 h-4" />
                   </button>
@@ -2932,6 +2973,13 @@ const App: React.FC = () => {
         {appMode === 'variants' && (
           <div className="absolute inset-0 overflow-y-auto p-4 sm:p-6">
             <VariantsExamPage checkAuth={checkAuthOrTrial} />
+          </div>
+        )}
+
+        {/* ===== MODE: TRỘN ĐỀ WORD ===== */}
+        {appMode === 'mix' && (
+          <div className="absolute inset-0 overflow-y-auto p-4 sm:p-6">
+            <DocxMixPage checkAuth={checkAuthOrTrial} />
           </div>
         )}
       </main>

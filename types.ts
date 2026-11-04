@@ -195,7 +195,7 @@ export type MatrixTemplate = 'template1' | 'template2' | 'template3' | 'template
 // ============================================
 // APP MODE — Chế độ ứng dụng
 // ============================================
-export type AppMode = 'home' | 'cv7991' | 'similar' | 'variants';
+export type AppMode = 'home' | 'cv7991' | 'similar' | 'variants' | 'mix';
 
 // ============================================
 // TẠO ĐỀ TƯƠNG TỰ — Types

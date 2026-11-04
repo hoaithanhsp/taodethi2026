@@ -467,6 +467,36 @@
       box-shadow: 0 6px 24px -3px rgba(139, 92, 246, 0.6);
     }
 
+    /* Card 4: Orange — Trộn đề Word */
+    .mode-card-orange {
+      background: linear-gradient(145deg, #fff7ed 0%, #ffedd5 40%, #fed7aa 100%);
+      border-color: rgba(249, 115, 22, 0.25);
+      box-shadow:
+        0 4px 16px -4px rgba(249, 115, 22, 0.15),
+        0 12px 32px -8px rgba(249, 115, 22, 0.1);
+    }
+    .mode-card-orange:hover {
+      border-color: rgba(249, 115, 22, 0.5);
+      box-shadow:
+        0 8px 32px -4px rgba(249, 115, 22, 0.3),
+        0 20px 48px -12px rgba(249, 115, 22, 0.2),
+        0 0 0 1px rgba(249, 115, 22, 0.1);
+    }
+    .mode-card-orange::before {
+      background: linear-gradient(145deg, rgba(249, 115, 22, 0.04), rgba(251, 146, 60, 0.08));
+    }
+    .mode-card-orange .mode-card-icon {
+      background: linear-gradient(135deg, #ea580c 0%, #f97316 100%);
+      box-shadow: 0 6px 20px -4px rgba(249, 115, 22, 0.5);
+    }
+    .mode-card-orange .mode-card-btn {
+      background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%);
+      box-shadow: 0 4px 16px -3px rgba(249, 115, 22, 0.5);
+    }
+    .mode-card-orange .mode-card-btn:hover {
+      box-shadow: 0 6px 24px -3px rgba(249, 115, 22, 0.6);
+    }
+
     .mode-card-icon {
       width: 64px;
       height: 64px;
@@ -532,6 +562,7 @@
     .card-stagger-1 { animation: slideInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.05s forwards; opacity: 0; }
     .card-stagger-2 { animation: slideInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.15s forwards; opacity: 0; }
     .card-stagger-3 { animation: slideInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.25s forwards; opacity: 0; }
+    .card-stagger-4 { animation: slideInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.35s forwards; opacity: 0; }
 
     /* Back to home breadcrumb */
     .back-home-btn {
