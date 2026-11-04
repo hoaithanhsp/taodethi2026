@@ -306,6 +306,35 @@ await t('đề thật: phương án chỉ có công thức không bị coi là �
   assert.ok(!(await readXml(b.blob)).xml.includes('FF0000'));
 });
 
+await t('thông tin khai báo: dựng tiêu đề theo mẫu, thay tiêu đề gốc; để trống thì giữ nguyên', async () => {
+  const info = { department: 'SỞ GD-ĐT THÁI BÌNH', school: 'TRƯỜNG THPT HƯNG NHÂN', examName: 'KỲ THI TUYỂN SINH LỚP 10', schoolYear: '2024 - 2025', subject: 'Toán', duration: '60' };
+  const s = { ...SETTINGS, count: 2, examInfo: info };
+  const ps = m.planVersions(doc, s, ov);
+  for (const p of ps) {
+    const b = await m.buildVersion(doc, p, s);
+    assert.deepEqual(b.problems, []);
+    const { xml } = await readXml(b.blob);
+    const text = plain(xml);
+    for (const v of ['SỞ GD-ĐT THÁI BÌNH', 'TRƯỜNG THPT HƯNG NHÂN', 'KỲ THI TUYỂN SINH LỚP 10', 'NĂM HỌC: 2024 - 2025', 'MÔN: Toán', 'Thời gian làm bài: 60 phút', '(không kể thời gian phát đề)', 'Họ và tên:', 'Số báo danh:', `Mã đề ${p.code}`]) {
+      assert.ok(text.includes(v), v);
+    }
+    assert.ok(!text.includes('SỞ GD&amp;ĐT THỬ NGHIỆM'), 'đã thay tiêu đề gốc');
+    assert.ok(xml.indexOf('SỞ GD-ĐT THÁI BÌNH') < xml.indexOf('PHẦN I.'), 'tiêu đề ở đầu đề');
+    assert.ok(/w:dirty="true"/.test(xml) && xml.includes('NUMPAGES'), 'số trang tự tính lại');
+  }
+  const partial = { ...SETTINGS, count: 1, examInfo: { department: '', school: 'A & B <THPT>', examName: '', schoolYear: '', subject: '', duration: '45 phút' } };
+  const [pp] = m.planVersions(doc, partial, ov);
+  const bp = await m.buildVersion(doc, pp, partial);
+  assert.deepEqual(bp.problems, []);
+  const partialXml = (await readXml(bp.blob)).xml;
+  assert.ok(partialXml.includes('A &amp; B &lt;THPT&gt;'), 'thoát ký tự đặc biệt');
+  assert.ok(plain(partialXml).includes('Thời gian làm bài: 45 phút'));
+  const blank = { ...SETTINGS, count: 1, examInfo: { department: ' ', school: '', examName: '', schoolYear: '', subject: '', duration: '' } };
+  const [pb] = m.planVersions(doc, blank, ov);
+  const kept = plain((await readXml((await m.buildVersion(doc, pb, blank)).blob)).xml);
+  assert.ok(kept.includes('SỞ GD&amp;ĐT THỬ NGHIỆM') && !kept.includes('Họ và tên:'), 'để trống thì giữ tiêu đề gốc');
+});
+
 /* ------------------- Đối chiếu file mẫu thật (MathType, hình, bảng) ------------------- */
 const SAMPLE_DIR = fileURLToPath(new URL('../trộn đề/mẫu kết quả sau khi trộn/', import.meta.url));
 if (existsSync(SAMPLE_DIR)) {

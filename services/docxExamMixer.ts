@@ -78,6 +78,20 @@ export interface MixDocument {
   textWidth: number;
 }
 
+/** Thông tin giáo viên khai báo để dựng tiêu đề đề thi */
+export interface ExamInfo {
+  department: string;
+  school: string;
+  examName: string;
+  schoolYear: string;
+  subject: string;
+  duration: string;
+}
+
+export const EMPTY_EXAM_INFO: ExamInfo = { department: '', school: '', examName: '', schoolYear: '', subject: '', duration: '' };
+
+export const hasExamInfo = (info?: ExamInfo): info is ExamInfo => !!info && Object.values(info).some(v => v.trim());
+
 export interface MixSettings {
   count: number;
   startCode: number;
@@ -87,6 +101,8 @@ export interface MixSettings {
   keepTogether: boolean;
   /** Chuẩn hóa hình thức theo file mẫu */
   normalizeFormat: boolean;
+  /** Có khai báo thì thay phần tiêu đề của đề gốc bằng tiêu đề theo mẫu; để trống thì giữ nguyên */
+  examInfo?: ExamInfo;
   seed: number;
 }
 
@@ -1731,6 +1747,66 @@ const normalizeQuestionBlocks = (q: AQuestion) => {
   });
 };
 
+/** Tiêu đề đề thi đúng như mẫu: 2 cột thông tin, dòng họ tên, số báo danh và mã đề. */
+const examHeaderXml = (info: ExamInfo, code: string, textWidth: number, ns: string): string => {
+  const esc = (v: string) => v.trim().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const fonts = `<w:rFonts w:ascii="${FONT}" w:eastAsia="${FONT}" w:hAnsi="${FONT}" w:cs="${FONT}"/>`;
+  const normal = `<w:rPr>${fonts}<w:sz w:val="24"/></w:rPr>`;
+  const bold = `<w:rPr>${fonts}<w:b/><w:sz w:val="24"/></w:rPr>`;
+  const italic = `<w:rPr>${fonts}<w:i/></w:rPr>`;
+  const lines = (items: Array<[string, string]>) => items.map(([rPr, inner], i) => `<w:r>${rPr}${i ? '<w:br/>' : ''}${inner}</w:r>`).join('');
+  const t = (v: string) => `<w:t xml:space="preserve">${v}</w:t>`;
+  // Số trang đổi theo thứ tự câu: w:dirty để Word tự tính lại khi mở file
+  const pages = `<w:r>${italic}<w:fldChar w:fldCharType="begin" w:dirty="true"/></w:r><w:r>${italic}<w:instrText xml:space="preserve">NUMPAGES \\# "0#"</w:instrText></w:r><w:r>${italic}<w:fldChar w:fldCharType="separate"/></w:r><w:r>${italic}${t('01')}</w:r><w:r>${italic}<w:fldChar w:fldCharType="end"/></w:r>`;
+
+  const left: Array<[string, string]> = [];
+  if (info.department.trim()) left.push([normal, t(esc(info.department))]);
+  if (info.school.trim()) left.push([bold, t(esc(info.school))]);
+  left.push([bold, '']);
+  left.push([italic, t('-----------------------')]);
+  left.push([italic, t('(Đề thi có ')]);
+
+  const duration = info.duration.trim();
+  const durationText = /^\d+$/.test(duration) ? `${duration} phút` : duration;
+  const right: Array<[string, string]> = [];
+  if (info.examName.trim()) right.push([bold, t(esc(info.examName))]);
+  if (info.schoolYear.trim()) right.push([bold, t(`NĂM HỌC: ${esc(info.schoolYear)}`)]);
+  if (info.subject.trim()) right.push([bold, t(`MÔN: ${esc(info.subject)}`)]);
+  if (duration) {
+    right.push([italic, t(`Thời gian làm bài: ${esc(durationText)}`)]);
+    right.push([italic, t('(không kể thời gian phát đề)')]);
+  }
+
+  const col = Math.floor(textWidth / 2);
+  const dots = '.'.repeat(Math.max(20, Math.min(64, Math.floor((col / 20 - 58) / 3))));
+  const para = (inner: string, extra = '<w:jc w:val="center"/>') => `<w:p><w:pPr><w:spacing w:after="0" w:line="276" w:lineRule="auto"/><w:contextualSpacing/>${extra}</w:pPr>${inner}</w:p>`;
+  const noBorder = '<w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/>';
+  const lineBorder = '<w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="single" w:sz="12" w:space="0" w:color="000000"/><w:right w:val="nil"/>';
+  const cell = (borders: string, margin: string, inner: string, tail = '') => `<w:tc><w:tcPr><w:tcW w:w="${col}" w:type="dxa"/><w:tcBorders>${borders}</w:tcBorders><w:tcMar>${margin}</w:tcMar>${tail}</w:tcPr>${inner}</w:tc>`;
+  const tabPos = Math.max(1200, col - 1842);
+  return `<w:tbl xmlns:w="${ns}"><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblLayout w:type="fixed"/><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid><w:gridCol w:w="${col}"/><w:gridCol w:w="${col}"/></w:tblGrid>`
+    + `<w:tr>${cell(noBorder, '<w:top w:w="0" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/>', para(`${lines(left)}${pages}<w:r>${italic}${t(' trang)')}</w:r>`))}`
+    + `${cell(noBorder, '<w:top w:w="0" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/>', para(lines(right)))}</w:tr>`
+    + `<w:tr><w:trPr><w:trHeight w:val="567"/></w:trPr>${cell(lineBorder, '<w:top w:w="80" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:bottom w:w="40" w:type="dxa"/>', para(`<w:r>${bold}${t(`Họ và tên: ${dots}`)}</w:r>`, ''), '<w:vAlign w:val="bottom"/>')}`
+    + `${cell(lineBorder, '<w:top w:w="80" w:type="dxa"/><w:bottom w:w="40" w:type="dxa"/><w:right w:w="0" w:type="dxa"/>', para(`<w:r>${bold}<w:tab/>${t('Số báo danh: ...................')}</w:r><w:r>${bold}<w:tab/>${t(`Mã đề ${esc(code)}`)}</w:r>`, `<w:tabs><w:tab w:val="left" w:pos="567"/><w:tab w:val="left" w:pos="${tabPos}"/></w:tabs>`), '<w:vAlign w:val="bottom"/>')}</w:tr></w:tbl>`;
+};
+
+/** Số trang đổi theo thứ tự câu: yêu cầu Word tính lại trường NUMPAGES trong thân đề khi mở file. */
+const markPageCountDirty = (root: Element) => {
+  for (const instr of tags(root, 'w:instrText')) {
+    if (!/NUMPAGES/.test(instr.textContent || '')) continue;
+    for (let n = instr.parentNode?.previousSibling as Node | null | undefined; n; n = n.previousSibling) {
+      if (n.nodeType !== 1) continue;
+      const fld = kid(n, 'w:fldChar');
+      if (fld && wAttr(fld, 'fldCharType') === 'begin') {
+        setWAttr(fld, 'dirty', 'true');
+        break;
+      }
+      if (fld && wAttr(fld, 'fldCharType') === 'end') break;
+    }
+  }
+};
+
 /** Chân trang như mẫu: đường kẻ, "Mã đề ..." bên trái, "Trang x/y" bên phải. */
 const FOOTER_PART = 'word/footerMix.xml';
 const FOOTER_RID = 'rIdMixFooter';
@@ -1877,7 +1953,19 @@ const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): s
   const docOrder = new Map(els(a.body).map((e, i) => [e, i]));
   const body = a.body;
   els(body).forEach(removeNode);
-  a.front.forEach(n => body.appendChild(n));
+  if (hasExamInfo(s.examInfo)) {
+    const ns = dom.documentElement.namespaceURI || '';
+    const header = parseXml(examHeaderXml(s.examInfo, plan.code, textWidth, ns)).documentElement;
+    body.appendChild(dom.importNode(header, true));
+    // Ngắt section ở tiêu đề cũ (ví dụ tiêu đề 1 cột, thân đề 2 cột) vẫn phải được giữ
+    for (const n of a.front) {
+      const pPr = n.nodeName === 'w:p' ? kid(n, 'w:pPr') : null;
+      const sect = pPr ? kid(pPr, 'w:sectPr') : null;
+      if (sect) attachSect(body, sect);
+    }
+  } else {
+    a.front.forEach(n => body.appendChild(n));
+  }
 
   for (const part of a.parts) {
     part.heading.forEach((n, i) => {
@@ -1945,6 +2033,7 @@ const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): s
   if (finalSect) body.appendChild(finalSect);
   if (s.normalizeFormat && !doc.hasFooter) addFooterReference(dom);
 
+  markPageCountDirty(body);
   if (!applyCodeToParagraphs(dom, plan.code) && !doc.codeFound) {
     const p = newW(dom, 'p');
     const pPr = newW(dom, 'pPr');

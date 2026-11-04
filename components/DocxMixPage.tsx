@@ -7,6 +7,9 @@ import {
   buildAnswerWorkbook,
   buildVersion,
   defaultOverrides,
+  EMPTY_EXAM_INFO,
+  ExamInfo,
+  hasExamInfo,
   loadDocxExam,
   missingMixAnswers,
   MixDocument,
@@ -33,6 +36,17 @@ const saveBlob = (blob: Blob, name: string) => {
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 };
+const EXAM_INFO_FIELDS: Array<{ key: keyof ExamInfo; label: string; placeholder: string }> = [
+  { key: 'department', label: 'Bộ/Sở/Phòng GD:', placeholder: 'SỞ GD-ĐT' },
+  { key: 'school', label: 'Tổ/Trường:', placeholder: 'TRƯỜNG THPT' },
+  { key: 'examName', label: 'Tên bài thi:', placeholder: 'ĐỀ KIỂM TRA' },
+  { key: 'schoolYear', label: 'Năm học:', placeholder: '2026 - 2027' },
+  { key: 'subject', label: 'Môn học:', placeholder: 'Toán' },
+  { key: 'duration', label: 'Thời gian:', placeholder: '60 phút' },
+];
+
+const DEFAULT_EXAM_INFO = EXAM_INFO_FIELDS.reduce((info, field) => ({ ...info, [field.key]: field.placeholder }), { ...EMPTY_EXAM_INFO });
+
 const newSeed = () => Math.floor(Math.random() * 900000000) + 100000000;
 const nextFrame = () => new Promise(resolve => setTimeout(resolve, 0));
 
@@ -56,6 +70,7 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
     shuffleStatements: true,
     keepTogether: true,
     normalizeFormat: true,
+    examInfo: { ...DEFAULT_EXAM_INFO },
     seed: newSeed(),
   });
   const [built, setBuilt] = useState<BuiltVersion[]>([]);
@@ -339,6 +354,38 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
                   </div>
                 );
               })}
+            </div>
+          </div>
+
+          <div className="card-elevated p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-bold text-slate-900">Thông tin đề thi</h3>
+              <button
+                type="button"
+                onClick={() => updateSettings({ examInfo: { ...(hasExamInfo(settings.examInfo) ? EMPTY_EXAM_INFO : DEFAULT_EXAM_INFO) } })}
+                className="text-xs font-semibold text-orange-700 hover:text-orange-900 underline underline-offset-2"
+              >
+                {hasExamInfo(settings.examInfo) ? 'Giữ tiêu đề của đề gốc' : 'Điền lại thông tin mẫu'}
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5 mb-3">
+              {hasExamInfo(settings.examInfo)
+                ? 'Hãy sửa lại cho đúng đề của bạn. Tiêu đề của đề gốc sẽ được thay bằng thông tin dưới đây, kèm dòng họ tên, số báo danh và mã đề.'
+                : 'Các ô đang trống nên tiêu đề của đề gốc được giữ nguyên.'}
+            </p>
+            <div className="space-y-1">
+              {EXAM_INFO_FIELDS.map(field => (
+                <label key={field.key} className="grid sm:grid-cols-[11rem_1fr] sm:items-center gap-x-4">
+                  <span className="text-sm font-semibold text-slate-600">{field.label}</span>
+                  <input
+                    type="text"
+                    value={settings.examInfo?.[field.key] || ''}
+                    placeholder={field.placeholder}
+                    onChange={e => updateSettings({ examInfo: { ...EMPTY_EXAM_INFO, ...settings.examInfo, [field.key]: e.target.value } })}
+                    className="w-full bg-transparent border-0 border-b border-orange-500 px-1 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-b-2 focus:border-orange-600"
+                  />
+                </label>
+              ))}
             </div>
           </div>
 
