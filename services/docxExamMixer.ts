@@ -1218,9 +1218,12 @@ const hasCodeLabel = (dom: Document) => tags(dom, 'w:p').some(p => CODE_RE.test(
 export const loadDocxExam = async (data: ArrayBuffer | Uint8Array | Blob, fileName: string): Promise<MixDocument> => {
   let zip: JSZip;
   try {
-    zip = await JSZip.loadAsync(data as ArrayBuffer);
-  } catch {
-    throw new Error('Không mở được file. Hãy chọn đúng file Word .docx (file .doc cũ cần mở bằng Word rồi Lưu thành .docx).');
+    // Kiểm tra CRC ngay khi mở để phát hiện file hỏng, thay vì lỗi kỹ thuật ở bước sau
+    zip = await JSZip.loadAsync(data as ArrayBuffer, { checkCRC32: true });
+  } catch (e: any) {
+    throw new Error(/CRC32|size mismatch/i.test(String(e?.message || ''))
+      ? 'File Word này bị hỏng hoặc chưa tải về đầy đủ nên không đọc được. Hãy mở file bằng Word, Lưu thành file mới rồi tải lên lại.'
+      : 'Không mở được file. Hãy chọn đúng file Word .docx (file .doc cũ cần mở bằng Word rồi Lưu thành .docx). Nếu đúng là file Word thì có thể file đã bị hỏng hoặc chưa tải về đầy đủ.');
   }
   const docFile = zip.file('word/document.xml');
   if (!docFile) throw new Error('File này không phải văn bản Word .docx hợp lệ.');

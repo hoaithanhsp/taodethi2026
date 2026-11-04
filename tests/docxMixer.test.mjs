@@ -223,6 +223,20 @@ await t('báo lỗi rõ khi không có câu hỏi hoặc câu hỏi nằm trong 
   await assert.rejects(m.loadDocxExam(new Uint8Array([1, 2, 3]), 'x.docx'), /Không mở được file/);
 });
 
+await t('file Word bị hỏng: báo lỗi tiếng Việt dễ hiểu, không hiện lỗi kỹ thuật', async () => {
+  const good = await makeDocx(P(R('Câu 1. Hỏi')) + P(R('A. a')) + P(R('B. b')) + P(R('C. c')) + P(R('D. d')));
+  const at = Buffer.from(good).indexOf('Câu 1');
+  assert.ok(at > 0);
+  const bad = Uint8Array.from(good);
+  bad[at] ^= 0xff;
+  await assert.rejects(m.loadDocxExam(bad, 'hong.docx'), err => {
+    assert.match(err.message, /bị hỏng hoặc chưa tải về đầy đủ/);
+    assert.doesNotMatch(err.message, /Bug|CRC|mismatch/);
+    return true;
+  });
+  await m.loadDocxExam(good, 'tot.docx');
+});
+
 await t('thêm chân trang và dòng HẾT như mẫu khi đề gốc chưa có', async () => {
   const d = await m.loadDocxExam(await makeDocx(P(R('Câu 1. Hỏi')) + P(R('A. a')) + P(R('B. b')) + P(R('C. c')) + P(R('D. d'))), 'n.docx');
   const [p] = m.planVersions(d, { ...SETTINGS, count: 1 }, m.defaultOverrides(d));
