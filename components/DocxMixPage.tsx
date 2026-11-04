@@ -100,7 +100,8 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
       const loaded = await loadDocxExam(file, file.name);
       setDoc(loaded);
       setOv(defaultOverrides(loaded));
-      setSettings(s => ({ ...s, seed: newSeed() }));
+      // Ưu tiên thông tin đọc được từ tiêu đề đề gốc, ô nào không đọc được mới dùng chữ mẫu
+      setSettings(s => ({ ...s, seed: newSeed(), examInfo: { ...DEFAULT_EXAM_INFO, ...loaded.detectedInfo } }));
       setExpanded(null);
     } catch (e: any) {
       setDoc(null);
@@ -275,7 +276,7 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
               <label className="flex items-center gap-2"><input type="checkbox" checked={settings.shuffleOptions} onChange={e => updateSettings({ shuffleOptions: e.target.checked })} /> Đảo phương án A, B, C, D</label>
               <label className="flex items-center gap-2"><input type="checkbox" checked={settings.shuffleStatements} onChange={e => updateSettings({ shuffleStatements: e.target.checked })} /> Đảo ý a, b, c, d của câu Đúng – Sai</label>
               <label className="flex items-center gap-2"><input type="checkbox" checked={settings.keepTogether} onChange={e => updateSettings({ keepTogether: e.target.checked })} /> Giữ mỗi câu không bị ngắt sang trang</label>
-              <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" checked={settings.normalizeFormat} onChange={e => updateSettings({ normalizeFormat: e.target.checked })} /> Chuẩn hóa hình thức: Times New Roman 12, nhãn đậm, phương án tự xếp 4, 2 hoặc 1 cột</label>
+              <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" checked={settings.normalizeFormat} onChange={e => updateSettings({ normalizeFormat: e.target.checked })} /> Chuẩn hóa hình thức theo mẫu: lề trang, Times New Roman 12, "Câu 1." in đậm, phương án tự xếp 4, 2 hoặc 1 cột</label>
             </div>
           </div>
 
@@ -362,15 +363,15 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
               <h3 className="font-bold text-slate-900">Thông tin đề thi</h3>
               <button
                 type="button"
-                onClick={() => updateSettings({ examInfo: { ...(hasExamInfo(settings.examInfo) ? EMPTY_EXAM_INFO : DEFAULT_EXAM_INFO) } })}
+                onClick={() => updateSettings({ examInfo: hasExamInfo(settings.examInfo) ? { ...EMPTY_EXAM_INFO } : { ...DEFAULT_EXAM_INFO, ...doc?.detectedInfo } })}
                 className="text-xs font-semibold text-orange-700 hover:text-orange-900 underline underline-offset-2"
               >
-                {hasExamInfo(settings.examInfo) ? 'Giữ tiêu đề của đề gốc' : 'Điền lại thông tin mẫu'}
+                {hasExamInfo(settings.examInfo) ? 'Giữ tiêu đề của đề gốc' : 'Điền lại thông tin'}
               </button>
             </div>
             <p className="text-xs text-slate-500 mt-0.5 mb-3">
               {hasExamInfo(settings.examInfo)
-                ? 'Hãy sửa lại cho đúng đề của bạn. Tiêu đề của đề gốc sẽ được thay bằng thông tin dưới đây, kèm dòng họ tên, số báo danh và mã đề.'
+                ? 'App đã điền từ tiêu đề đề gốc những gì đọc được; ô còn lại là chữ mẫu, hãy sửa cho đúng. Tiêu đề của đề gốc sẽ được thay bằng thông tin dưới đây, kèm dòng họ tên, số báo danh và mã đề.'
                 : 'Các ô đang trống nên tiêu đề của đề gốc được giữ nguyên.'}
             </p>
             <div className="space-y-1">

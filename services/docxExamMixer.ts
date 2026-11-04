@@ -76,6 +76,10 @@ export interface MixDocument {
   /** Đề gốc đã có chân trang riêng */
   hasFooter: boolean;
   textWidth: number;
+  /** Độ rộng vùng chữ sau khi đưa lề trang về mẫu, dùng cho chân trang */
+  normalizedTextWidth: number;
+  /** Thông tin đọc được từ tiêu đề của đề gốc */
+  detectedInfo: Partial<ExamInfo>;
 }
 
 /** Thông tin giáo viên khai báo để dựng tiêu đề đề thi */
@@ -939,7 +943,7 @@ const analyzeQuestion = (q: AQuestion, part: APart, env: DocEnv) => {
   const slotNodes = new Set<Element>();
   q.slots?.forEach(s => { [...s.label, ...s.lead, ...s.content, ...s.trail, ...s.extra].forEach(n => slotNodes.add(n)); });
   q.retained = stemBlocks;
-  q.stemFp = fingerprint(stemBlocks, slotNodes).replace(/\*/g, '').replace(/^((?:\{[^}]*\})*)(?:Câu|C©u|C¢u|Question|QUESTION|Bài|BÀI|CÂU)\d{1,3}/, '$1');
+  q.stemFp = fingerprint(stemBlocks, slotNodes).replace(/\*/g, '').replace(/^((?:\{[^}]*\})*)(?:Câu|C©u|C¢u|Question|QUESTION|Bài|BÀI|CÂU)\d{1,3}[.:)\-–—]?/, '$1');
   q.optionFps = (q.slots || []).map(s => fingerprint([...s.content, ...s.extra]));
 
   q.mark = q.slots ? detectMarks(q.slots, kind) : { marked: [], props: [] };
@@ -1210,6 +1214,30 @@ const answerFromBook = (book: AnswerBook, q: AQuestion): string => {
   return '';
 };
 
+/** Đọc Sở, trường, tên bài thi, năm học, môn, thời gian từ tiêu đề đề gốc để giáo viên đỡ phải gõ. */
+const detectExamInfo = (front: Element[]): Partial<ExamInfo> => {
+  const info: Partial<ExamInfo> = {};
+  const lines = collectBlockParagraphs(front)
+    .flatMap(p => blockText(p).split(/[\n\t]+/))
+    .map(l => l.split(PLACEHOLDER).join(' ').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  for (const line of lines) {
+    if (!info.department && /^(?:SỞ|BỘ|PHÒNG)\s/i.test(line)) info.department = line;
+    else if (!info.school && /^(?:TRƯỜNG|TỔ)\s/i.test(line)) info.school = line;
+    const year = /N[ĂA]M\s*H[ỌO]C\s*:?\s*(\d{4})\s*[-–—/]\s*(\d{4})/i.exec(line);
+    if (year && !info.schoolYear) info.schoolYear = `${year[1]} - ${year[2]}`;
+    if (!info.examName && /^(?:BÀI\s+)?(?:ĐỀ\s+(?:KIỂM\s*TRA|THI|KT|ÔN)|KỲ\s+(?:THI|KIỂM\s*TRA)|KIỂM\s*TRA)/i.test(line)) {
+      const name = line.split(/N[ĂA]M\s*H[ỌO]C/i)[0].replace(/[\s,:–—-]+$/, '');
+      if (name) info.examName = name;
+    }
+    const subject = /^M[ÔO]N(?:\s+(?:THI|HỌC))?\s*[:.]\s*(.+)$/i.exec(line);
+    if (subject && !info.subject) info.subject = subject[1].trim();
+    const time = /Th[ờo]i\s*gian[^:\d]*:?\s*(\d+)\s*phút/i.exec(line);
+    if (time && !info.duration) info.duration = `${time[1]} phút`;
+  }
+  return info;
+};
+
 const HEADER_FOOTER_RE = /^word\/(?:header|footer)\d*\.xml$/;
 const CODE_RE = /(m[ãa]\s*(?:đ[ềe]|Đ[ỀE])(?:\s*(?:thi|THI))?(?:\s*(?:số|SỐ))?\s*[:.]?\s*)(\d{1,6}|[xX.…_\-]{2,})?/i;
 
@@ -1310,6 +1338,8 @@ export const loadDocxExam = async (data: ArrayBuffer | Uint8Array | Blob, fileNa
     codeFound,
     hasFooter,
     textWidth,
+    normalizedTextWidth: normalizedPageWidth(dom),
+    detectedInfo: detectExamInfo(a.front),
   };
 };
 
@@ -1506,6 +1536,8 @@ const setParagraph = (p: Element, opt: { before: number; jc: string; hanging?: b
     const tabs = newW(dom, 'tabs');
     opt.tabs.forEach(pos => tabs.appendChild(wEl(dom, 'tab', { val: 'left', pos: String(pos) })));
     putOrdered(pPr, tabs, PPR_ORDER);
+  } else {
+    dropKid(pPr, 'w:tabs');
   }
 };
 
@@ -1565,6 +1597,30 @@ const textWidthOf = (dom: Document): number => {
   if (num <= 1) return total;
   const space = parseInt(wAttr(cols, 'space') || '720', 10);
   return Math.floor((total - space * (num - 1)) / num);
+};
+
+const SAMPLE_MARGINS: Record<string, string> = { top: '567', right: '567', bottom: '567', left: '1134', header: '284', footer: '567', gutter: '0' };
+const isPortrait = (sect: Element | undefined): boolean => {
+  const size = sect ? kid(sect, 'w:pgSz') : null;
+  return !!size && wAttr(size, 'orient') !== 'landscape' && parseInt(wAttr(size, 'w') || '0', 10) < parseInt(wAttr(size, 'h') || '0', 10);
+};
+
+/** Đưa lề trang về đúng file mẫu; trang ngang giữ nguyên. */
+const normalizePageMargins = (sect: Element) => {
+  if (!isPortrait(sect)) return;
+  const mar = kid(sect, 'w:pgMar');
+  if (mar) Object.entries(SAMPLE_MARGINS).forEach(([k, v]) => setWAttr(mar, k, v));
+};
+
+/** Độ rộng vùng chữ cả trang sau chuẩn hóa lề; chân trang trải hết chiều ngang, không tính theo cột. */
+const normalizedPageWidth = (dom: Document): number => {
+  const sects = tags(dom, 'w:sectPr');
+  const sect = sects[sects.length - 1];
+  if (!sect) return 10205;
+  const w = parseInt(wAttr(kid(sect, 'w:pgSz'), 'w') || '11906', 10);
+  if (isPortrait(sect)) return w - 1134 - 567;
+  const mar = kid(sect, 'w:pgMar');
+  return w - parseInt(wAttr(mar, 'left') || '1134', 10) - parseInt(wAttr(mar, 'right') || '567', 10);
 };
 
 const lengthPt = (style: string | null, prop: string): number => {
@@ -1705,8 +1761,22 @@ const SUB_ITEM_RE = /^\s*[a-d]\s*\)/;
 const LABEL_TAIL_RE = /^\s*(?:\([^)]*\)|\[[^\]]*\])?\s*[.:)\-–—]?\s*/;
 
 /** Câu dẫn: khoảng cách đoạn, in đậm nhãn "Câu n.", ý a), b) của câu tự luận lùi đầu dòng. */
-const normalizeQuestionBlocks = (q: AQuestion) => {
+const normalizeQuestionBlocks = (q: AQuestion, newNum: number, env: DocEnv) => {
   const dom = q.blocks[0].ownerDocument!;
+  if (q.auto) {
+    // Số câu tự động mang theo màu và thụt lề của danh sách Word: đổi thành chữ "Câu 1." như mẫu
+    const first = q.blocks[0];
+    const pattern = listLevelOf(first, env)?.text || 'Câu %1';
+    const label = `${pattern.replace(/%\d/, String(newNum)).replace(/[\s.:)]*$/, '')}. `;
+    const pPr = kid(first, 'w:pPr');
+    if (pPr) {
+      dropKid(pPr, 'w:numPr');
+      // Kiểu đoạn tự đánh số: bỏ để không hiện số lần hai
+      const style = wAttr(kid(pPr, 'w:pStyle'), 'val');
+      if (style && env.styleNum.has(style)) dropKid(pPr, 'w:pStyle');
+    }
+    first.insertBefore(textRun(dom, label, true), els(first).find(n => n.nodeName !== 'w:pPr') || null);
+  }
   q.retained = q.retained.filter(b => b === q.blocks[0] || !isBlank(b));
   const slotted = new Set((q.slots || []).map(s => s.para));
   q.lead.forEach(b => {
@@ -1894,6 +1964,8 @@ const ensurePPr = (p: Element): Element => {
 };
 const setKeepNext = (p: Element) => {
   const pPr = ensurePPr(p);
+  // Không để một đoạn câu dẫn bị cắt đôi sang trang sau
+  if (!kid(pPr, 'w:keepLines')) putOrdered(pPr, newW(p.ownerDocument!, 'keepLines'), PPR_ORDER);
   if (kid(pPr, 'w:keepNext')) return;
   const el = newW(p.ownerDocument!, 'keepNext');
   const style = kid(pPr, 'w:pStyle');
@@ -1943,6 +2015,12 @@ const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): s
   const a = analyze(dom, doc.env);
   const byId = new Map(a.questions.map(q => [q.id, q]));
 
+  if (s.normalizeFormat) {
+    // Đoạn dán từ web mang theo lề và khoảng cách của trang web qua w:divId
+    tags(a.body, 'w:divId').forEach(removeNode);
+    tags(a.body, 'w:sectPr').forEach(normalizePageMargins);
+    a.parts.forEach(p => p.sects.forEach(x => normalizePageMargins(x.sect)));
+  }
   const textWidth = textWidthOf(dom);
   for (const pq of plan.questions) {
     const q = byId.get(pq.id)!;
@@ -1987,7 +2065,7 @@ const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): s
       if (q.lead.length) renumberLead(q.lead, numMap);
       const firstBlock = q.blocks[0];
       if (!q.auto) renumberQuestion(firstBlock, pq.newNum);
-      if (s.normalizeFormat) normalizeQuestionBlocks(q);
+      if (s.normalizeFormat) normalizeQuestionBlocks(q, pq.newNum, doc.env);
       const retained = [...q.retained].sort((x, y) => (docOrder.get(x) ?? 0) - (docOrder.get(y) ?? 0));
       if (s.keepTogether) {
         const seq = [...q.lead, ...retained];
@@ -2090,7 +2168,7 @@ const verifyVersion = (doc: MixDocument, plan: VersionPlan, xml: string): string
 
 /** Thêm phần chân trang vào gói Word; chỉ khai báo một lần trong rels và Content_Types. */
 const addFooterPart = async (doc: MixDocument, code: string) => {
-  doc.zip.file(FOOTER_PART, footerXml(code, doc.textWidth));
+  doc.zip.file(FOOTER_PART, footerXml(code, doc.normalizedTextWidth));
   const relsName = 'word/_rels/document.xml.rels';
   const rels = await doc.zip.file(relsName)!.async('string');
   if (!rels.includes(FOOTER_RID)) {
@@ -2110,10 +2188,11 @@ export const buildVersion = async (doc: MixDocument, plan: VersionPlan, s: MixSe
   for (const [name, content] of Object.entries(doc.headerFooters)) {
     const dom = parseXml(content);
     const blankFooter = /footer/.test(name) && !['w:t', 'w:instrText', 'w:fldSimple', 'w:drawing', 'w:pict'].some(tag => tags(dom, tag).length > 0);
-    if (s.normalizeFormat && blankFooter) doc.zip.file(name, footerXml(plan.code, doc.textWidth));
+    if (s.normalizeFormat && blankFooter) doc.zip.file(name, footerXml(plan.code, doc.normalizedTextWidth));
     else doc.zip.file(name, applyCodeToParagraphs(dom, plan.code) ? serializeXml(dom) : content);
   }
   if (s.normalizeFormat && !doc.hasFooter) await addFooterPart(doc, plan.code);
+  else if (doc.zip.file(FOOTER_PART)) doc.zip.remove(FOOTER_PART);
   const blob = await doc.zip.generateAsync({ type: 'blob', mimeType: DOCX_MIME, compression: 'DEFLATE', compressionOptions: { level: 6 } });
   return { plan, blob, problems };
 };

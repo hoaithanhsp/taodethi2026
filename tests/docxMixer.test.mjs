@@ -349,6 +349,39 @@ await t('thông tin khai báo: dựng tiêu đề theo mẫu, thay tiêu đề g
   assert.ok(kept.includes('SỞ GD&amp;ĐT THỬ NGHIỆM') && !kept.includes('Họ và tên:'), 'để trống thì giữ tiêu đề gốc');
 });
 
+await t('đề giáo viên soạn: số câu tự động, dán từ web, lề khác mẫu vẫn chuẩn hóa được', async () => {
+  const numbering = `<?xml version="1.0"?><w:numbering ${NS}><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="Câu %1:"/><w:pPr><w:ind w:left="992" w:hanging="992"/></w:pPr><w:rPr><w:b/><w:color w:val="0000FF"/></w:rPr></w:lvl></w:abstractNum><w:num w:numId="4"><w:abstractNumId w:val="0"/></w:num></w:numbering>`;
+  const stem = text => `<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="4"/></w:numPr><w:divId w:val="735"/></w:pPr>${R(text)}</w:p>`;
+  const opts = n => P(R(`A. a${n}`), TAB, R(`B. b${n}`)) + P(R(`C. c${n}`), TAB, R(`D. d${n}`));
+  const head = `<w:tbl><w:tr><w:tc>${P(R('SỞ GD&ĐT HẢI PHÒNG'))}${P(R('TRƯỜNG THPT THỬ'))}${P(R('(Đề gồm 3 trang)'))}</w:tc><w:tc>${P(R('ĐỀ KIỂM TRA GIỮA HKI NĂM HỌC 2026 – 2027'))}${P(R('Môn: Toán – Khối 11'))}${P(R('Thời gian làm bài: 90 phút, không kể giao đề'))}${P(R('ĐỀ GỐC'))}</w:tc></w:tr></w:tbl>`;
+  const body = head + P(R('PHẦN I. Câu trắc nghiệm nhiều phương án lựa chọn.')) + stem('Hỏi một') + opts(1) + stem('Hỏi hai') + opts(2) + stem('Hỏi ba') + opts(3)
+    + P(R('HƯỚNG DẪN CHẤM VÀ ĐÁP ÁN')) + `<w:tbl><w:tr><w:tc>${P(R('Câu'))}</w:tc><w:tc>${P(R('1'))}</w:tc><w:tc>${P(R('2'))}</w:tc><w:tc>${P(R('3'))}</w:tc></w:tr><w:tr><w:tc>${P(R('Đáp án'))}</w:tc><w:tc>${P(R('B'))}</w:tc><w:tc>${P(R('C'))}</w:tc><w:tc>${P(R('D'))}</w:tc></w:tr></w:tbl>`;
+  const raw = await JSZip.loadAsync(await makeDocx(body));
+  raw.file('word/numbering.xml', numbering);
+  raw.file('word/document.xml', (await raw.file('word/document.xml').async('string')).replace('w:right="567"', 'w:right="849"').replace('w:top="567"', 'w:top="1134"'));
+  const bytes = await raw.generateAsync({ type: 'uint8array' });
+  const d = await m.loadDocxExam(bytes, 'gv.docx');
+  assert.deepEqual(d.questions.map(q => [q.num, q.kind, q.answer]), [[1, 'mc', 'B'], [2, 'mc', 'C'], [3, 'mc', 'D']]);
+  assert.deepEqual(d.detectedInfo, { department: 'SỞ GD&ĐT HẢI PHÒNG', school: 'TRƯỜNG THPT THỬ', examName: 'ĐỀ KIỂM TRA GIỮA HKI', schoolYear: '2026 - 2027', subject: 'Toán – Khối 11', duration: '90 phút' });
+  const s = { ...SETTINGS, count: 3 };
+  for (const p of m.planVersions(d, s, m.defaultOverrides(d))) {
+    const b = await m.buildVersion(d, p, s);
+    assert.deepEqual(b.problems, [], `mã ${p.code}`);
+    const { xml } = await readXml(b.blob);
+    const text = plain(xml);
+    assert.ok(!xml.includes('<w:numPr>'), 'đã bỏ số tự động');
+    assert.ok(!xml.includes('w:divId'), 'đã bỏ định dạng web');
+    assert.ok(xml.includes('w:top="567"') && xml.includes('w:right="567"') && xml.includes('w:left="1134"'), 'lề theo mẫu');
+    p.questions.forEach(q => assert.ok(text.includes(`Câu ${q.newNum}. Hỏi ${['một', 'hai', 'ba'][q.origNum - 1]}`), `câu ${q.newNum}`));
+    assert.ok(!text.includes('HƯỚNG DẪN CHẤM'));
+  }
+  const off = { ...SETTINGS, count: 1, normalizeFormat: false };
+  const [po] = m.planVersions(d, off, m.defaultOverrides(d));
+  const bo = await m.buildVersion(d, po, off);
+  assert.deepEqual(bo.problems, []);
+  assert.ok((await readXml(bo.blob)).xml.includes('<w:numPr>'), 'tắt chuẩn hóa thì giữ số tự động');
+});
+
 /* ------------------- Đối chiếu file mẫu thật (MathType, hình, bảng) ------------------- */
 const SAMPLE_DIR = fileURLToPath(new URL('../trộn đề/mẫu kết quả sau khi trộn/', import.meta.url));
 if (existsSync(SAMPLE_DIR)) {
