@@ -11,6 +11,7 @@
     "test:matrix": "node tests/matrixContract.test.mjs",
     "test:equation": "node tests/wordEquation.test.mjs",
     "test:shuffle": "node tests/examShuffle.test.mjs",
+    "test:mixer": "node tests/docxMixer.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -18,6 +19,7 @@
     "@types/file-saver": "^2.0.7",
     "file-saver": "^2.0.5",
     "html-docx-js-typescript": "^0.1.5",
+    "jszip": "^3.10.2",
     "katex": "^0.16.45",
     "lucide-react": "^0.555.0",
     "mammoth": "^1.12.0",
