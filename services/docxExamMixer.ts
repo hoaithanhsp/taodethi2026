@@ -24,6 +24,10 @@ import { AnswerBook, ExamQuestion, parseAnswerKey } from './examShuffle';
 
 export type MixKind = 'mc' | 'tf' | 'short' | 'essay';
 export type AnswerSource = 'key' | 'solution' | 'mark' | null;
+/** general: Toán, Lí, Hóa, Sinh...; english: đề Tiếng Anh chia nhóm theo thẻ <g0>...<g3> */
+export type MixMode = 'general' | 'english';
+/** 0: không trộn; 1: chỉ đảo câu; 2: chỉ đảo phương án; 3: đảo cả câu và phương án */
+export type GroupLevel = 0 | 1 | 2 | 3;
 
 export interface MixStats {
   /** Công thức MathType / đối tượng nhúng (w:object) */
@@ -57,9 +61,18 @@ export interface MixPart {
   index: number;
   title: string;
   kind: MixKind | null;
+  /** Mức trộn của nhóm (đề Tiếng Anh) */
+  level: GroupLevel;
+  /** Nhóm giữ nguyên vị trí trong đề */
+  fixed: boolean;
+  /** Nhóm do giáo viên đánh thẻ trong đề, không phải app tự nhận */
+  tagged: boolean;
 }
 
 export interface MixDocument {
+  mode: MixMode;
+  /** Mã đề ghi sẵn trong đề gốc, dùng làm hàng đề gốc của bảng đáp án Tiếng Anh */
+  originalCode: string | null;
   fileName: string;
   zip: JSZip;
   xml: string;
@@ -107,6 +120,8 @@ export interface MixSettings {
   normalizeFormat: boolean;
   /** Có khai báo thì thay phần tiêu đề của đề gốc bằng tiêu đề theo mẫu; để trống thì giữ nguyên */
   examInfo?: ExamInfo;
+  /** Đảo vị trí các nhóm không có dấu # (đề Tiếng Anh) */
+  shuffleGroups?: boolean;
   seed: number;
 }
 
@@ -117,6 +132,9 @@ export interface MixOverrides {
   lockOptions: Record<number, boolean>;
   /** Câu này đi liền với câu kế tiếp */
   linkNext: Record<number, boolean>;
+  /** Mức trộn và vị trí từng nhóm (đề Tiếng Anh) */
+  partLevels: Record<number, GroupLevel>;
+  partFixed: Record<number, boolean>;
 }
 
 export interface PlannedQuestion {
@@ -129,12 +147,16 @@ export interface PlannedQuestion {
   perm: number[] | null;
   /** Đáp án trong mã đề này; "?" nếu đề gốc chưa có */
   answer: string;
+  /** Đáp án ở đề gốc */
+  baseAnswer: string;
 }
 
 export interface VersionPlan {
   code: string;
   /** Câu theo thứ tự mới, nhóm theo phần */
   questions: PlannedQuestion[];
+  /** Thứ tự các nhóm trong mã đề này (đề Tiếng Anh) */
+  partOrder?: number[];
 }
 
 export interface BuiltVersion {
@@ -420,13 +442,13 @@ const prepareBody = (body: Element, keepBookmarks: Set<string>) => {
 /* ---------------------------- Nhận diện ---------------------------- */
 
 // "Câu 12.", "Câu 12:", "Câu 12 (NB)." kể cả phông cũ TCVN3 ("C©u") và chữ tổ hợp
-const QUESTION_LABEL = /^([\s￼]*)((?:C(?:â|Â|â|Â|©|¢)[uU]|Question|QUESTION|Bài|BÀI)\s*)(\d{1,3})(?=\s*(?:\([^)]*\)|\[[^\]]*\])?\s*(?:[.:)\-–—]|\s|$|￼))/;
+const QUESTION_LABEL = /^([\s￼]*)((?:C(?:â|Â|â|Â|©|¢)[uU]|Question|QUESTION|Q|Bài|BÀI)\s*)(\d{1,3})(?=\s*(?:\([^)]*\)|\[[^\]]*\])?\s*(?:[.:)\-–—]|\s|$|￼))/;
 const GROUP_HEAD = /^\s*C(?:â|Â)[uU]\s*\d+\s*(?:và|đến|tới|,|-|–|—|&)\s*(?:c(?:â|Â)[uU]\s*)?\d+/;
 const GROUP_REF = /c[âa]u\s*(?:hỏi\s*)?(?:số\s*)?(\d{1,3})((?:\s*(?:,|;|và|đến|tới|-|–|—|&)\s*(?:c[âa]u\s*(?:hỏi\s*)?(?:số\s*)?)?\d{1,3})+)/i;
 const GROUP_COUNT = /(\d|hai|ba|bốn|năm|sáu)\s*c[âa]u\s*(?:hỏi\s*)?(?:tiếp\s*theo|kế\s*tiếp|sau|dưới\s*đây)/i;
 const GROUP_CUE = /dựa|căn\s*cứ|sử\s*dụng|dùng|đọc|cho\s|thông\s*tin|dữ\s*kiện|bảng|hình|đoạn|đồ\s*thị|sơ\s*đồ|thí\s*nghiệm|trả\s*lời|từ\s*câu|c[âa]u\s*\d+\s*(?:và|đến|,)/i;
 const GROUP_NOT = /thí\s*sinh|học\s*sinh|mỗi\s*câu/i;
-const TAIL_END_RE = /^[\s\-–—_.*=~•·]*H[ẾE]T\b/i;
+const TAIL_END_RE = /^[\s\-–—_.*=~•·]*(?:H[ẾE]T\b|THE\s+END\b)/i;
 const TAIL_NOTE_RE = /^[\s\-–—_.*=~•·]*(?:Thí sinh|Cán bộ|Giám thị).{0,50}(?:không được|không giải thích)/i;
 const PLAIN_PART = /^\s*(?:(?:[A-D]|[IVX]+)\s*[.:]\s*)?(?:PHẦN\s+)?(TRẮC\s*NGHIỆM|TỰ\s*LUẬN)\b/i;
 const SOLUTION_RE = /^\s*(?:L[ờơ]i\s*gi[ảa]i|LỜI\s*GIẢI|H[ưƯ][ớỚ]ng\s*d[ẫẪ]n(?:\s*gi[ảa]i)?\s*(?:[:.]|$)|H[ưƯ][ớỚ]ng\s*d[ẫẪ]n\s*gi[ảa]i|HDG\b|Gi[ảa]i\s*[:.]|Ch[ọo]n\s*(?:đáp\s*án\s*)?[A-F](?=$|[\s,.;:)])|Đ[áa]p\s*[áa]n\s*(?:đúng\s*)?(?:là\s*)?(?:[:.]|[A-F](?=$|[\s,.;:)])|$)|ĐÁP\s*ÁN\s*[:.]?|Đ[áa]p\s*s[ốo]\s*[:.]|ĐS\s*[:.]|Tr[ảa]\s*l[ờơ]i\s*[:.]|K[ếe]t\s*qu[ảa]\s*[:.])/;
@@ -436,6 +458,13 @@ const LOCK_STATEMENT_RE = /(?:^|[\s(])(?:ý|mệnh\s*đề|phát\s*biểu|câu)\
 const REF_QUESTION_RE = /c[âa]u\s*(?:hỏi\s*)?(?:trên|trước|số?\s*\d+|\d+)/i;
 const REF_FIGURE_RE = /(?:hình|bảng|đồ\s*thị|sơ\s*đồ)\s*(?:vẽ\s*)?(?:trên|trước)|(?:hình|bảng)\s*ở\s*(?:trên|câu)/i;
 
+// Đề Tiếng Anh: thẻ nhóm <g3>, <#g0>, </g2>, <g_codinh>, <g_codinh_khongtron>
+const GROUP_TAG_RE = /^\s*<\s*(\/)?\s*(#)?\s*g(?:_([a-z_]+)|(\d))\s*>\s*$/i;
+// Dòng yêu cầu mở đầu một nhóm khi đề không có thẻ
+const INSTRUCTION_RE = /^\s*(?:Read|Mark|Listen|Choose|Four\b|Look|Fill|Complete|Decide|Use\s+the|For\s+each)\b/i;
+const INSTRUCTION_CUE_RE = /answer\s*sheet|question|blank|listen|true|false/i;
+const REF_QUESTION_EN_RE = /\b(?:previous|above|preceding|last)\s+question\b|\bquestion\s+\d+\b/i;
+const LOCK_OPTION_EN_RE = /\b(?:both|neither)\s+(?:[A-D]\b|(?:answers|options)\b|of\s+(?:the|these)\b)|\b[A-D]\s+(?:and|or)\s+[A-D]\b|\ball\s+(?:are\s+(?:correct|true|right)|of\s+(?:the\s+)?(?:above|these|them))\b|\bnone\s+(?:is|are|of\s+(?:the\s+)?(?:above|these|them))\b/i;
 const RESTART_NOTE = 'Số câu được đánh lại từ đầu ở giữa file; app coi đó là phần riêng và không trộn lẫn sang nhau.';
 
 const looksLikePartHeading = (t: string): boolean => {
@@ -484,7 +513,9 @@ const scanTokens = (p: Element, env: DocEnv, lower: boolean, skipLabelOf: Elemen
   const text = streamOf(p).text;
   const out: Token[] = [];
   const isLetter = (c: string) => (lower ? c >= 'a' && c <= 'f' : c >= 'A' && c <= 'F');
-  const begin = skipLabelOf === p ? (QUESTION_LABEL.exec(text)?.[0].length ?? 0) : 0;
+  const labelEnd = skipLabelOf === p ? (QUESTION_LABEL.exec(text)?.[0].length ?? 0) : 0;
+  // "Question 1. A. plants": dấu chấm sau số câu không được làm mất phương án A cùng dòng
+  const begin = labelEnd ? labelEnd + (LABEL_TAIL_RE.exec(text.slice(labelEnd))?.[0].length ?? 0) : 0;
   for (let i = begin; i < text.length; i++) {
     const c = text[i];
     if (!isLetter(c)) continue;
@@ -506,7 +537,7 @@ const scanTokens = (p: Element, env: DocEnv, lower: boolean, skipLabelOf: Elemen
   return out;
 };
 
-const pickChain = (tokens: Token[], letters: string[], strictOnly: boolean): Token[] | null => {
+const pickChain = (tokens: Token[], letters: string[], strictOnly: boolean, minLength = 3): Token[] | null => {
   const usable = strictOnly ? tokens.filter(t => t.strong) : tokens;
   for (let s = usable.length - 1; s >= 0; s--) {
     const a = usable[s];
@@ -520,7 +551,7 @@ const pickChain = (tokens: Token[], letters: string[], strictOnly: boolean): Tok
       if (chain.length >= 4 && !t.first && !t.strong) continue; // "D. E. coli" không phải phương án E
       if (t.first || t.strong || t.para === chain[chain.length - 1].para) chain.push(t);
     }
-    if (chain.length >= 3) return chain;
+    if (chain.length >= minLength) return chain;
   }
   return null;
 };
@@ -537,6 +568,8 @@ interface Slot {
   auto: boolean;
   /** Trước nhãn đầu đoạn không có nội dung gì khác, có thể dựng lại đoạn */
   preOk: boolean;
+  /** Phương án cùng dòng với nhãn câu ("Question 1. A. ...") */
+  inLabel: boolean;
 }
 
 const buildSlots = (chain: Token[], topBlocks: Element[]): Slot[] => {
@@ -546,7 +579,10 @@ const buildSlots = (chain: Token[], topBlocks: Element[]): Slot[] => {
   for (const para of paras) {
     const toks = chain.filter(t => t.para === para);
     const text = streamOf(para).text;
-    const preOk = !text.slice(0, toks[0].start).trim();
+    const pre = text.slice(0, toks[0].start);
+    const preLabel = QUESTION_LABEL.exec(pre);
+    const inLabel = !!preLabel && !pre.slice(preLabel[0].length).replace(LABEL_TAIL_RE, '').trim();
+    const preOk = !pre.trim() || inLabel;
     const cuts: number[] = [];
     const ranges = toks.map((t, k) => {
       const limit = k + 1 < toks.length ? toks[k + 1].start : text.length;
@@ -576,6 +612,7 @@ const buildSlots = (chain: Token[], topBlocks: Element[]): Slot[] => {
         star: t.star,
         auto: t.auto,
         preOk,
+        inLabel,
       });
     });
   }
@@ -598,7 +635,8 @@ const buildSlots = (chain: Token[], topBlocks: Element[]): Slot[] => {
   // còn lại là phần chung của câu (hình, ghi chú) và phải đứng yên.
   const last = slots[slots.length - 1];
   if (last.extra.length && !slots.slice(0, -1).some(s => s.extra.length)) last.extra = [];
-  return slots;
+  // Phương án xếp theo cột (A C / B D) vẫn phải đúng thứ tự chữ cái
+  return slots.sort((x, y) => x.letter.localeCompare(y.letter));
 };
 
 /* ---------------------------- Dấu đánh đáp án đúng ---------------------------- */
@@ -775,6 +813,8 @@ interface AQuestion {
   warnings: string[];
   pinned: boolean;
   lockOptions: boolean;
+  /** Câu chỉ để tô phiếu, phương án nằm trong bài đọc ("Question 37. A") */
+  external?: boolean;
   markedAnswer: string;
   solutionAnswer: string;
   stemFp: string;
@@ -794,6 +834,9 @@ interface APart {
   sects: Array<{ position: number; sect: Element }>;
   /** Dàn ý/hướng dẫn đầu file (như file mẫu), không phải nội dung đề */
   outline?: boolean;
+  level?: GroupLevel;
+  fixed?: boolean;
+  tagged?: boolean;
 }
 
 interface Analysis {
@@ -861,7 +904,8 @@ const previewOf = (nodes: Element[], max = 150): string => {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 };
 
-const analyzeQuestion = (q: AQuestion, part: APart, env: DocEnv) => {
+const analyzeQuestion = (q: AQuestion, part: APart, env: DocEnv, mode: MixMode) => {
+  const english = mode === 'english';
   // Bỏ ngắt trang/ngắt cột nằm trong câu: câu đổi chỗ thì ngắt trang sẽ sai vị trí
   for (const b of [...q.lead, ...q.blocks]) {
     for (const br of tags(b, 'w:br')) {
@@ -906,12 +950,20 @@ const analyzeQuestion = (q: AQuestion, part: APart, env: DocEnv) => {
   const findChain = (lower: boolean): Token[] | null => {
     const letters = lower ? TF_LETTERS : MC_LETTERS;
     const auto = autoTokens(lower);
-    const need = lower ? 4 : 3;
+    const need = lower ? 4 : english ? 2 : 3;
+    if (!lower && auto.length) {
+      // Danh sách tự đánh số A, B kèm "C.", "D." gõ tay trên cùng dòng (xếp theo cột)
+      const mixed = paras.flatMap(p => [...auto.filter(t => t.para === p), ...scanTokens(p, env, false, q.blocks[0]).filter(t => !t.first)]);
+      const distinct = MC_LETTERS.findIndex(l => mixed.filter(t => t.letter === l).length !== 1);
+      const count = distinct < 0 ? MC_LETTERS.length : distinct;
+      if (count > auto.length && count >= need && count === mixed.length) return mixed;
+    }
     if (auto.length >= need) return auto;
     const toks = paras.flatMap(p => scanTokens(p, env, lower, q.blocks[0]));
-    const strict = pickChain(toks, letters, true);
+    const minLength = english && !lower ? 2 : 3;
+    const strict = pickChain(toks, letters, true, minLength);
     if (strict && strict.length >= (lower ? 4 : 4)) return lower ? strict.slice(0, 4) : strict;
-    const loose = pickChain(toks, letters, false);
+    const loose = pickChain(toks, letters, false, minLength);
     if (loose && (lower ? loose.length === 4 : true)) return loose;
     return strict && !lower ? strict : null;
   };
@@ -930,7 +982,18 @@ const analyzeQuestion = (q: AQuestion, part: APart, env: DocEnv) => {
   } else if (partKind === 'mc') {
     chain = findChain(false);
     kind = chain ? 'mc' : 'essay';
-    if (!chain) q.warnings.push('Không nhận ra đủ phương án A, B, C, D nên giữ nguyên vị trí câu.');
+    // Dạng điền câu vào bài đọc: phương án A, B, C, D nằm trong bài đọc, dòng câu chỉ để tô phiếu
+    const labelRest = (() => {
+      const text = stemBlocks.map(blockText).join('');
+      const m = QUESTION_LABEL.exec(text);
+      return m ? text.slice(m[0].length).replace(LABEL_TAIL_RE, '') : text;
+    })();
+    if (!chain && english && /^\s*[A-F]?\s*$/.test(labelRest)) {
+      kind = 'mc';
+      q.external = true;
+    } else if (!chain) {
+      q.warnings.push('Không nhận ra đủ phương án A, B, C, D nên giữ nguyên vị trí câu.');
+    }
   } else {
     chain = findChain(false);
     if (chain) kind = 'mc';
@@ -973,8 +1036,11 @@ const analyzeQuestion = (q: AQuestion, part: APart, env: DocEnv) => {
   // Khóa để an toàn
   const stemText = stemBlocks.filter(b => b.nodeName === 'w:p' && !q.slots?.some(s => s.para === b)).map(blockText).join(' ').replace(QUESTION_LABEL, '');
   q.pinned = kind === 'essay';
-  q.lockOptions = false;
-  if (REF_QUESTION_RE.test(stemText.replace(/nội\s*dung\s*c[âa]u\s*hỏi\s*\d*/gi, '')) && q.group === null) {
+  q.lockOptions = !!q.external;
+  if (english && REF_QUESTION_EN_RE.test(stemText)) {
+    q.pinned = true;
+    q.warnings.push('Câu có nhắc tới câu khác nên giữ nguyên vị trí.');
+  } else if (!english && REF_QUESTION_RE.test(stemText.replace(/nội\s*dung\s*c[âa]u\s*hỏi\s*\d*/gi, '')) && q.group === null) {
     q.pinned = true;
     q.warnings.push('Câu có nhắc tới câu khác nên giữ nguyên vị trí.');
   }
@@ -985,7 +1051,7 @@ const analyzeQuestion = (q: AQuestion, part: APart, env: DocEnv) => {
   }
   if (q.slots) {
     const optText = q.slots.map(s => previewOf(s.content, 400));
-    if (kind === 'mc' && optText.some(t => LOCK_OPTION_RE.test(t))) {
+    if (kind === 'mc' && optText.some(t => (english ? LOCK_OPTION_EN_RE : LOCK_OPTION_RE).test(t))) {
       q.lockOptions = true;
       q.warnings.push('Có phương án kiểu "Cả A và B", "Tất cả..." nên giữ nguyên thứ tự phương án.');
     }
@@ -993,7 +1059,7 @@ const analyzeQuestion = (q: AQuestion, part: APart, env: DocEnv) => {
       q.lockOptions = true;
       q.warnings.push('Có ý nhắc tới ý khác nên giữ nguyên thứ tự a, b, c, d.');
     }
-    if (kind === 'mc' && q.slots.length !== 4) q.warnings.push(`Câu có ${q.slots.length} phương án, cần kiểm tra lại.`);
+    if (kind === 'mc' && q.slots.length !== 4 && !(english && q.slots.length === 2)) q.warnings.push(`Câu có ${q.slots.length} phương án, cần kiểm tra lại.`);
     const emptyOpts = q.slots.filter(s => !s.content.length && !s.extra.length).map(s => s.letter);
     if (emptyOpts.length) {
       q.lockOptions = true;
@@ -1010,7 +1076,133 @@ const analyzeQuestion = (q: AQuestion, part: APart, env: DocEnv) => {
   }
 };
 
-const analyze = (dom: Document, env: DocEnv): Analysis => {
+/** Mức trộn mặc định khi đề không có thẻ, đối chiếu từ các mã đề mẫu Tiếng Anh. */
+const autoGroupLevel = (part: APart): GroupLevel => {
+  const lines = part.heading.filter(b => !isBlank(b));
+  const text = lines.map(blockPlain).join(' ');
+  if (/arrange|arrangement/i.test(text)) return 3;
+  if (/\blisten/i.test(text) || /numbered\s+blanks?|each\s+blank|best\s+fits|\(\d{1,3}\)\s*_|#{4,}/i.test(text)) return 2;
+  return lines.length > 1 ? 2 : 3;
+};
+
+/** Đề Tiếng Anh: mỗi nhóm là một phần riêng, theo thẻ giáo viên đánh hoặc theo dòng yêu cầu. */
+const parseEnglishGroups = (
+  a: Analysis,
+  list: Element[],
+  texts: string[],
+  qAt: Map<number, { num: number; auto: boolean }>,
+  nextQAfter: (i: number) => { index: number; num: number } | null,
+  env: DocEnv,
+) => {
+  const anyTag = texts.some(t => GROUP_TAG_RE.test(t));
+  let state: 'front' | 'intro' | 'q' | 'tail' | 'answers' = 'front';
+  let part: APart | null = null;
+  let cur: AQuestion | null = null;
+  let idCounter = 0;
+
+  const openGroup = (level: GroupLevel, fixed: boolean, tagged: boolean): APart => {
+    const created: APart = { index: a.parts.length, title: '', kind: 'mc', roman: '', heading: [], questions: [], sects: [], level, fixed, tagged };
+    a.parts.push(created);
+    part = created;
+    cur = null;
+    state = 'intro';
+    return created;
+  };
+  const hasOptions = (q: AQuestion) => collectBlockParagraphs(q.blocks).some(p => /(?:^|\s)A\s*[.)]/.test(blockText(p)) || listLevelOf(p, env)?.fmt === 'upperLetter');
+
+  list.forEach((b, i) => {
+    const t = texts[i];
+    if (state === 'answers') {
+      a.answerBlocks.push(b);
+      return;
+    }
+    const tag = GROUP_TAG_RE.exec(t);
+    if (tag) {
+      if (tag[1]) return;
+      const name = (tag[3] || '').toLowerCase();
+      const level = (name === 'codinh' ? 3 : name === 'codinh_khongtron' ? 2 : Math.min(3, parseInt(tag[4] || '3', 10))) as GroupLevel;
+      openGroup(level, !!tag[2] || !!name, true);
+      return;
+    }
+    const nq = nextQAfter(i);
+    const trimmed = t.trim();
+    if (trimmed && trimmed.length <= 120 && ANSWER_RE.test(t) && !qAt.has(i)) {
+      if (/BẢNG\s*ĐÁP\s*ÁN/i.test(t) || state === 'tail' || !cur || !nq || nq.num <= (cur as AQuestion).num) {
+        state = 'answers';
+        cur = null;
+        a.answerBlocks.push(b);
+        return;
+      }
+    }
+    if (b.nodeName === 'w:tbl' && (state === 'tail' || (state === 'q' && !nq)) && answerTableLike(b)) {
+      state = 'answers';
+      cur = null;
+      a.answerBlocks.push(b);
+      return;
+    }
+    if (state === 'tail') {
+      a.tail.push(b);
+      return;
+    }
+    if (state === 'q' && trimmed.length <= 120 && TAIL_END_RE.test(t)) {
+      state = 'tail';
+      cur = null;
+      a.tail.push(b);
+      return;
+    }
+    if (qAt.has(i)) {
+      const info = qAt.get(i)!;
+      const owner: APart = part || openGroup(3, false, false);
+      const q: AQuestion = {
+        id: idCounter++, part: owner.index, num: info.num, auto: info.auto, lead: [], blocks: [b], retained: [], solution: [],
+        kind: 'essay', slots: null, mark: { marked: [], props: [] },
+        group: null, groupRef: false, warnings: [], pinned: false, lockOptions: false,
+        markedAnswer: '', solutionAnswer: '', stemFp: '', optionFps: [], position: owner.questions.length, rebuilt: new Set(),
+      };
+      owner.questions.push(q);
+      a.questions.push(q);
+      cur = q;
+      state = 'q';
+      return;
+    }
+    const startsGroup = !anyTag && b.nodeName === 'w:p' && INSTRUCTION_RE.test(t) && INSTRUCTION_CUE_RE.test(t) && trimmed.length > 25
+      && (state === 'front' || (cur !== null && hasOptions(cur)));
+    if (startsGroup) {
+      openGroup(3, false, false).heading.push(b);
+      return;
+    }
+    if (cur) (cur as AQuestion).blocks.push(b);
+    else if (state === 'intro') (part as unknown as APart).heading.push(b);
+    else a.front.push(b);
+  });
+
+  for (const p of a.parts) {
+    if (!p.tagged) p.level = autoGroupLevel(p);
+    const first = p.heading.find(h => !isBlank(h));
+    if (first) p.title = blockPlain(first).replace(/#{3,}\w?/g, '…');
+  }
+};
+
+/** Bước chung sau khi đã chia phần: giữ section theo vị trí và phân tích từng câu. */
+const finishAnalysis = (a: Analysis, env: DocEnv, mode: MixMode) => {
+  // Ngắt section nằm trong câu: giữ theo VỊ TRÍ, không để đi theo câu
+  for (const p of a.parts) {
+    for (const q of p.questions) {
+      for (const block of [...q.lead, ...q.blocks]) {
+        if (block.nodeName !== 'w:p') continue;
+        const pPr = kid(block, 'w:pPr');
+        const sect = pPr ? kid(pPr, 'w:sectPr') : null;
+        if (sect) {
+          removeNode(sect);
+          p.sects.push({ position: q.position, sect });
+        }
+      }
+    }
+  }
+  for (const p of a.parts) for (const q of p.questions) analyzeQuestion(q, p, env, mode);
+};
+
+const analyze = (dom: Document, env: DocEnv, mode: MixMode = 'general'): Analysis => {
   const body = tags(dom, 'w:body')[0];
   if (!body) throw new Error('Không tìm thấy nội dung văn bản trong file Word.');
   const refBookmarks = new Set<string>();
@@ -1048,6 +1240,11 @@ const analyze = (dom: Document, env: DocEnv): Analysis => {
   };
 
   const a: Analysis = { dom, body, finalSect, front: [], tail: [], parts: [], questions: [], answerBlocks: [], notes: [] };
+  if (mode === 'english') {
+    parseEnglishGroups(a, list, texts, qAt, nextQAfter, env);
+    finishAnalysis(a, env, mode);
+    return a;
+  }
   let state: 'front' | 'intro' | 'q' | 'tail' | 'answers' = 'front';
   let part: APart | null = null;
   let cur: AQuestion | null = null;
@@ -1190,22 +1387,7 @@ const analyze = (dom: Document, env: DocEnv): Analysis => {
   });
   if (a.parts.some(p => p.outline)) a.notes.push('Đã bỏ phần hướng dẫn soạn đề ở đầu file; đề học sinh sẽ không có phần này.');
 
-  // Ngắt section nằm trong câu: giữ theo VỊ TRÍ, không để đi theo câu
-  for (const p of a.parts) {
-    for (const q of p.questions) {
-      for (const block of [...q.lead, ...q.blocks]) {
-        if (block.nodeName !== 'w:p') continue;
-        const pPr = kid(block, 'w:pPr');
-        const sect = pPr ? kid(pPr, 'w:sectPr') : null;
-        if (sect) {
-          removeNode(sect);
-          p.sects.push({ position: q.position, sect });
-        }
-      }
-    }
-  }
-
-  for (const p of a.parts) for (const q of p.questions) analyzeQuestion(q, p, env);
+  finishAnalysis(a, env, mode);
   return a;
 };
 
@@ -1247,12 +1429,15 @@ const detectExamInfo = (front: Element[]): Partial<ExamInfo> => {
   return info;
 };
 
+/** Bảng đáp án Tiếng Anh ghi "Q1", "Question 1": đưa về số câu để dùng chung bộ đọc đáp án. */
+const normalizeKeyText = (text: string) => text.replace(/\b(?:Question|Q)\s*(\d{1,3})\b/gi, '$1');
+
 const HEADER_FOOTER_RE = /^word\/(?:header|footer)\d*\.xml$/;
 const CODE_RE = /(m[ãa]\s*(?:đ[ềe]|Đ[ỀE])(?:\s*(?:thi|THI))?(?:\s*(?:số|SỐ))?\s*[:.]?\s*)(\d{1,6}|[xX.…_\-]{2,})?/i;
 
 const hasCodeLabel = (dom: Document) => tags(dom, 'w:p').some(p => CODE_RE.test(streamOf(p).text));
 
-export const loadDocxExam = async (data: ArrayBuffer | Uint8Array | Blob, fileName: string): Promise<MixDocument> => {
+export const loadDocxExam = async (data: ArrayBuffer | Uint8Array | Blob, fileName: string, mode: MixMode = 'general'): Promise<MixDocument> => {
   let zip: JSZip;
   try {
     // Kiểm tra CRC ngay khi mở để phát hiện file hỏng, thay vì lỗi kỹ thuật ở bước sau
@@ -1275,13 +1460,15 @@ export const loadDocxExam = async (data: ArrayBuffer | Uint8Array | Blob, fileNa
   }
 
   const dom = parseXml(xml);
-  const a = analyze(dom, env);
+  const a = analyze(dom, env, mode);
 
   if (!a.questions.length) {
     const inTables = tags(a.body, 'w:tc').some(tc => els(tc).some(e => e.nodeName === 'w:p' && QUESTION_LABEL.test(blockText(e))));
     throw new Error(inTables
       ? 'Các câu hỏi đang nằm trong bảng nên chưa trộn được. Hãy đưa câu hỏi ra ngoài bảng (Table → Convert to Text) rồi tải lên lại.'
-      : 'Không tìm thấy câu hỏi nào. Mỗi câu cần bắt đầu bằng "Câu 1.", "Câu 2:"... ở đầu dòng.');
+      : mode === 'english'
+        ? 'Không tìm thấy câu hỏi nào. Mỗi câu cần bắt đầu bằng "Question 1.", "Question 2:"... ở đầu dòng.'
+        : 'Không tìm thấy câu hỏi nào. Mỗi câu cần bắt đầu bằng "Câu 1.", "Câu 2:"... ở đầu dòng.');
   }
 
   const qs: MixQuestion[] = a.questions.map(q => ({
@@ -1302,7 +1489,7 @@ export const loadDocxExam = async (data: ArrayBuffer | Uint8Array | Blob, fileNa
 
   const notes = [...a.notes];
   const conflicts: string[] = [];
-  const keyText = a.answerBlocks.map(blockPlain).join('\n');
+  const keyText = normalizeKeyText(a.answerBlocks.map(blockPlain).join('\n'));
   const { answers: book, conflicts: keyConflicts } = parseAnswerKey(keyText, toFakeQuestions(qs));
   conflicts.push(...keyConflicts);
   a.questions.forEach((q, i) => {
@@ -1334,10 +1521,19 @@ export const loadDocxExam = async (data: ArrayBuffer | Uint8Array | Blob, fileNa
   if (!codeFound) notes.push('Đề gốc không ghi "Mã đề"; app sẽ thêm dòng "Mã đề: ..." ở đầu trang 1.');
   const hasFooter = tags(dom, 'w:footerReference').length > 0;
   const textWidth = textWidthOf(dom);
+  if (mode === 'english') {
+    const tagged = a.parts.filter(p => p.tagged).length;
+    notes.unshift(tagged
+      ? `Đã nhận ra ${a.parts.length} nhóm câu theo thẻ trong đề.`
+      : `Đề chưa có thẻ <g0>...<g3>, app tự chia thành ${a.parts.length} nhóm theo dòng yêu cầu. Hãy xem lại mức trộn của từng nhóm bên dưới.`);
+  }
+  const originalCode = [...tags(dom, 'w:p').map(p => streamOf(p).text), ...Object.values(headerFooters).flatMap(x => tags(parseXml(x), 'w:p').map(p => streamOf(p).text))]
+    .map(t => CODE_RE.exec(t)?.[2]).find(v => v && /^\d+$/.test(v)) || null;
 
   return {
+    mode, originalCode,
     fileName, zip, xml, headerFooters, env,
-    parts: a.parts.map(p => ({ index: p.index, title: p.title, kind: p.kind })),
+    parts: a.parts.map(p => ({ index: p.index, title: p.title, kind: p.kind, level: p.level ?? 3, fixed: p.fixed ?? true, tagged: !!p.tagged })),
     questions: qs,
     stats,
     notes,
@@ -1353,7 +1549,11 @@ export const loadDocxExam = async (data: ArrayBuffer | Uint8Array | Blob, fileNa
 };
 
 export const defaultOverrides = (doc: MixDocument): MixOverrides => {
-  const ov: MixOverrides = { answers: {}, pinned: {}, lockOptions: {}, linkNext: {} };
+  const ov: MixOverrides = { answers: {}, pinned: {}, lockOptions: {}, linkNext: {}, partLevels: {}, partFixed: {} };
+  doc.parts.forEach(p => {
+    ov.partLevels[p.index] = p.level;
+    ov.partFixed[p.index] = p.fixed;
+  });
   doc.questions.forEach((q, i) => {
     ov.answers[q.id] = q.answer;
     ov.pinned[q.id] = q.pinned;
@@ -1372,6 +1572,47 @@ export const missingMixAnswers = (doc: MixDocument, ov: MixOverrides): MixQuesti
     if (q.kind === 'tf') return v.length !== 4;
     return !v;
   });
+
+/* ---------------------------- Nhập đáp án riêng (đề Tiếng Anh) ---------------------------- */
+
+/**
+ * Đọc đáp án giáo viên dán vào: "1.A 2.B", "Q1: A", "Question 3 - C", hoặc chuỗi "D D A C", "DDAC".
+ * Trả về đáp án theo mã câu; đáp án không có chữ cái hợp lệ sẽ bị bỏ qua.
+ */
+export const parseAnswerText = (doc: MixDocument, text: string): Record<number, string> => {
+  const out: Record<number, string> = {};
+  const scored = doc.questions.filter(q => q.kind === 'mc');
+  const pairs = [...text.matchAll(/(?:Q(?:uestion)?|Câu)?\s*(\d{1,3})\s*[.:)\-–]*\s*([A-Fa-f])(?![A-Za-z])/g)];
+  if (pairs.length) {
+    for (const m of pairs) {
+      const q = scored.find(x => x.num === parseInt(m[1], 10));
+      if (q) out[q.id] = m[2].toUpperCase();
+    }
+    return out;
+  }
+  const letters = text.toUpperCase().replace(/[\s,;.|/\-]+/g, '');
+  if (!/^[A-F]+$/.test(letters)) return out;
+  [...scored].sort((x, y) => x.num - y.num).forEach((q, i) => { if (letters[i]) out[q.id] = letters[i]; });
+  return out;
+};
+
+/** Đọc đáp án từ file Word riêng, ví dụ bảng Q1, Q2... trong "ĐÁP ÁN VÀ HDC.docx". */
+export const readAnswerKeyFile = async (doc: MixDocument, data: ArrayBuffer | Uint8Array | Blob): Promise<Record<number, string>> => {
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(data as ArrayBuffer);
+  } catch {
+    throw new Error('Không mở được file đáp án. Hãy chọn file Word .docx.');
+  }
+  const file = zip.file('word/document.xml');
+  if (!file) throw new Error('File đáp án không phải văn bản Word .docx hợp lệ.');
+  const body = tags(parseXml(await file.async('string')), 'w:body')[0];
+  const text = normalizeKeyText(els(body).map(b => (b.nodeName === 'w:p' || b.nodeName === 'w:tbl' ? blockPlain(b) : '')).join('\n'));
+  const { answers } = parseAnswerKey(text, toFakeQuestions(doc.questions));
+  const out: Record<number, string> = {};
+  doc.questions.forEach(q => { if (q.kind === 'mc' && answers.mc[q.num]) out[q.id] = answers.mc[q.num]; });
+  return out;
+};
 
 /* ---------------------------- Lập kế hoạch trộn ---------------------------- */
 
@@ -1440,8 +1681,18 @@ const arrangeRegion = <T extends unknown[]>(region: T[], isPinned: (u: T) => boo
 
 const planOne = (doc: MixDocument, s: MixSettings, ov: MixOverrides, code: string, rand: () => number): VersionPlan => {
   const questions: PlannedQuestion[] = [];
-  for (const part of doc.parts) {
+  const english = doc.mode === 'english';
+  // Đề Tiếng Anh: các nhóm không có dấu # đổi chỗ cho nhau, nhóm có # đứng yên
+  const movable = doc.parts.filter(p => !ov.partFixed[p.index]);
+  const mixedParts = english && s.shuffleGroups ? shuffled(movable, rand) : movable;
+  let movableIndex = 0;
+  const partOrder = doc.parts.map(p => (ov.partFixed[p.index] ? p : mixedParts[movableIndex++]));
+  let counter = 0;
+  for (const part of partOrder) {
     const qs = doc.questions.filter(q => q.part === part.index);
+    const level = ov.partLevels[part.index] ?? 3;
+    const allowQuestions = s.shuffleQuestions && (level === 1 || level === 3);
+    const allowOptions = level === 2 || level === 3;
     // Gom thành đơn vị: câu lẻ hoặc nhóm câu đi liền nhau
     const units: MixQuestion[][] = [];
     qs.forEach((q, i) => {
@@ -1457,21 +1708,22 @@ const planOne = (doc: MixDocument, s: MixSettings, ov: MixOverrides, code: strin
       while (j < units.length && units[j][0].kind === kind) j++;
       const region = units.slice(i, j);
       const isPinned = (u: MixQuestion[]) => u.some(q => ov.pinned[q.id]);
-      orderedUnits.push(...(s.shuffleQuestions ? arrangeRegion(region, isPinned, rand) : region));
+      orderedUnits.push(...(allowQuestions ? arrangeRegion(region, isPinned, rand) : region));
       i = j;
     }
     const flat = orderedUnits.flat();
     flat.forEach((q, pos) => {
-      const newNum = qs[pos].num;
+      const newNum = english ? ++counter : qs[pos].num;
       let perm: number[] | null = null;
       const n = q.optionPreviews.length;
-      const shouldShuffle = !ov.lockOptions[q.id] && ((q.kind === 'mc' && s.shuffleOptions) || (q.kind === 'tf' && s.shuffleStatements));
+      const shouldShuffle = allowOptions && !ov.lockOptions[q.id] && ((q.kind === 'mc' && s.shuffleOptions) || (q.kind === 'tf' && s.shuffleStatements));
       if (n > 1 && shouldShuffle) perm = shuffled(Array.from({ length: n }, (_, x) => x), rand);
       const base = (ov.answers[q.id] || '').trim();
       let answer = base;
       if (q.kind === 'mc') {
         const orig = MC_LETTERS.indexOf(base);
-        if (orig < 0 || orig >= n) answer = '?';
+        // Câu chỉ để tô phiếu không có phương án riêng, chữ cái đáp án giữ nguyên
+        if (orig < 0 || (n > 0 && orig >= n) || (n === 0 && !english)) answer = '?';
         else answer = MC_LETTERS[perm ? perm.indexOf(orig) : orig];
       } else if (q.kind === 'tf') {
         if (base.length !== 4) answer = '?';
@@ -1481,13 +1733,13 @@ const planOne = (doc: MixDocument, s: MixSettings, ov: MixOverrides, code: strin
       } else {
         answer = '';
       }
-      questions.push({ id: q.id, part: part.index, origNum: q.num, newNum, kind: q.kind, perm, answer });
+      questions.push({ id: q.id, part: part.index, origNum: q.num, newNum, kind: q.kind, perm, answer, baseAnswer: base });
     });
   }
-  return { code, questions };
+  return { code, questions, partOrder: partOrder.map(p => p.index) };
 };
 
-const planSignature = (p: VersionPlan) => p.questions.map(q => `${q.id}:${q.perm ? q.perm.join('') : ''}`).join('|');
+const planSignature = (p: VersionPlan) => p.questions.map(q => `${q.id}:${q.perm ? q.perm.join('') : q.kind === 'mc' ? '0123' : ''}`).join('|');
 
 export const planVersions = (doc: MixDocument, s: MixSettings, ov: MixOverrides): VersionPlan[] => {
   const seen = new Set<string>();
@@ -1529,14 +1781,14 @@ const dropKid = (parent: Element, name: string) => {
   if (el) parent.removeChild(el);
 };
 
-const setParagraph = (p: Element, opt: { before: number; jc: string; hanging?: boolean; tabs?: number[]; keepInd?: boolean }) => {
+const setParagraph = (p: Element, opt: { before: number; jc: string; hanging?: boolean; tabs?: number[]; keepInd?: boolean; line?: string }) => {
   const dom = p.ownerDocument!;
   let pPr = kid(p, 'w:pPr');
   if (!pPr) {
     pPr = newW(dom, 'pPr');
     p.insertBefore(pPr, p.firstChild);
   }
-  putOrdered(pPr, wEl(dom, 'spacing', { before: String(opt.before), after: '0', line: '276', lineRule: 'auto' }), PPR_ORDER);
+  putOrdered(pPr, wEl(dom, 'spacing', { before: String(opt.before), after: '0', line: opt.line || '276', lineRule: 'auto' }), PPR_ORDER);
   putOrdered(pPr, wEl(dom, 'jc', { val: opt.jc }), PPR_ORDER);
   dropKid(pPr, 'w:contextualSpacing');
   if (opt.hanging) putOrdered(pPr, wEl(dom, 'ind', { left: '284', hanging: '284' }), PPR_ORDER);
@@ -1553,7 +1805,7 @@ const setParagraph = (p: Element, opt: { before: number; jc: string; hanging?: b
 const LEGACY_FONT = /^(?:\.Vn|VNI|VK|Symbol|Wingdings|Webdings|MT Extra|Cambria Math|MathType)/i;
 
 /** Đưa chữ về Times New Roman cỡ 12; phông cũ (TCVN3, VNI) phải giữ nguyên, đổi sẽ lỗi chữ. */
-const normalizeRunFont = (run: Element) => {
+const normalizeRunFont = (run: Element, size = '24') => {
   if (!kid(run, 'w:t') && !kid(run, 'w:tab')) return;
   const dom = run.ownerDocument!;
   let rPr = kid(run, 'w:rPr');
@@ -1567,18 +1819,18 @@ const normalizeRunFont = (run: Element) => {
   const fresh = wEl(dom, 'rFonts', { ascii: FONT, hAnsi: FONT, cs: FONT });
   if (eastAsia) setWAttr(fresh, 'eastAsia', eastAsia);
   putOrdered(rPr, fresh, RPR_ORDER);
-  putOrdered(rPr, wEl(dom, 'sz', { val: '24' }), RPR_ORDER);
-  putOrdered(rPr, wEl(dom, 'szCs', { val: '24' }), RPR_ORDER);
+  putOrdered(rPr, wEl(dom, 'sz', { val: size }), RPR_ORDER);
+  putOrdered(rPr, wEl(dom, 'szCs', { val: size }), RPR_ORDER);
 };
-const normalizeParagraphFonts = (p: Element) => els(p).filter(n => n.nodeName === 'w:r').forEach(normalizeRunFont);
+const normalizeParagraphFonts = (p: Element, size = '24') => els(p).filter(n => n.nodeName === 'w:r').forEach(r => normalizeRunFont(r, size));
 
-const textRun = (dom: Document, text: string, bold = false): Element => {
+const textRun = (dom: Document, text: string, bold = false, size = '24'): Element => {
   const r = newW(dom, 'r');
   const rPr = newW(dom, 'rPr');
   rPr.appendChild(wEl(dom, 'rFonts', { ascii: FONT, eastAsia: FONT, hAnsi: FONT, cs: FONT }));
   if (bold) rPr.appendChild(newW(dom, 'b'));
-  rPr.appendChild(wEl(dom, 'sz', { val: '24' }));
-  rPr.appendChild(wEl(dom, 'szCs', { val: '24' }));
+  rPr.appendChild(wEl(dom, 'sz', { val: size }));
+  rPr.appendChild(wEl(dom, 'szCs', { val: size }));
   r.appendChild(rPr);
   if (text === '\t') r.appendChild(newW(dom, 'tab'));
   else {
@@ -1706,7 +1958,7 @@ const canRebuild = (q: AQuestion, body: Element): boolean => {
 };
 
 /** Dựng lại các đoạn phương án theo đúng bố cục mẫu: 4 cột, 2 cột hoặc mỗi phương án một dòng. */
-const rebuildOptions = (q: AQuestion, perm: number[] | null, body: Element, textWidth: number) => {
+const rebuildOptions = (q: AQuestion, perm: number[] | null, body: Element, textWidth: number, size = '24') => {
   const slots = q.slots!;
   const dom = body.ownerDocument!;
   const order = perm || slots.map((_, i) => i);
@@ -1720,24 +1972,62 @@ const rebuildOptions = (q: AQuestion, perm: number[] | null, body: Element, text
   const stepPt = step / 20;
   // Ngưỡng đối chiếu từ mẫu: 4 cột khi nội dung rất ngắn, 2 cột khi vừa nửa dòng
   let perLine = 1;
+  // Đề Tiếng Anh (cỡ 11,5, phương án là chữ): nới ngưỡng để cụm từ ngắn vẫn xếp đủ 4 cột như mã đề mẫu
+  const textOnly = size !== '24';
+  const fourLimit = stepPt - (textOnly ? 32 : 57);
+  const twoLimit = stepPt * 2 - (textOnly ? 30 : 50);
   if (q.kind === 'mc' && n === 4 && !hasExtra) {
-    if (maxWidth <= stepPt - 57) perLine = 4;
-    else if (maxWidth <= stepPt * 2 - 50) perLine = 2;
+    if (maxWidth <= fourLimit) perLine = 4;
+    else if (maxWidth <= twoLimit) perLine = 2;
+  } else if (q.kind === 'mc' && n === 2 && !hasExtra && maxWidth <= twoLimit) {
+    perLine = 2;
   }
+  // Phương án cùng dòng với nhãn câu: "Question 1. A. ... B. ..."
+  const labelPara = slots.find(s => s.inLabel)?.para || null;
+  // Vị trí tab theo mã đề mẫu: nhãn câu đến 1417, mỗi cột 2098 với trang rộng 10205
+  const inlineStart = 1417;
+  const inlineStep = labelPara ? Math.floor((textWidth - inlineStart - 396) / n) : 0;
+  const inline = !!labelPara && !hasExtra && slots.every(s => s.para === labelPara) && q.kind === 'mc' && maxWidth <= inlineStep / 20 - 18;
 
   const tops: Element[] = [];
   for (const s of slots) {
     const top = topBlockOf(s.para, body);
-    if (!tops.includes(top)) tops.push(top);
+    if (top !== labelPara && !tops.includes(top)) tops.push(top);
   }
   const anchor = dom.createComment('options');
-  body.insertBefore(anchor, tops[0]);
+  body.insertBefore(anchor, tops[0] || labelPara!.nextSibling);
   // Khối trống và các đoạn cũ giữa các phương án không còn cần thiết
-  const firstIdx = q.retained.indexOf(tops[0]);
-  const lastIdx = q.retained.indexOf(tops[tops.length - 1]);
-  const between = q.retained.slice(firstIdx, lastIdx + 1).filter(b => !tops.includes(b) && isBlank(b));
+  const firstIdx = tops.length ? q.retained.indexOf(tops[0]) : q.retained.indexOf(labelPara!) + 1;
+  const lastIdx = tops.length ? q.retained.indexOf(tops[tops.length - 1]) : firstIdx - 1;
+  const between = tops.length ? q.retained.slice(firstIdx, lastIdx + 1).filter(b => !tops.includes(b) && isBlank(b)) : [];
   [...contents.flat(), ...extras.flat()].forEach(removeNode);
   [...tops, ...between].forEach(removeNode);
+  if (labelPara) {
+    // Trong đoạn nhãn câu chỉ giữ lại phần "Question n."
+    slots.filter(s => s.para === labelPara).forEach(s => [...s.label, ...s.lead, ...s.trail].forEach(removeNode));
+    const text = streamOf(labelPara).text;
+    const m = QUESTION_LABEL.exec(text);
+    if (m) {
+      // Tab sau nhãn câu cũng phải bỏ, nếu không phương án sẽ nhảy sang cột sau
+      let end = m[0].length + (LABEL_TAIL_RE.exec(text.slice(m[0].length))?.[0].length ?? 0);
+      while (end > m[0].length && /[\t\n]/.test(text[end - 1])) end--;
+      cutAt(labelPara, [end]);
+      streamOf(labelPara).segs.filter(seg => seg.start >= end && seg.end > seg.start).forEach(seg => removeNode(seg.node));
+    }
+  }
+  if (inline) {
+    setParagraph(labelPara!, { before: size === '24' ? 60 : 0, jc: 'left', tabs: slots.map((_, i) => inlineStart + inlineStep * i) });
+    for (let k = 0; k < n; k++) {
+      labelPara!.appendChild(textRun(dom, '\t', false, size));
+      labelPara!.appendChild(textRun(dom, `${slots[k].letter}. `, true, size));
+      contents[order[k]].forEach(node => labelPara!.appendChild(node));
+    }
+    removeNode(anchor);
+    q.rebuilt.add(labelPara!);
+    const gone = new Set<Element>([...tops, ...between]);
+    q.retained = q.retained.filter(b => !gone.has(b));
+    return;
+  }
 
   const tabStops = perLine === 4 ? [indent, indent + step, indent + step * 2, indent + step * 3]
     : perLine === 2 ? [indent, indent + step * 2] : [indent];
@@ -1746,9 +2036,9 @@ const rebuildOptions = (q: AQuestion, perm: number[] | null, body: Element, text
     const p = newW(dom, 'p');
     setParagraph(p, { before: 0, jc: q.kind === 'tf' ? 'both' : 'left', hanging: perLine === 1, tabs: tabStops });
     for (let k = i; k < Math.min(i + perLine, n); k++) {
-      p.appendChild(textRun(dom, '\t'));
+      p.appendChild(textRun(dom, '\t', false, size));
       const punct = q.kind === 'tf' ? ')' : '.';
-      p.appendChild(textRun(dom, `${slots[k].letter}${punct} `, true));
+      p.appendChild(textRun(dom, `${slots[k].letter}${punct} `, true, size));
       contents[order[k]].forEach(node => p.appendChild(node));
     }
     body.insertBefore(p, anchor);
@@ -1769,8 +2059,26 @@ const rebuildOptions = (q: AQuestion, perm: number[] | null, body: Element, text
 const SUB_ITEM_RE = /^\s*[a-d]\s*\)/;
 const LABEL_TAIL_RE = /^\s*(?:\([^)]*\)|\[[^\]]*\])?\s*[.:)\-–—]?\s*/;
 
+/** In đậm phần "Câu n." / "Question n." ở đầu đoạn. */
+const boldQuestionLabel = (b: Element) => {
+  const dom = b.ownerDocument!;
+  const text = streamOf(b).text;
+  const m = QUESTION_LABEL.exec(text);
+  if (!m) return;
+  const after = LABEL_TAIL_RE.exec(text.slice(m[0].length))?.[0].length || 0;
+  const start = m[1].length;
+  const end = m[0].length + after;
+  cutAt(b, [start, end]);
+  for (const seg of streamOf(b).segs) {
+    if (seg.node.nodeName === 'w:r' && seg.start >= start && seg.end <= end && seg.end > seg.start) {
+      const rPr = kid(seg.node, 'w:rPr');
+      if (rPr) putOrdered(rPr, newW(dom, 'b'), RPR_ORDER);
+    }
+  }
+};
+
 /** Câu dẫn: khoảng cách đoạn, in đậm nhãn "Câu n.", ý a), b) của câu tự luận lùi đầu dòng. */
-const normalizeQuestionBlocks = (q: AQuestion, newNum: number, env: DocEnv) => {
+const normalizeQuestionBlocks = (q: AQuestion, newNum: number, env: DocEnv, size = '24', line = '276') => {
   const dom = q.blocks[0].ownerDocument!;
   if (q.auto) {
     // Số câu tự động mang theo màu và thụt lề của danh sách Word: đổi thành chữ "Câu 1." như mẫu
@@ -1784,57 +2092,48 @@ const normalizeQuestionBlocks = (q: AQuestion, newNum: number, env: DocEnv) => {
       const style = wAttr(kid(pPr, 'w:pStyle'), 'val');
       if (style && env.styleNum.has(style)) dropKid(pPr, 'w:pStyle');
     }
-    first.insertBefore(textRun(dom, label, true), els(first).find(n => n.nodeName !== 'w:pPr') || null);
+    first.insertBefore(textRun(dom, label, true, size), els(first).find(n => n.nodeName !== 'w:pPr') || null);
   }
   q.retained = q.retained.filter(b => b === q.blocks[0] || !isBlank(b));
-  const slotted = new Set((q.slots || []).map(s => s.para));
+  // Đã dựng lại phương án thì đoạn cũ không còn; đoạn nhãn câu được chỉnh như câu dẫn bình thường
+  const slotted = new Set(q.rebuilt.size ? [] : (q.slots || []).map(s => s.para));
   q.lead.forEach(b => {
     if (b.nodeName !== 'w:p') return;
-    normalizeParagraphFonts(b);
-    setParagraph(b, { before: 60, jc: 'both' });
+    normalizeParagraphFonts(b, size);
+    setParagraph(b, { before: 60, jc: 'both', line });
   });
   q.retained.forEach((b, i) => {
     if (b.nodeName !== 'w:p') return;
     if (slotted.has(b) || q.rebuilt.has(b)) {
-      normalizeParagraphFonts(b);
+      normalizeParagraphFonts(b, size);
+      if (i === 0) boldQuestionLabel(b);
       return;
     }
     if (!els(b).some(n => n.nodeName === 'w:r' && kid(n, 'w:t')?.textContent) && !hasFloating(b)) return;
     const text = streamOf(b).text;
     const onlyVisual = !text.replace(/[\s\uFFFC]/g, '') && text.includes(PLACEHOLDER);
-    normalizeParagraphFonts(b);
+    normalizeParagraphFonts(b, size);
     if (i === 0) {
-      setParagraph(b, { before: 60, jc: 'both' });
-      const m = QUESTION_LABEL.exec(text);
-      if (m) {
-        const after = LABEL_TAIL_RE.exec(text.slice(m[0].length))?.[0].length || 0;
-        const start = m[1].length;
-        const end = m[0].length + after;
-        cutAt(b, [start, end]);
-        for (const seg of streamOf(b).segs) {
-          if (seg.node.nodeName === 'w:r' && seg.start >= start && seg.end <= end && seg.end > seg.start) {
-            const rPr = kid(seg.node, 'w:rPr');
-            if (rPr) putOrdered(rPr, newW(dom, 'b'), RPR_ORDER);
-          }
-        }
-      }
+      // Mã đề Tiếng Anh mẫu xếp các câu sát nhau, không có khoảng cách trước câu
+      setParagraph(b, { before: line === '240' ? 0 : 60, jc: 'both', line });
+      boldQuestionLabel(b);
     } else if (onlyVisual) {
-      setParagraph(b, { before: 0, jc: 'center' });
+      setParagraph(b, { before: 0, jc: 'center', line });
     } else if (SUB_ITEM_RE.test(text)) {
-      setParagraph(b, { before: 0, jc: 'both', hanging: true, tabs: [284] });
-      if (!text.startsWith('\t')) b.insertBefore(textRun(dom, '\t'), els(b).find(n => n.nodeName !== 'w:pPr') || null);
+      setParagraph(b, { before: 0, jc: 'both', hanging: true, tabs: [284], line });
+      if (!text.startsWith('\t')) b.insertBefore(textRun(dom, '\t', false, size), els(b).find(n => n.nodeName !== 'w:pPr') || null);
     } else {
-      setParagraph(b, { before: 0, jc: 'both' });
+      setParagraph(b, { before: 0, jc: 'both', line });
     }
   });
 };
 
 /** Tiêu đề đề thi đúng như mẫu: 2 cột thông tin, dòng họ tên, số báo danh và mã đề. */
-const examHeaderXml = (info: ExamInfo, code: string, textWidth: number, ns: string): string => {
+const examHeaderXml = (info: ExamInfo, code: string, textWidth: number, ns: string, size = '24'): string => {
   const esc = (v: string) => v.trim().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const fonts = `<w:rFonts w:ascii="${FONT}" w:eastAsia="${FONT}" w:hAnsi="${FONT}" w:cs="${FONT}"/>`;
-  const normal = `<w:rPr>${fonts}<w:sz w:val="24"/></w:rPr>`;
-  const bold = `<w:rPr>${fonts}<w:b/><w:sz w:val="24"/></w:rPr>`;
+  const normal = `<w:rPr>${fonts}<w:sz w:val="${size}"/></w:rPr>`;
+  const bold = `<w:rPr>${fonts}<w:b/><w:sz w:val="${size}"/></w:rPr>`;
   const italic = `<w:rPr>${fonts}<w:i/></w:rPr>`;
   const lines = (items: Array<[string, string]>) => items.map(([rPr, inner], i) => `<w:r>${rPr}${i ? '<w:br/>' : ''}${inner}</w:r>`).join('');
   const t = (v: string) => `<w:t xml:space="preserve">${v}</w:t>`;
@@ -1892,11 +2191,11 @@ const markPageCountDirty = (root: Element) => {
 /** Chân trang như mẫu: đường kẻ, "Mã đề ..." bên trái, "Trang x/y" bên phải. */
 const FOOTER_PART = 'word/footerMix.xml';
 const FOOTER_RID = 'rIdMixFooter';
-const footerXml = (code: string, textWidth: number): string => {
+const footerXml = (code: string, textWidth: number, pageWord = 'Trang'): string => {
   const rPr = `<w:rPr><w:rFonts w:ascii="${FONT}" w:eastAsia="${FONT}" w:hAnsi="${FONT}" w:cs="${FONT}"/><w:sz w:val="24"/></w:rPr>`;
   const field = (name: string, shown: string) =>
     `<w:r>${rPr}<w:fldChar w:fldCharType="begin"/></w:r><w:r>${rPr}<w:instrText>${name}</w:instrText></w:r><w:r>${rPr}<w:fldChar w:fldCharType="separate"/></w:r><w:r>${rPr}<w:t>${shown}</w:t></w:r><w:r>${rPr}<w:fldChar w:fldCharType="end"/></w:r>`;
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="${textWidth - 20}"/></w:tabs><w:spacing w:after="0" w:line="276" w:lineRule="auto"/></w:pPr><w:r><w:pict><v:line id="_x0000_s2049" style="position:absolute;z-index:251658240" from="0,0" to="${textWidth / 20}pt,0"/></w:pict></w:r><w:r>${rPr}<w:t>Mã đề ${code}</w:t></w:r><w:r>${rPr}<w:tab/><w:t xml:space="preserve">Trang </w:t></w:r>${field('PAGE', '1')}<w:r>${rPr}<w:t>/</w:t></w:r>${field('NUMPAGES', '1')}</w:p></w:ftr>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="${textWidth - 20}"/></w:tabs><w:spacing w:after="0" w:line="276" w:lineRule="auto"/></w:pPr><w:r><w:pict><v:line id="_x0000_s2049" style="position:absolute;z-index:251658240" from="0,0" to="${textWidth / 20}pt,0"/></w:pict></w:r><w:r>${rPr}<w:t>Mã đề ${code}</w:t></w:r><w:r>${rPr}<w:tab/><w:t xml:space="preserve">${pageWord} </w:t></w:r>${field('PAGE', '1')}<w:r>${rPr}<w:t>/</w:t></w:r>${field('NUMPAGES', '1')}</w:p></w:ftr>`;
 };
 
 const addFooterReference = (dom: Document) => {
@@ -1963,6 +2262,41 @@ const renumberLead = (lead: Element[], map: Map<number, number>) => {
   }
 };
 
+/**
+ * Đề Tiếng Anh: đánh số theo mã đề trong lời dẫn và bài đọc của nhóm.
+ * "(####)" là chỗ trống thứ n của nhóm, "###s"/"###e" là câu đầu/cuối, "(9)___" và "from 9 to 13" đổi theo số mới.
+ */
+const renumberGroupText = (heading: Element[], planned: PlannedQuestion[]) => {
+  if (!planned.length) return;
+  const byOrig = [...planned].sort((x, y) => x.origNum - y.origNum);
+  const newNums = planned.map(q => q.newNum);
+  const start = Math.min(...newNums);
+  const end = Math.max(...newNums);
+  const map = new Map(planned.map(q => [q.origNum, q.newNum]));
+  let blank = 0;
+  const pattern = /###s|###e|\(\s*#{3,}\s*\)|#{4,}|\((\d{1,3})\)(?=\s*[_…])|\bfrom\s+(\d{1,3})\s+to\s+(\d{1,3})\b/gi;
+  for (const p of collectBlockParagraphs(heading)) {
+    const text = streamOf(p).text;
+    const reps: Array<[number, number, string]> = [];
+    for (const m of text.matchAll(pattern)) {
+      const token = m[0];
+      const at = m.index!;
+      if (/^###s$/i.test(token)) reps.push([at, token.length, String(start)]);
+      else if (/^###e$/i.test(token)) reps.push([at, token.length, String(end)]);
+      else if (token.includes('#')) {
+        const q = byOrig[blank++];
+        if (q) reps.push([at, token.length, token.startsWith('(') ? `(${q.newNum})` : String(q.newNum)]);
+      } else if (m[1]) {
+        const fresh = map.get(parseInt(m[1], 10));
+        if (fresh !== undefined) reps.push([at, token.length, `(${fresh})`]);
+      } else if (map.has(parseInt(m[2], 10)) && map.has(parseInt(m[3], 10))) {
+        reps.push([at, token.length, `from ${start} to ${end}`]);
+      }
+    }
+    for (const [at, len, value] of reps.reverse()) replaceRange(p, at, at + len, value);
+  }
+};
+
 const ensurePPr = (p: Element): Element => {
   let pPr = kid(p, 'w:pPr');
   if (!pPr) {
@@ -2019,9 +2353,13 @@ const applyCodeToParagraphs = (dom: Document, code: string): boolean => {
   return found;
 };
 
-const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): string => {
+const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): { xml: string; verifyXml: string } => {
   const dom = parseXml(doc.xml);
-  const a = analyze(dom, doc.env);
+  const english = doc.mode === 'english';
+  // Đề Tiếng Anh theo mã đề mẫu: cỡ 11,5, giãn dòng đơn; các môn khác cỡ 12
+  const fontSize = english ? '23' : '24';
+  const bodyLine = english ? '240' : '276';
+  const a = analyze(dom, doc.env, doc.mode);
   const byId = new Map(a.questions.map(q => [q.id, q]));
 
   if (s.normalizeFormat) {
@@ -2035,7 +2373,7 @@ const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): s
     const q = byId.get(pq.id)!;
     if (!q.slots) continue;
     cleanMarks(q.slots, q.mark);
-    if (s.normalizeFormat && canRebuild(q, a.body)) rebuildOptions(q, pq.perm, a.body, textWidth);
+    if (s.normalizeFormat && canRebuild(q, a.body)) rebuildOptions(q, pq.perm, a.body, textWidth, fontSize);
     else if (pq.perm) applyPerm(q.slots, pq.perm, dom);
   }
 
@@ -2045,7 +2383,7 @@ const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): s
   els(body).forEach(removeNode);
   if (hasExamInfo(s.examInfo)) {
     const ns = dom.documentElement.namespaceURI || '';
-    const header = parseXml(examHeaderXml(s.examInfo, plan.code, textWidth, ns)).documentElement;
+    const header = parseXml(examHeaderXml(s.examInfo, plan.code, textWidth, ns, fontSize)).documentElement;
     body.appendChild(dom.importNode(header, true));
     // Ngắt section ở tiêu đề cũ (ví dụ tiêu đề 1 cột, thân đề 2 cột) vẫn phải được giữ
     for (const n of a.front) {
@@ -2057,10 +2395,27 @@ const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): s
     a.front.forEach(n => body.appendChild(n));
   }
 
-  for (const part of a.parts) {
+  // Thẻ nhóm tạm để bước đối chiếu đọc lại đúng ranh giới nhóm, sẽ bỏ khỏi file giao cho giáo viên
+  const markers: Element[] = [];
+  const partSequence = plan.partOrder ? plan.partOrder.map(i => a.parts[i]) : a.parts;
+  for (const part of partSequence) {
     if (part.outline) continue;
+    if (english) {
+      const marker = newW(dom, 'p');
+      marker.appendChild(textRun(dom, '<g3>'));
+      body.appendChild(marker);
+      markers.push(marker);
+      renumberGroupText(part.heading, plan.questions.filter(q => q.part === part.index));
+    }
     part.heading.forEach((n, i) => {
-      if (s.normalizeFormat && n.nodeName === 'w:p' && !isBlank(n)) {
+      if (english && s.normalizeFormat && n.nodeName === 'w:p' && !isBlank(n)) {
+        // Bài đọc giữ nguyên căn lề và thụt đầu dòng; chỉ dòng yêu cầu được giữ liền phần sau
+        normalizeParagraphFonts(n, fontSize);
+        const isInstruction = part.heading.slice(0, i).every(isBlank);
+        const pPr = ensurePPr(n);
+        putOrdered(pPr, wEl(dom, 'spacing', { before: isInstruction ? '100' : '0', after: '0', line: bodyLine, lineRule: 'auto' }), PPR_ORDER);
+        if (isInstruction) putOrdered(pPr, newW(dom, 'keepNext'), PPR_ORDER);
+      } else if (s.normalizeFormat && n.nodeName === 'w:p' && !isBlank(n)) {
         normalizeParagraphFonts(n);
         setParagraph(n, { before: i === 0 ? 100 : 0, jc: i === 0 ? 'left' : 'both' });
         const pPr = kid(n, 'w:pPr');
@@ -2075,7 +2430,7 @@ const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): s
       if (q.lead.length) renumberLead(q.lead, numMap);
       const firstBlock = q.blocks[0];
       if (!q.auto) renumberQuestion(firstBlock, pq.newNum);
-      if (s.normalizeFormat) normalizeQuestionBlocks(q, pq.newNum, doc.env);
+      if (s.normalizeFormat) normalizeQuestionBlocks(q, pq.newNum, doc.env, fontSize, bodyLine);
       const retained = [...q.retained].sort((x, y) => (docOrder.get(x) ?? 0) - (docOrder.get(y) ?? 0));
       if (s.keepTogether) {
         const seq = [...q.lead, ...retained];
@@ -2090,7 +2445,7 @@ const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): s
   a.tail.forEach(n => {
     if (s.normalizeFormat && isBlank(n)) return;
     if (s.normalizeFormat && n.nodeName === 'w:p' && TAIL_END_RE.test(blockText(n))) {
-      normalizeParagraphFonts(n);
+      normalizeParagraphFonts(n, fontSize);
       setParagraph(n, { before: 100, jc: 'center' });
     }
     body.appendChild(n);
@@ -2116,7 +2471,7 @@ const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): s
   if (s.normalizeFormat && !a.tail.some(n => TAIL_END_RE.test(blockText(n)))) {
     const end = newW(dom, 'p');
     setParagraph(end, { before: 100, jc: 'center' });
-    const run = textRun(dom, '---------- HẾT ----------', true);
+    const run = textRun(dom, english ? '------ THE END ------' : '---------- HẾT ----------', true, fontSize);
     putOrdered(kid(run, 'w:rPr')!, newW(dom, 'i'), RPR_ORDER);
     end.appendChild(run);
     body.appendChild(end);
@@ -2132,17 +2487,20 @@ const buildVersionXml = (doc: MixDocument, plan: VersionPlan, s: MixSettings): s
     setWAttr(jc, 'val', 'right');
     pPr.appendChild(jc);
     p.appendChild(pPr);
-    p.appendChild(textRun(dom, `Mã đề: ${plan.code}`, true));
+    p.appendChild(textRun(dom, `Mã đề: ${plan.code}`, true, fontSize));
     body.insertBefore(p, body.firstChild);
   }
-  return serializeXml(dom);
+  const verifyXml = serializeXml(dom);
+  if (!markers.length) return { xml: verifyXml, verifyXml };
+  markers.forEach(removeNode);
+  return { xml: serializeXml(dom), verifyXml };
 };
 
 /** Đọc lại file vừa tạo, đối chiếu với đề gốc: đúng câu, đúng phương án, đúng đáp án, không lộ đáp án. */
 const verifyVersion = (doc: MixDocument, plan: VersionPlan, xml: string): string[] => {
   const problems: string[] = [];
-  const orig = analyze(parseXml(doc.xml), doc.env);
-  const out = analyze(parseXml(xml), doc.env);
+  const orig = analyze(parseXml(doc.xml), doc.env, doc.mode);
+  const out = analyze(parseXml(xml), doc.env, doc.mode);
   const origById = new Map(orig.questions.map(q => [q.id, q]));
   if (out.questions.length !== plan.questions.length) {
     problems.push(`Số câu sau khi trộn là ${out.questions.length}, đề gốc có ${plan.questions.length}.`);
@@ -2177,8 +2535,8 @@ const verifyVersion = (doc: MixDocument, plan: VersionPlan, xml: string): string
 };
 
 /** Thêm phần chân trang vào gói Word; chỉ khai báo một lần trong rels và Content_Types. */
-const addFooterPart = async (doc: MixDocument, code: string) => {
-  doc.zip.file(FOOTER_PART, footerXml(code, doc.normalizedTextWidth));
+const addFooterPart = async (doc: MixDocument, code: string, pageWord: string) => {
+  doc.zip.file(FOOTER_PART, footerXml(code, doc.normalizedTextWidth, pageWord));
   const relsName = 'word/_rels/document.xml.rels';
   const rels = await doc.zip.file(relsName)!.async('string');
   if (!rels.includes(FOOTER_RID)) {
@@ -2192,16 +2550,17 @@ const addFooterPart = async (doc: MixDocument, code: string) => {
 };
 
 export const buildVersion = async (doc: MixDocument, plan: VersionPlan, s: MixSettings): Promise<BuiltVersion> => {
-  const xml = buildVersionXml(doc, plan, s);
-  const problems = verifyVersion(doc, plan, xml);
+  const { xml, verifyXml } = buildVersionXml(doc, plan, s);
+  const problems = verifyVersion(doc, plan, verifyXml);
+  const pageWord = doc.mode === 'english' ? 'Page' : 'Trang';
   doc.zip.file('word/document.xml', xml);
   for (const [name, content] of Object.entries(doc.headerFooters)) {
     const dom = parseXml(content);
     const blankFooter = /footer/.test(name) && !['w:t', 'w:instrText', 'w:fldSimple', 'w:drawing', 'w:pict'].some(tag => tags(dom, tag).length > 0);
-    if (s.normalizeFormat && blankFooter) doc.zip.file(name, footerXml(plan.code, doc.normalizedTextWidth));
+    if (s.normalizeFormat && blankFooter) doc.zip.file(name, footerXml(plan.code, doc.normalizedTextWidth, pageWord));
     else doc.zip.file(name, applyCodeToParagraphs(dom, plan.code) ? serializeXml(dom) : content);
   }
-  if (s.normalizeFormat && !doc.hasFooter) await addFooterPart(doc, plan.code);
+  if (s.normalizeFormat && !doc.hasFooter) await addFooterPart(doc, plan.code, pageWord);
   else if (doc.zip.file(FOOTER_PART)) doc.zip.remove(FOOTER_PART);
   const blob = await doc.zip.generateAsync({ type: 'blob', mimeType: DOCX_MIME, compression: 'DEFLATE', compressionOptions: { level: 6 } });
   return { plan, blob, problems };
@@ -2244,6 +2603,7 @@ const buildWorkbook = async (sheets: Array<{ name: string; rows: Cell[][]; width
 };
 
 const partLabel = (doc: MixDocument, part: number): string => {
+  if (doc.mode === 'english') return `Nhóm ${part + 1}`;
   if (doc.parts.length <= 1) return '';
   const title = doc.parts[part]?.title || '';
   const m = /^\s*(?:PHẦN|Phần|PART|Part)\s+(\S+?)[.:\s]/.exec(`${title} `);
@@ -2267,9 +2627,29 @@ export const answerRows = (plans: VersionPlan[]): Cell[][] => {
   return rows;
 };
 
+/**
+ * Bảng đáp án Tiếng Anh theo file mẫu: mỗi mã đề một hàng, cột là số câu, hàng đầu là đề gốc.
+ */
+export const answerRowsEnglish = (doc: MixDocument, plans: VersionPlan[]): Cell[][] => {
+  const first = plans[0];
+  if (!first) return [];
+  const scored = first.questions.filter(q => q.kind !== 'essay').map(q => q.newNum).sort((x, y) => x - y);
+  const rows: Cell[][] = [['Đề\\câu', ...scored]];
+  const original = [...first.questions].filter(q => q.kind !== 'essay').sort((x, y) => x.origNum - y.origNum).map(q => q.baseAnswer || '?');
+  rows.push([doc.originalCode || 'Đề gốc', ...original]);
+  for (const p of [...plans].sort((x, y) => Number(x.code) - Number(y.code))) {
+    const byNum = new Map(p.questions.map(q => [q.newNum, q.answer]));
+    rows.push([p.code, ...scored.map(n => byNum.get(n) || '?')]);
+  }
+  return rows;
+};
+
 export const buildAnswerWorkbook = (doc: MixDocument, built: BuiltVersion[], settings: MixSettings): Promise<Blob> => {
   const plans = built.map(b => b.plan);
-  const answerSheet = answerRows(plans);
+  const heading = [settings.examInfo?.examName, settings.examInfo?.subject].filter(v => v && v.trim()).join(' ').toUpperCase();
+  const answerSheet: Cell[][] = doc.mode === 'english'
+    ? [[`ĐÁP ÁN ${heading}`.trim()], ...answerRowsEnglish(doc, plans)]
+    : answerRows(plans);
   const mapping: Cell[][] = [['Mã đề', 'Phần', 'Câu trong mã đề', 'Câu ở đề gốc', 'Dạng', 'Đáp án đề gốc', 'Đáp án mã đề', 'Thứ tự phương án (mới ← gốc)']];
   const original = new Map(doc.questions.map(q => [q.id, q]));
   for (const p of plans) {

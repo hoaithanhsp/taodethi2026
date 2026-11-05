@@ -2850,7 +2850,7 @@ const App: React.FC = () => {
                   </div>
                   <h3 className="text-xl font-extrabold text-orange-900 mb-2">Trộn đề Word</h3>
                   <p className="text-sm text-orange-800/70 mb-5 leading-relaxed">
-                    Upload file đề Toán, Lí, Hóa, Sinh → tạo nhiều mã đề và bảng đáp án Excel
+                    Upload file đề Toán, Lí, Hóa, Sinh, Tiếng Anh → tạo nhiều mã đề và bảng đáp án Excel
                   </p>
                   <div className="space-y-1.5 mb-6">
                     <div className="mode-card-feature"><div className="dot" style={{ background: '#ea580c' }} /><span>Giữ nguyên MathType & hình ảnh</span></div>

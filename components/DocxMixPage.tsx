@@ -3,28 +3,55 @@ import JSZip from 'jszip';
 import { AlertTriangle, CheckCircle2, ChevronDown, Download, FileSpreadsheet, FileText, Link2, Lock, RefreshCw, ShieldCheck, Shuffle, Upload, X } from 'lucide-react';
 import {
   answerRows,
+  answerRowsEnglish,
   BuiltVersion,
   buildAnswerWorkbook,
   buildVersion,
   defaultOverrides,
   EMPTY_EXAM_INFO,
   ExamInfo,
+  GroupLevel,
   hasExamInfo,
   loadDocxExam,
   missingMixAnswers,
   MixDocument,
   MixKind,
+  MixMode,
   MixOverrides,
   MixQuestion,
   MixSettings,
+  parseAnswerText,
   planVersions,
+  readAnswerKeyFile,
 } from '../services/docxExamMixer';
 
 const MAX_VERSIONS = 24;
-const ANSWER_FILE = 'ĐÁP ÁN CÁC MÃ ĐỀ.xlsx';
-const TEMPLATE_URL = '/templates/Mau_de_tron_de.docx';
-const TEMPLATE_FILE = 'File mẫu trộn đề.docx';
-const versionFile = (code: string) => `Mã Đề_${code}.docx`;
+const MODE_CONFIG: Record<MixMode, { tab: string; answerFile: string; templateUrl: string; templateFile: string; versionFile: (code: string) => string; hint: string; subject: string }> = {
+  general: {
+    tab: 'Toán, Lí, Hóa, Sinh và các môn khác',
+    answerFile: 'ĐÁP ÁN CÁC MÃ ĐỀ.xlsx',
+    templateUrl: '/templates/Mau_de_tron_de.docx',
+    templateFile: 'File mẫu trộn đề.docx',
+    versionFile: code => `Mã Đề_${code}.docx`,
+    hint: 'Chỉ nhận file .docx. Mỗi câu bắt đầu bằng "Câu 1.", phương án "A.", ý Đúng – Sai "a)".',
+    subject: 'Toán',
+  },
+  english: {
+    tab: 'Tiếng Anh',
+    answerFile: 'Dap_an_excel.xlsx',
+    templateUrl: '/templates/Mau_de_tieng_anh.docx',
+    templateFile: 'File mẫu trộn đề tiếng Anh.docx',
+    versionFile: code => `Ma_de_${code}.docx`,
+    hint: 'Chỉ nhận file .docx. Mỗi câu bắt đầu bằng "Question 1.", phương án "A.", có thể chia nhóm bằng thẻ <g0> đến <g3>.',
+    subject: 'Tiếng Anh',
+  },
+};
+const GROUP_LEVELS: Array<{ value: GroupLevel; label: string }> = [
+  { value: 3, label: 'Đảo câu và phương án (g3)' },
+  { value: 2, label: 'Chỉ đảo phương án (g2)' },
+  { value: 1, label: 'Chỉ đảo câu (g1)' },
+  { value: 0, label: 'Không trộn (g0)' },
+];
 const KIND_LABEL: Record<MixKind, string> = { mc: 'Trắc nghiệm', tf: 'Đúng – Sai', short: 'Trả lời ngắn', essay: 'Tự luận' };
 const SOURCE_LABEL: Record<string, string> = { key: 'từ bảng đáp án', solution: 'từ lời giải', mark: 'từ dấu trong đề' };
 
@@ -57,11 +84,15 @@ const normalizeMc = (v: string) => v.toUpperCase().replace(/[^A-F]/g, '').slice(
 
 const answerValid = (q: MixQuestion, v: string) => {
   if (q.kind === 'tf') return v.length === 4;
-  if (q.kind === 'mc') return !!v && q.optionPreviews.length > 'ABCDEF'.indexOf(v);
+  if (q.kind === 'mc') return !!v && (q.optionPreviews.length === 0 || q.optionPreviews.length > 'ABCDEF'.indexOf(v));
   return !!v.trim();
 };
 
 const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
+  const [mode, setMode] = useState<MixMode>('general');
+  const [answerText, setAnswerText] = useState('');
+  const [answerNote, setAnswerNote] = useState('');
+  const answerFileInput = useRef<HTMLInputElement>(null);
   const [doc, setDoc] = useState<MixDocument | null>(null);
   const [ov, setOv] = useState<MixOverrides | null>(null);
   const [settings, setSettings] = useState<MixSettings>({
@@ -72,6 +103,7 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
     shuffleStatements: true,
     keepTogether: true,
     normalizeFormat: true,
+    shuffleGroups: true,
     examInfo: { ...DEFAULT_EXAM_INFO },
     seed: newSeed(),
   });
@@ -85,7 +117,12 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
   const missing = useMemo(() => (doc && ov ? missingMixAnswers(doc, ov) : []), [doc, ov]);
   const warned = useMemo(() => (doc ? doc.questions.filter(q => q.warnings.length > 0) : []), [doc]);
   const problemCount = built.reduce((sum, b) => sum + b.problems.length, 0);
-  const rows = useMemo(() => answerRows(built.map(b => b.plan)), [built]);
+  const config = MODE_CONFIG[mode];
+  const rows = useMemo(() => {
+    const plans = built.map(b => b.plan);
+    return doc?.mode === 'english' ? answerRowsEnglish(doc, plans) : answerRows(plans);
+  }, [built, doc]);
+  const defaultInfo = useMemo(() => ({ ...DEFAULT_EXAM_INFO, subject: config.subject }), [config.subject]);
   const clampedCount = Math.min(MAX_VERSIONS, Math.max(1, settings.count || 1));
 
   const handleFile = async (file: File | undefined) => {
@@ -99,12 +136,14 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
     setBusy('Đang đọc đề...');
     await nextFrame();
     try {
-      const loaded = await loadDocxExam(file, file.name);
+      const loaded = await loadDocxExam(file, file.name, mode);
       setDoc(loaded);
       setOv(defaultOverrides(loaded));
       // Ưu tiên thông tin đọc được từ tiêu đề đề gốc, ô nào không đọc được mới dùng chữ mẫu
-      setSettings(s => ({ ...s, seed: newSeed(), examInfo: { ...DEFAULT_EXAM_INFO, ...loaded.detectedInfo } }));
+      setSettings(s => ({ ...s, seed: newSeed(), examInfo: { ...defaultInfo, ...loaded.detectedInfo } }));
       setExpanded(null);
+      setAnswerText('');
+      setAnswerNote('');
     } catch (e: any) {
       setDoc(null);
       setOv(null);
@@ -121,7 +160,7 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
   };
   const updateOv = (fn: (draft: MixOverrides) => void) => {
     if (!ov) return;
-    const draft: MixOverrides = { answers: { ...ov.answers }, pinned: { ...ov.pinned }, lockOptions: { ...ov.lockOptions }, linkNext: { ...ov.linkNext } };
+    const draft: MixOverrides = { answers: { ...ov.answers }, pinned: { ...ov.pinned }, lockOptions: { ...ov.lockOptions }, linkNext: { ...ov.linkNext }, partLevels: { ...ov.partLevels }, partFixed: { ...ov.partFixed } };
     fn(draft);
     setOv(draft);
     setBuilt([]);
@@ -151,7 +190,7 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
 
   const downloadExcel = async () => {
     if (!doc) return;
-    saveBlob(await buildAnswerWorkbook(doc, built, settings), ANSWER_FILE);
+    saveBlob(await buildAnswerWorkbook(doc, built, settings), config.answerFile);
   };
 
   const downloadAll = async () => {
@@ -159,8 +198,8 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
     setBusy('Đang đóng gói...');
     try {
       const zip = new JSZip();
-      built.forEach(b => zip.file(versionFile(b.plan.code), b.blob));
-      zip.file(ANSWER_FILE, await buildAnswerWorkbook(doc, built, settings));
+      built.forEach(b => zip.file(config.versionFile(b.plan.code), b.blob));
+      zip.file(config.answerFile, await buildAnswerWorkbook(doc, built, settings));
       const base = doc.fileName.replace(/\.docx$/i, '').replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'De_thi';
       saveBlob(await zip.generateAsync({ type: 'blob' }), `${base}_Tron_de.zip`);
     } catch (e: any) {
@@ -175,14 +214,59 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
     setOv(null);
     setBuilt([]);
     setError('');
+    setAnswerText('');
+    setAnswerNote('');
+  };
+
+  const switchMode = (next: MixMode) => {
+    if (next === mode) return;
+    reset();
+    setMode(next);
+    setSettings(s => ({ ...s, examInfo: { ...DEFAULT_EXAM_INFO, subject: MODE_CONFIG[next].subject } }));
+  };
+
+  const applyAnswers = (found: Record<number, string>, source: string) => {
+    const count = Object.keys(found).length;
+    if (!count) {
+      setAnswerNote(`Không đọc được đáp án nào ${source}.`);
+      return;
+    }
+    updateOv(d => { Object.assign(d.answers, found); });
+    setAnswerNote(`Đã nhập đáp án cho ${count} câu ${source}. Hãy kiểm tra lại ở danh sách bên dưới.`);
+  };
+
+  const handleAnswerFile = async (file: File | undefined) => {
+    if (!file || !doc) return;
+    try {
+      applyAnswers(await readAnswerKeyFile(doc, file), `từ file ${file.name}`);
+    } catch (e: any) {
+      setAnswerNote(e?.message || 'Không đọc được file đáp án.');
+    } finally {
+      if (answerFileInput.current) answerFileInput.current.value = '';
+    }
   };
 
   const inputCls = 'border border-slate-300 rounded-md px-2 py-1.5 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-orange-400';
 
   return (
     <div className="max-w-5xl mx-auto space-y-4 pb-8">
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Chọn môn trộn đề">
+        {(['general', 'english'] as MixMode[]).map(m => (
+          <button
+            key={m}
+            type="button"
+            role="tab"
+            aria-selected={mode === m}
+            onClick={() => switchMode(m)}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold border transition-colors ${mode === m ? 'bg-orange-600 border-orange-600 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-orange-50'}`}
+          >
+            {MODE_CONFIG[m].tab}
+          </button>
+        ))}
+      </div>
+
       <div className="card-elevated p-5">
-        <h2 className="text-xl font-extrabold text-slate-900">Trộn đề từ file Word</h2>
+        <h2 className="text-xl font-extrabold text-slate-900">{mode === 'english' ? 'Trộn đề Tiếng Anh từ file Word' : 'Trộn đề từ file Word'}</h2>
         <p className="text-sm text-slate-600 mt-1">
           Giữ nguyên công thức MathType, Word Equation, hình ảnh và bảng. Tạo nhiều mã đề kèm bảng đáp án Excel.
         </p>
@@ -201,23 +285,32 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
         >
           <Upload className="w-10 h-10 text-orange-500 mx-auto mb-3" />
           <p className="font-semibold text-slate-800">Kéo thả file đề gốc vào đây</p>
-          <p className="text-sm text-slate-500 mt-1 mb-4">Chỉ nhận file .docx. Mỗi câu bắt đầu bằng "Câu 1.", phương án "A.", ý Đúng – Sai "a)".</p>
+          <p className="text-sm text-slate-500 mt-1 mb-4">{config.hint}</p>
           <button type="button" onClick={() => fileInput.current?.click()} disabled={!!busy} className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-700 text-white font-semibold text-sm disabled:opacity-50">
             Chọn file Word
           </button>
           <input ref={fileInput} type="file" accept=".docx" className="hidden" aria-label="Chọn file đề gốc" onChange={e => handleFile(e.target.files?.[0])} />
           <div className="mt-3 text-sm text-slate-600">
             Chưa biết trình bày đề thế nào?{' '}
-            <a href={TEMPLATE_URL} download={TEMPLATE_FILE} className="inline-flex items-center gap-1 font-semibold text-orange-700 hover:text-orange-900 underline underline-offset-2">
+            <a href={config.templateUrl} download={config.templateFile} className="inline-flex items-center gap-1 font-semibold text-orange-700 hover:text-orange-900 underline underline-offset-2">
               <Download className="w-4 h-4" /> Tải file mẫu (.docx)
             </a>
             <span className="block text-xs text-slate-500 mt-0.5">Soạn đề theo mẫu rồi tải lên để app đọc đúng câu hỏi và đáp án.</span>
           </div>
+          {mode === 'english' && (
+            <div className="mt-5 text-left max-w-xl mx-auto text-xs text-slate-600 space-y-1">
+              <p className="font-semibold text-slate-700">Chia nhóm câu bằng thẻ đặt riêng một dòng ở đầu mỗi nhóm:</p>
+              <p>• <b>&lt;g3&gt;</b> đảo cả câu và phương án; <b>&lt;g2&gt;</b> chỉ đảo phương án; <b>&lt;g1&gt;</b> chỉ đảo câu; <b>&lt;g0&gt;</b> không trộn.</p>
+              <p>• Thêm dấu # để cố định vị trí nhóm: <b>&lt;#g0&gt;</b>, <b>&lt;#g2&gt;</b>... Nhóm không có # sẽ đổi chỗ cho nhau.</p>
+              <p>• Trong bài đọc: <b>(####)</b> là chỗ trống tự đánh số; <b>###s</b>, <b>###e</b> là câu đầu và câu cuối của nhóm.</p>
+              <p>• Đề chưa có thẻ: app tự chia nhóm theo dòng "Read the following...", "Mark the letter...", "Listen to...".</p>
+            </div>
+          )}
           <div className="mt-5 text-left max-w-xl mx-auto text-xs text-slate-600 space-y-1">
             <p className="font-semibold text-slate-700">Để đọc đúng đáp án, đề gốc nên có một trong các dạng:</p>
             <p>• Bảng "ĐÁP ÁN" ở cuối file, hoặc dòng "Chọn A" trong lời giải.</p>
             <p>• Phương án đúng được gạch chân hoặc tô màu. Đề học sinh sẽ tự bỏ các dấu này.</p>
-            <p>• Nếu đề không có đáp án, bạn nhập trực tiếp ở bước kế tiếp.</p>
+            <p>• Nếu đề không có đáp án, bạn nhập ở bước kế tiếp{mode === 'english' ? ', dán cả chuỗi đáp án hoặc tải file đáp án Word.' : '.'}</p>
           </div>
         </div>
       )}
@@ -281,24 +374,79 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
               </label>
             </div>
             <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-sm text-slate-800">
-              <label className="flex items-center gap-2"><input type="checkbox" checked={settings.shuffleQuestions} onChange={e => updateSettings({ shuffleQuestions: e.target.checked })} /> Đảo thứ tự câu trong từng phần</label>
+              {doc.mode === 'english' && (
+                <label className="flex items-center gap-2"><input type="checkbox" checked={!!settings.shuffleGroups} onChange={e => updateSettings({ shuffleGroups: e.target.checked })} /> Đảo vị trí các nhóm không có dấu #</label>
+              )}
+              <label className="flex items-center gap-2"><input type="checkbox" checked={settings.shuffleQuestions} onChange={e => updateSettings({ shuffleQuestions: e.target.checked })} /> {doc.mode === 'english' ? 'Đảo thứ tự câu trong nhóm được phép' : 'Đảo thứ tự câu trong từng phần'}</label>
               <label className="flex items-center gap-2"><input type="checkbox" checked={settings.shuffleOptions} onChange={e => updateSettings({ shuffleOptions: e.target.checked })} /> Đảo phương án A, B, C, D</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={settings.shuffleStatements} onChange={e => updateSettings({ shuffleStatements: e.target.checked })} /> Đảo ý a, b, c, d của câu Đúng – Sai</label>
+              {doc.mode !== 'english' && (
+                <label className="flex items-center gap-2"><input type="checkbox" checked={settings.shuffleStatements} onChange={e => updateSettings({ shuffleStatements: e.target.checked })} /> Đảo ý a, b, c, d của câu Đúng – Sai</label>
+              )}
               <label className="flex items-center gap-2"><input type="checkbox" checked={settings.keepTogether} onChange={e => updateSettings({ keepTogether: e.target.checked })} /> Giữ mỗi câu không bị ngắt sang trang</label>
-              <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" checked={settings.normalizeFormat} onChange={e => updateSettings({ normalizeFormat: e.target.checked })} /> Chuẩn hóa hình thức theo mẫu: lề trang, Times New Roman 12, "Câu 1." in đậm, phương án tự xếp 4, 2 hoặc 1 cột</label>
+              <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" checked={settings.normalizeFormat} onChange={e => updateSettings({ normalizeFormat: e.target.checked })} /> {doc.mode === 'english' ? 'Chuẩn hóa hình thức theo mẫu: lề trang, Times New Roman, "Question 1." in đậm, phương án tự xếp cột; giữ nguyên cỡ chữ và bài đọc' : 'Chuẩn hóa hình thức theo mẫu: lề trang, Times New Roman 12, "Câu 1." in đậm, phương án tự xếp 4, 2 hoặc 1 cột'}</label>
             </div>
           </div>
 
+          {doc.mode === 'english' && (
+            <div className="card-elevated p-4">
+              <h3 className="font-bold text-slate-900">Nhập nhanh đáp án</h3>
+              <p className="text-xs text-slate-500 mt-0.5 mb-2">Dán đáp án dạng "1.D 2.D 3.A" hoặc cả chuỗi "D D A C", hoặc tải file đáp án Word có bảng Q1, Q2...</p>
+              <textarea
+                value={answerText}
+                onChange={e => setAnswerText(e.target.value)}
+                rows={2}
+                aria-label="Dán đáp án"
+                placeholder="1.D 2.D 3.A 4.C..."
+                className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-400"
+              />
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                <button type="button" onClick={() => applyAnswers(parseAnswerText(doc, answerText), 'từ nội dung đã dán')} disabled={!answerText.trim()} className="px-3 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-semibold disabled:opacity-50">
+                  Nhập đáp án
+                </button>
+                <button type="button" onClick={() => answerFileInput.current?.click()} className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium">
+                  Tải file đáp án (.docx)
+                </button>
+                <input ref={answerFileInput} type="file" accept=".docx" className="hidden" aria-label="Chọn file đáp án" onChange={e => handleAnswerFile(e.target.files?.[0])} />
+                {answerNote && <span className="text-xs text-slate-700" role="status">{answerNote}</span>}
+              </div>
+            </div>
+          )}
+
           <div className="card-elevated p-4">
-            <h3 className="font-bold text-slate-900">Duyệt câu hỏi và đáp án đề gốc</h3>
-            <p className="text-xs text-slate-500 mt-0.5 mb-3">Câu tự luận giữ nguyên vị trí. Bỏ khóa nếu muốn cho câu đó đổi chỗ.</p>
+            <h3 className="font-bold text-slate-900">{doc.mode === 'english' ? 'Duyệt nhóm câu và đáp án đề gốc' : 'Duyệt câu hỏi và đáp án đề gốc'}</h3>
+            <p className="text-xs text-slate-500 mt-0.5 mb-3">{doc.mode === 'english' ? 'Có thể đổi mức trộn của từng nhóm. Nhóm bài đọc, điền từ và câu liên quan nhau nên giữ thứ tự câu.' : 'Câu tự luận giữ nguyên vị trí. Bỏ khóa nếu muốn cho câu đó đổi chỗ.'}</p>
             <div className="space-y-4">
               {doc.parts.map(part => {
                 const qs = doc.questions.filter(q => q.part === part.index);
                 if (!qs.length) return null;
                 return (
                   <div key={part.index}>
-                    {part.title && <div className="font-semibold text-sm text-orange-800 bg-orange-50 rounded-md px-2 py-1.5 mb-2">{part.title.length > 130 ? `${part.title.slice(0, 130)}…` : part.title}</div>}
+                    {part.title && doc.mode !== 'english' && <div className="font-semibold text-sm text-orange-800 bg-orange-50 rounded-md px-2 py-1.5 mb-2">{part.title.length > 130 ? `${part.title.slice(0, 130)}…` : part.title}</div>}
+                    {doc.mode === 'english' && (
+                      <div className="bg-orange-50 rounded-md px-2 py-2 mb-2">
+                        <div className="font-semibold text-sm text-orange-800">
+                          Nhóm {part.index + 1} · {qs.length} câu{part.title ? `: ${part.title.length > 110 ? `${part.title.slice(0, 110)}…` : part.title}` : ''}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-xs text-slate-700">
+                          <label className="flex items-center gap-1.5">
+                            Mức trộn
+                            <select
+                              aria-label={`Mức trộn nhóm ${part.index + 1}`}
+                              value={ov.partLevels[part.index] ?? part.level}
+                              onChange={e => { const value = Number(e.target.value) as GroupLevel; updateOv(d => { d.partLevels[part.index] = value; }); }}
+                              className="border border-slate-300 rounded-md px-1.5 py-1 bg-white text-xs"
+                            >
+                              {GROUP_LEVELS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+                            </select>
+                          </label>
+                          <label className="flex items-center gap-1">
+                            <input type="checkbox" checked={!!ov.partFixed[part.index]} onChange={e => updateOv(d => { d.partFixed[part.index] = e.target.checked; })} />
+                            Cố định vị trí nhóm
+                          </label>
+                          <span className="text-slate-500">{part.tagged ? 'Theo thẻ trong đề' : 'App tự nhận'}</span>
+                        </div>
+                      </div>
+                    )}
                     <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg">
                       {qs.map((q, i) => {
                         const value = ov.answers[q.id] || '';
@@ -310,7 +458,7 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
                               <button type="button" onClick={() => setExpanded(open ? null : q.id)} aria-expanded={open} aria-label={`Xem chi tiết câu ${q.num}`} className="flex items-start gap-1.5 flex-1 min-w-[14rem] text-left">
                                 <ChevronDown className={`w-4 h-4 mt-0.5 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
                                 <span className="min-w-0">
-                                  <span className="font-semibold text-slate-900">Câu {q.num}</span>
+                                  <span className="font-semibold text-slate-900">{doc.mode === 'english' ? 'Question' : 'Câu'} {q.num}</span>
                                   <span className="text-xs text-slate-500"> · {KIND_LABEL[q.kind]}</span>
                                   {q.warnings.length > 0 && <AlertTriangle className="inline w-3.5 h-3.5 text-amber-600 ml-1 -mt-0.5" aria-label="Có lưu ý" />}
                                   <span className="block text-xs text-slate-600 truncate max-w-[34rem]">{q.preview}</span>
@@ -373,7 +521,7 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
               <h3 className="font-bold text-slate-900">Thông tin đề thi</h3>
               <button
                 type="button"
-                onClick={() => updateSettings({ examInfo: hasExamInfo(settings.examInfo) ? { ...EMPTY_EXAM_INFO } : { ...DEFAULT_EXAM_INFO, ...doc?.detectedInfo } })}
+                onClick={() => updateSettings({ examInfo: hasExamInfo(settings.examInfo) ? { ...EMPTY_EXAM_INFO } : { ...defaultInfo, ...doc?.detectedInfo } })}
                 className="text-xs font-semibold text-orange-700 hover:text-orange-900 underline underline-offset-2"
               >
                 {hasExamInfo(settings.examInfo) ? 'Giữ tiêu đề của đề gốc' : 'Điền lại thông tin'}
@@ -391,7 +539,7 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
                   <input
                     type="text"
                     value={settings.examInfo?.[field.key] || ''}
-                    placeholder={field.placeholder}
+                    placeholder={field.key === 'subject' ? config.subject : field.placeholder}
                     onChange={e => updateSettings({ examInfo: { ...EMPTY_EXAM_INFO, ...settings.examInfo, [field.key]: e.target.value } })}
                     className="w-full bg-transparent border-0 border-b border-orange-500 px-1 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-b-2 focus:border-orange-600"
                   />
@@ -428,7 +576,7 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
                   <FileSpreadsheet className="w-4 h-4" /> Đáp án (.xlsx)
                 </button>
                 {built.map(b => (
-                  <button key={b.plan.code} type="button" onClick={() => saveBlob(b.blob, versionFile(b.plan.code))} className="px-3 py-2 rounded-lg border border-orange-200 bg-white hover:bg-orange-50 text-orange-900 text-sm font-medium">
+                  <button key={b.plan.code} type="button" onClick={() => saveBlob(b.blob, config.versionFile(b.plan.code))} className="px-3 py-2 rounded-lg border border-orange-200 bg-white hover:bg-orange-50 text-orange-900 text-sm font-medium">
                     Mã {b.plan.code}
                   </button>
                 ))}
@@ -438,7 +586,7 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
                 <div className="overflow-x-auto mt-2">
                   <table className="text-xs border-collapse">
                     <thead>
-                      <tr>{rows[0].map(c => <th key={String(c)} className="border border-slate-300 bg-slate-100 px-2 py-1">{c}</th>)}</tr>
+                      <tr>{(rows[0] || []).map(c => <th key={String(c)} className="border border-slate-300 bg-slate-100 px-2 py-1">{c}</th>)}</tr>
                     </thead>
                     <tbody>
                       {rows.slice(1).map((r, i) => (

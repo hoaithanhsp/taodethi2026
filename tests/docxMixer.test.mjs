@@ -409,6 +409,115 @@ await t('phần không ghi "Câu" và không lặp lại vẫn được giữ tr
   assert.ok(text.includes('Chứng minh rằng tổng ba góc') && text.includes('PHẦN IV'));
 });
 
+/* ------------------- Đề Tiếng Anh: nhóm, thẻ, số câu liên tục ------------------- */
+const EN = { ...SETTINGS, count: 4, startCode: 8385, shuffleGroups: true };
+const inlineQ = (n, opts) => P(R(`Question ${n}. `, '<w:b/>'), R('A. ' + opts[0]), TAB, R('B. ' + opts[1]), TAB, R('C. ' + opts[2]), TAB, R('D. ' + opts[3]));
+const stemQ = (n, stem) => P(R(`Question ${n}. ${stem}`)) + P(R('A. a' + n)) + P(R('B. b' + n)) + P(R('C. c' + n)) + P(R('D. d' + n));
+
+await t('Tiếng Anh: đọc thẻ nhóm, mức trộn đúng, thẻ không còn trong đề', async () => {
+  const body = P(R('<g3> ')) + P(R('Mark the letter A, B, C or D to indicate the word.')) + inlineQ(1, ['plants', 'fields', 'gardens', 'papers']) + inlineQ(2, ['one', 'two', 'three', 'four'])
+    + P(R('<g2>')) + P(R('Read the passage and choose for blanks from ###s to ###e.')) + P(R('The city (####) ____ and (####) ____ there.')) + inlineQ(3, ['as', 'for', 'with', 'to']) + inlineQ(4, ['in', 'on', 'at', 'by'])
+    + P(R('<g1>')) + stemQ(5, 'Cau nam') + stemQ(6, 'Cau sau')
+    + P(R('<#g0>')) + P(R('Four sentences removed from the text. Mark the letter on your answer sheet.')) + P(R('Text (7) ____ here (8) ____.')) + P(R('A. first')) + P(R('B. second')) + P(R('C. third')) + P(R('D. fourth')) + P(R('Question 7. A')) + P(R('Question 8. B'));
+  const d = await m.loadDocxExam(await makeDocx(body), 'en.docx', 'english');
+  assert.deepEqual(d.parts.map(p => [p.level, p.fixed, p.tagged]), [[3, false, true], [2, false, true], [1, false, true], [0, true, true]]);
+  assert.deepEqual(d.parts.map(p => d.questions.filter(q => q.part === p.index).length), [2, 2, 2, 2]);
+  const ov2 = m.defaultOverrides(d);
+  assert.deepEqual(d.questions.slice(6).map(q => [q.kind, q.lockOptions, q.answer]), [['mc', true, ''], ['mc', true, '']], 'câu tô phiếu không lấy chữ cái làm đáp án');
+  const orders = new Set();
+  for (const p of m.planVersions(d, EN, ov2)) {
+    const b = await m.buildVersion(d, p, EN);
+    assert.deepEqual(b.problems, [], `mã ${p.code}`);
+    assert.deepEqual(p.questions.map(q => q.newNum), [1, 2, 3, 4, 5, 6, 7, 8], 'số câu liên tục toàn đề');
+    assert.equal(p.partOrder[3], 3, 'nhóm có # đứng yên');
+    orders.add(p.partOrder.join());
+    const g2 = p.questions.filter(q => q.part === 1);
+    assert.deepEqual(g2.map(q => q.origNum), [3, 4], 'g2 giữ thứ tự câu');
+    assert.ok(g2.every(q => q.perm), 'g2 đảo phương án');
+    assert.ok(p.questions.filter(q => q.part === 2).every(q => !q.perm), 'g1 không đảo phương án');
+    assert.deepEqual(p.questions.filter(q => q.part === 3).map(q => q.origNum), [7, 8], 'g0 giữ nguyên');
+    const text = plain((await readXml(b.blob)).xml);
+    assert.ok(!/<#?g\d|###/.test(text.replace(/&lt;/g, '<')), 'không còn thẻ và ###');
+    const [s0, s1] = g2.map(q => q.newNum);
+    assert.ok(text.includes(`for blanks from ${s0} to ${s1}.`), 'thay ###s ###e');
+    assert.ok(text.includes(`The city (${s0}) ____ and (${s1}) ____ there.`), 'thay (####)');
+    assert.ok(text.includes('Question 7. A') && text.includes('Question 8. B'));
+    assert.ok(text.includes('THE END'));
+  }
+  assert.ok(orders.size > 1, 'nhóm không có # đổi chỗ giữa các mã đề');
+  const off = { ...EN, shuffleGroups: false, count: 1 };
+  assert.deepEqual(m.planVersions(d, off, ov2)[0].partOrder, [0, 1, 2, 3], 'tắt đảo nhóm');
+});
+
+await t('Tiếng Anh: gạch chân phát âm giữ nguyên, chỉ bỏ màu đáp án; A, C / B, D theo cột', async () => {
+  const red = '<w:color w:val="FF0000"/>';
+  const list = `<w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="37"/></w:numPr></w:pPr>`;
+  const body = P(R('<g3>')) + P(R('Question 1. A. pl'), R('a', U), R('nts'), TAB, R('B. ', red), R('f', red), R('ie', `${red}${U}`), R('lds', red), TAB, R('C. g'), R('a', U), R('rdens'), TAB, R('D. n'), R('e', U), R('ws'))
+    + P(R('Question 2. Tom asks a question.')) + `<w:p>${list}${R('Yes, I could.')}${TAB}${R('C. ', red)}${R('Sure, press it.', red)}</w:p>` + `<w:p>${list}${R('No, I could not.')}${TAB}${R('D. No washing machine.')}</w:p>`;
+  const raw = await JSZip.loadAsync(await makeDocx(body));
+  raw.file('word/numbering.xml', `<?xml version="1.0"?><w:numbering ${NS}><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="upperLetter"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="37"><w:abstractNumId w:val="0"/></w:num></w:numbering>`);
+  const d = await m.loadDocxExam(await raw.generateAsync({ type: 'uint8array' }), 'en.docx', 'english');
+  assert.deepEqual(d.questions.map(q => q.answer), ['B', 'C']);
+  assert.deepEqual(d.questions[1].optionPreviews, ['Yes, I could.', 'No, I could not.', 'Sure, press it.', 'No washing machine.']);
+  for (const p of m.planVersions(d, EN, m.defaultOverrides(d))) {
+    const b = await m.buildVersion(d, p, EN);
+    assert.deepEqual(b.problems, []);
+    const { xml } = await readXml(b.blob);
+    assert.ok(!xml.includes('FF0000'), 'bỏ màu đáp án');
+    assert.equal(xml.split('w:u w:val="single"').length - 1, 4, 'giữ gạch chân phần phát âm');
+    assert.ok(!xml.includes('<w:numPr>'));
+  }
+});
+
+await t('Tiếng Anh: đề không có thẻ tự chia nhóm; True/False 2 phương án; nhập nhanh đáp án', async () => {
+  const body = P(R('Listen to a talk and decide whether the statements are true or false.')) + P(R('Question 1. Emily is a writer.')) + P(R('A. True'), TAB, R('B. False')) + P(R('Question 2. She lives abroad.')) + P(R('A. True'), TAB, R('B. False'))
+    + P(R('Read the following leaflet and mark the letter on your answer sheet to indicate the option that best fits each of the numbered blanks.')) + P(R('Join (3)___ and (4)___ now.')) + inlineQ(3, ['one', 'two', 'three', 'four']) + inlineQ(4, ['five', 'six', 'seven', 'eight'])
+    + P(R('Mark the letter on your answer sheet to indicate the best arrangement of sentences.')) + stemQ(5, 'Dear Sarah,') + stemQ(6, 'Hi Anna,') + P(R('------ THE END ------'));
+  const d = await m.loadDocxExam(await makeDocx(body), 'en.docx', 'english');
+  assert.deepEqual(d.parts.map(p => [p.level, p.fixed, p.tagged]), [[2, false, false], [2, false, false], [3, false, false]]);
+  assert.deepEqual(d.questions.slice(0, 2).map(q => q.optionPreviews), [['True', 'False'], ['True', 'False']]);
+  assert.deepEqual(Object.values(m.parseAnswerText(d, '1.A 2.B 3.C 4.D 5.A 6.B')), ['A', 'B', 'C', 'D', 'A', 'B']);
+  assert.deepEqual(Object.values(m.parseAnswerText(d, 'Q1: B, Question 2 - A')), ['B', 'A']);
+  assert.deepEqual(Object.values(m.parseAnswerText(d, 'A B C D A B')), ['A', 'B', 'C', 'D', 'A', 'B']);
+  assert.deepEqual(Object.values(m.parseAnswerText(d, 'ABCDAB')), ['A', 'B', 'C', 'D', 'A', 'B']);
+  const ov2 = m.defaultOverrides(d);
+  Object.assign(ov2.answers, m.parseAnswerText(d, 'ABCDAB'));
+  const built = [];
+  for (const p of m.planVersions(d, EN, ov2)) {
+    const b = await m.buildVersion(d, p, EN);
+    built.push(b);
+    assert.deepEqual(b.problems, [], `mã ${p.code}`);
+    const text = plain((await readXml(b.blob)).xml);
+    const blanks = p.questions.filter(q => q.part === 1).map(q => q.newNum);
+    assert.ok(text.includes(`Join (${blanks[0]})___ and (${blanks[1]})___ now.`), 'đánh lại số chỗ trống');
+    p.questions.forEach(q => {
+      const orig = 'ABCD'.indexOf(q.baseAnswer);
+      assert.equal(q.answer, 'ABCD'[q.perm ? q.perm.indexOf(orig) : orig]);
+    });
+  }
+  const wb = await JSZip.loadAsync(await (await m.buildAnswerWorkbook(d, built, EN)).arrayBuffer());
+  const rows = [...(await wb.file('xl/worksheets/sheet1.xml').async('string')).matchAll(/<row [^>]*>(.*?)<\/row>/gs)].map(r => [...r[1].matchAll(/<c [^>]*?(?:><is><t[^>]*>(.*?)<\/t><\/is>|><v>(.*?)<\/v>)<\/c>/g)].map(c => c[1] ?? c[2]));
+  assert.match(rows[0][0], /^ĐÁP ÁN/);
+  assert.deepEqual(rows[1], ['Đề\\câu', '1', '2', '3', '4', '5', '6']);
+  assert.deepEqual(rows[2].slice(1), ['A', 'B', 'C', 'D', 'A', 'B'], 'hàng đề gốc');
+  assert.deepEqual(rows.slice(3).map(r => r[0]), ['8385', '8386', '8387', '8388']);
+});
+
+await t('Tiếng Anh: file mẫu tải về đã xóa thông tin tác giả và trộn được', async () => {
+  const bytes = readFileSync(new URL('../public/templates/Mau_de_tieng_anh.docx', import.meta.url));
+  const core = await (await JSZip.loadAsync(bytes)).file('docProps/core.xml').async('string');
+  assert.ok(!/<dc:creator>[^<]+|<cp:lastModifiedBy>[^<]+/.test(core), 'không còn thông tin tác giả');
+  const d = await m.loadDocxExam(bytes, 'mau.docx', 'english');
+  assert.equal(d.questions.length, 40);
+  assert.equal(d.parts.length, 11);
+  assert.equal(d.questions.slice(0, 36).map(q => q.answer).join(''), 'ACDCBDDCACCBBBDBDAAAABABBABBBDBBCBCB');
+  for (const p of m.planVersions(d, { ...EN, count: 2 }, m.defaultOverrides(d))) {
+    const b = await m.buildVersion(d, p, { ...EN, count: 2 });
+    assert.deepEqual(b.problems, []);
+    assert.equal(p.partOrder[10], 10, 'nhóm #g0 cuối đề đứng yên');
+  }
+});
+
 /* ------------------- Đối chiếu file mẫu thật (MathType, hình, bảng) ------------------- */
 const SAMPLE_DIR = fileURLToPath(new URL('../trộn đề/mẫu kết quả sau khi trộn/', import.meta.url));
 if (existsSync(SAMPLE_DIR)) {
