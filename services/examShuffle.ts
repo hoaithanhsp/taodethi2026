@@ -565,6 +565,28 @@ const numOf = (cell: string): { num: number; part?: QType } | null => {
   return m ? { num: parseInt(m[1], 10) } : null;
 };
 
+/**
+ * Đáp án ghi ngay sau tiêu đề phần trên cùng một dòng ("PHẦN I. 1.B, 2.D", "PHẦN III. 17. 10; 18. 3,5").
+ * `body` là phần chữ sau tiêu đề; trả về các đoạn đáp án, hoặc [] nếu dòng chỉ là tiêu đề
+ * (ví dụ "PHẦN I. TRẮC NGHIỆM (24 CÂU, 6 ĐIỂM)" hay "Trả lời ngắn (mỗi câu 0.5 điểm)").
+ */
+const inlineAnswerSegments = (body: string, part: QType | null): string[] => {
+  const shortNum = String.raw`\d{1,3}(?:\s*[:)]\s*|\s*\.\s+)`;
+  const start =
+    part === 'II' ? /(?:Câu\s*)?\d{1,3}\s*[.:)\-–]\s*(?:[a-d]\s*[.)]\s*)?(?:Đúng|Sai|Đ|S)(?=$|[\s,;|.)ĐS])/i :
+    part === 'III' ? new RegExp(String.raw`(?:^|\s)(?:Câu\s*)?${shortNum}-?\d+(?:[.,]\d+)?(?=$|\s*[;|,]|\s+(?:Câu\s*)?\d)`, 'i') :
+    part === 'IV' ? null :
+    /(?:Câu\s*)?\d{1,3}\s*[.:\-–)]?\s*[A-D](?=$|[\s,;|.)])/;
+  const at = start ? body.search(start) : -1;
+  if (at < 0) return [];
+  let answers = body.slice(at).trim();
+  // Đưa cả "17. 10" lẫn "Câu 17. 10" về dạng "Câu 17: 10" như các dòng đáp án khác
+  if (part === 'II' || part === 'III') answers = answers.replace(/Câu\s*(?=\d)/gi, '');
+  if (part === 'II') answers = answers.replace(/(^|[;|,]\s*|\s)(\d{1,3})\s*[.:)\-–]\s*(?=[ĐSđs]|[a-d]\s*[.)])/g, '$1Câu $2: ');
+  if (part === 'III') answers = answers.replace(new RegExp(String.raw`(^|[;|,]\s+|\s)(\d{1,3})(?:\s*[:)]\s*|\s*\.\s+)(?=-?\d)`, 'g'), '$1Câu $2: ');
+  return answers.split(/(?=Câu\s*\d)/i).map(s => s.replace(/[\s;,|]+$/, '')).filter(Boolean);
+};
+
 export const parseAnswerKey = (text: string, questions: ExamQuestion[]): { answers: AnswerBook; conflicts: string[] } => {
   const answers: AnswerBook = { mc: {}, tf: {}, short: {} };
   const conflicts: string[] = [];
@@ -669,20 +691,31 @@ export const parseAnswerKey = (text: string, questions: ExamQuestion[]): { answe
     if (!line) return;
 
     // Tiêu đề nhóm đáp án
-    if (line.length <= 120 && !/^câu\s*\d/i.test(line)) {
-      const pm = PART_RE.exec(line);
-      const stripped = line.replace(/^#+\s*/, '');
+    const stripped = line.replace(/^#+\s*/, '');
+    const pm = PART_RE.exec(stripped);
+    // Tiêu đề phần kèm cả dãy đáp án có thể dài hơn 120 ký tự
+    if ((line.length <= 120 || pm) && !/^câu\s*\d/i.test(line)) {
       let type: QType | null | undefined;
       if (/đúng\s*[-–\/]?\s*sai|\bĐ\s*\/\s*S\b/i.test(stripped)) type = 'II';
       else if (/trả\s*lời\s*ngắn/i.test(stripped)) type = 'III';
       else if (/tự\s*luận/i.test(stripped)) type = 'IV';
       else if (/nhiều\s*(?:phương\s*án|lựa\s*chọn)|4\s*(?:phương\s*án|lựa\s*chọn)/i.test(stripped)) type = 'I';
+      // "Phần 2: ĐÁP ÁN & HƯỚNG DẪN GIẢI" của đề biến thể là nhãn chung, không phải Phần II Đúng – Sai
+      else if (/lời\s*giải\s*chi\s*tiết|hướng\s*dẫn\s*giải/i.test(stripped) || (pm && /^(?:đáp\s*án|hướng\s*dẫn|lời\s*giải)/i.test(pm[2] || ''))) type = null;
       else if (pm) type = partTypeOf(pm[1], pm[2] || '');
-      else if (/lời\s*giải\s*chi\s*tiết|hướng\s*dẫn\s*giải/i.test(stripped)) type = null;
       if (type !== undefined) {
-        ctx = type;
-        currentNum = null;
-        if (pm || /^(?:#+\s*)?(?:\d+[.)]|[IVX]+[.)])/.test(line) || line.length <= 60) return;
+        const inline = inlineAnswerSegments(pm ? pm[2] || '' : stripped, type);
+        if (inline.length) {
+          ctx = type;
+          currentNum = null;
+          inline.forEach(handleLine);
+          return;
+        }
+        if (line.length <= 120) {
+          ctx = type;
+          currentNum = null;
+          if (pm || /^(?:#+\s*)?(?:\d+[.)]|[IVX]+[.)])/.test(line) || line.length <= 60) return;
+        }
       }
     }
 

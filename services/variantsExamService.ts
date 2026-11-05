@@ -5,7 +5,7 @@ import { AiProvider, GEMINI_MODELS, AGENT_PLATFORM_MODELS } from "../constants";
 import { FIGURE_JSON_MARKDOWN_INSTRUCTIONS } from "./figureEngine";
 import { prepareExamSourceParts } from "./examSourceService";
 
-const VARIANTS_SYSTEM_INSTRUCTION = `
+export const VARIANTS_SYSTEM_INSTRUCTION = `
 # ExamGen Pro - SINH ĐỀ THI ĐA MÔN TỰ ĐỘNG
 
 ## VAI TRÒ
@@ -14,7 +14,12 @@ Bạn là chuyên gia soạn đề thi các môn phổ thông (Toán, Khoa học
 
 ## NHIỆM VỤ
 Quy trình làm việc chia làm 3 bước độc lập. Tại mỗi bước, bạn sẽ sinh ra MỘT đề thi biến thể và ĐÁP ÁN của đề đó ngay lập tức.
-Mỗi đề biến thể giữ NGUYÊN cấu trúc đề gốc: cùng số phần, cùng số câu từng phần, cùng dạng câu (trắc nghiệm 4 phương án, Đúng – Sai 4 ý a–d, trả lời ngắn, tự luận), cùng thang điểm và mức độ từng câu; chỉ thay số liệu / bối cảnh / cách hỏi.
+Mỗi bước có MỤC TIÊU RIÊNG, không được làm 3 đề giống nhau về cách biến đổi:
+- Đề 1 – ĐỀ TƯƠNG TỰ: cùng dạng toán, cùng mức độ; chỉ thay số liệu và bối cảnh tương tự.
+- Đề 2 – ĐỀ DẠNG NGƯỢC / BỔ SUNG: đảo chiều bài toán hoặc bổ sung dạng toán tương tự; độ khó tương đương đề gốc.
+- Đề 3 – ĐỀ NÂNG CAO: khó hơn rõ rệt so với Đề 1 và Đề 2.
+Cả 3 đề giữ NGUYÊN KHUNG đề gốc: cùng số phần, cùng số câu từng phần, cùng hình thức câu (trắc nghiệm 4 phương án, Đúng – Sai 4 ý a–d, trả lời ngắn, tự luận) và cùng thang điểm. "Hình thức câu" được giữ nguyên, còn "dạng toán" và "mức độ" làm theo yêu cầu của từng bước.
+Với môn không phải Toán, hiểu "dạng toán" là dạng bài / dạng câu hỏi của môn đó.
 Đánh số câu "Câu 1", "Câu 2"… như đề gốc.
 
 ---
@@ -130,6 +135,61 @@ const streamWithContinuation = async (
   }
 };
 
+export type VariantStep = 1 | 2 | 3;
+
+/** Loại của từng đề: dùng chung cho nhãn trên giao diện. */
+export const VARIANT_PROFILES: Record<VariantStep, { label: string; description: string }> = {
+  1: { label: 'Đề tương tự', description: 'Cùng dạng toán, cùng mức độ; chỉ thay số liệu và bối cảnh tương tự' },
+  2: { label: 'Đề dạng ngược / bổ sung', description: 'Đảo chiều bài toán hoặc bổ sung dạng toán tương tự với đề gốc' },
+  3: { label: 'Đề nâng cao', description: 'Cùng cấu trúc nhưng khó hơn rõ rệt so với Đề 1 và Đề 2' },
+};
+
+const COMMON_REQUIREMENTS = `Yêu cầu chung:
+- Đủ số câu và đúng khung đề gốc (số phần, số câu từng phần, hình thức câu, thang điểm); không ít hơn, không nhiều hơn.
+- Đúng môn học, khối lớp và phạm vi kiến thức của đề gốc.
+- Tiêu đề đề thi chỉ ghi "ĐỀ SỐ [X]", không ghi loại đề vì đề sẽ phát cho học sinh.
+- Tự giải lại từng câu trước khi xuất: đề phải có lời giải hợp lệ, trắc nghiệm có đúng 1 phương án đúng, đáp án khớp với đề.
+- Đáp án: Câu dễ chỉ cần đáp án (1.A). Câu khó phải có lời giải vắn tắt.`;
+
+const VARIANT_STEP_GOALS: Record<VariantStep, string> = {
+  1: `ĐỀ 1 LÀ **ĐỀ TƯƠNG TỰ** với đề gốc. Bám sát đề gốc theo từng câu, đúng thứ tự:
+- Câu k của đề mới có CÙNG dạng toán, cùng kiến thức, cùng phương pháp giải và cùng mức độ với câu k của đề gốc.
+- Chỉ thay số liệu (hàm số, hệ số, tọa độ, dữ kiện…) và thay bối cảnh bằng bối cảnh tương tự (ví dụ: bể nước → bồn xăng). Câu nào cũng phải khác đề gốc về số liệu hoặc bối cảnh.
+- KHÔNG đổi yêu cầu của câu hỏi, KHÔNG đảo chiều bài toán, KHÔNG thêm bước giải: học sinh làm được đề gốc thì làm được đề này theo đúng cách đó.
+- Môn không phải Toán: thay ngữ liệu, ví dụ, sự kiện, tình huống bằng nội dung tương đương, kiểm tra cùng kiến thức và kỹ năng.`,
+
+  2: `ĐỀ 2 LÀ **ĐỀ DẠNG NGƯỢC / BỔ SUNG**. Thay số đơn thuần là KHÔNG đạt. Với mỗi câu k, giữ chủ đề của câu k trong đề gốc và làm theo 1 trong 2 cách:
+- **Cách A – Dạng ngược (ưu tiên):** đổi chiều bài toán, điều đã cho thành điều cần tìm và ngược lại. Ví dụ: đề gốc cho hàm số, tìm cực trị → đề mới cho điểm cực trị, tìm tham số; cho phương trình, tìm nghiệm → cho nghiệm, tìm hệ số; cho dữ liệu, tính số trung bình → cho số trung bình, tìm dữ liệu còn thiếu.
+- **Cách B – Bổ sung dạng toán tương tự:** chỉ dùng khi câu đó không đảo chiều tự nhiên được. Ra một dạng toán KHÁC cùng chủ đề mà đề gốc chưa hỏi. Ví dụ: đề gốc tìm số hạng của cấp số cộng → đề mới tính tổng n số hạng đầu.
+Lưu ý:
+- Độ khó của mỗi câu TƯƠNG ĐƯƠNG câu k của đề gốc, không nâng độ khó (nâng độ khó là việc của Đề 3).
+- Không lặp lại câu hỏi hay số liệu của Đề 1.
+- Bài ngược dễ sinh đề vô lý: phải giải xuôi lại để chắc chắn dữ kiện đủ, không mâu thuẫn và đáp án đúng.
+- Môn không phải Toán: dạng ngược là đổi chiều câu hỏi (cho hiện tượng hỏi nguyên nhân thay vì cho nguyên nhân hỏi hiện tượng; cho ví dụ hỏi khái niệm thay vì cho khái niệm hỏi ví dụ); bổ sung là thêm dạng câu hỏi khác cùng chủ đề.
+Dòng cuối cùng của phần đáp án, sau toàn bộ lời giải, viết đúng 1 dòng theo mẫu (không dùng bảng, không viết chữ "Câu"):
+**Đối chiếu với đề gốc:** C1 – ngược; C2 – bổ sung; C3 – ngược; …`,
+
+  3: `ĐỀ 3 LÀ **ĐỀ NÂNG CAO**, phải khó hơn RÕ RỆT so với cả Đề 1 và Đề 2 đã sinh ở trên, nhưng vẫn giữ nguyên khung đề gốc:
+- Mỗi câu k khó hơn câu k tương ứng ít nhất một bậc: Biết → Hiểu, Hiểu → Vận dụng, Vận dụng → Vận dụng cao; câu đã ở mức Vận dụng cao thì thêm bước suy luận.
+- Cách nâng độ khó: thêm bước giải, kết hợp hai mảng kiến thức, thêm tham số hoặc điều kiện ẩn, yêu cầu tự lập mô hình từ tình huống thực tế, dùng phương án nhiễu từ sai lầm thường gặp.
+- KHÔNG được coi là khó hơn: chỉ đổi số to hơn hoặc số lẻ hơn, chỉ viết câu chữ dài hơn.
+- Vẫn nằm trong chương trình của khối lớp và phạm vi kiến thức của đề gốc; không dùng kiến thức lớp trên; học sinh khá giỏi vẫn làm kịp trong thời gian làm bài.
+- Không lặp lại câu hỏi hay số liệu của Đề 1 và Đề 2.
+- Môn không phải Toán: nâng từ nhận biết lên phân tích, so sánh, đánh giá, vận dụng vào tình huống mới.
+- Đáp án: mọi câu từ mức Vận dụng trở lên đều có lời giải vắn tắt.
+Dòng cuối cùng của phần đáp án, sau toàn bộ lời giải, viết đúng 1 dòng theo mẫu (không dùng bảng, không viết chữ "Câu"):
+**Đối chiếu độ khó với đề gốc:** C1 – Biết → Hiểu; C2 – Hiểu → Vận dụng; …`,
+};
+
+/** Yêu cầu gửi cho AI ở từng bước: mỗi đề có mục tiêu biến đổi riêng. */
+export const buildVariantStepPrompt = (step: VariantStep): string => `BƯỚC ${step}:
+Dựa vào file đề gốc, hãy sinh ra **ĐỀ BIẾN THỂ SỐ ${step}**.
+Ngay sau đó, viết **ĐÁP ÁN CHI TIẾT CHO ĐỀ SỐ ${step}**.
+
+${VARIANT_STEP_GOALS[step]}
+
+${COMMON_REQUIREMENTS}`;
+
 // Bước 1: Sinh Đề 1 & Đáp án 1 (Có File gốc)
 export const generateVariantStep1 = async (
   chat: Chat,
@@ -138,16 +198,7 @@ export const generateVariantStep1 = async (
 ): Promise<void> => {
   // PDF/ảnh gửi nguyên file; Word .docx được app đọc trước (bảng, công thức LaTeX, hình)
   const sourceParts = await prepareExamSourceParts(file.data, file.type, file.name);
-
-  const textPart: Part = {
-    text: `BƯỚC 1:
-Dựa vào file đề gốc, hãy sinh ra **ĐỀ BIẾN THỂ SỐ 1**.
-Ngay sau đó, viết **ĐÁP ÁN CHI TIẾT CHO ĐỀ SỐ 1**.
-
-Yêu cầu:
-- Đề thi: Đủ số lượng câu như đề gốc, đúng môn học và khối lớp của đề gốc. Đầy đủ nội dung.
-- Đáp án: Câu dễ chỉ cần đáp án (1.A). Câu khó phải có lời giải vắn tắt.`
-  };
+  const textPart: Part = { text: buildVariantStepPrompt(1) };
 
   try {
     await streamWithContinuation(chat, [...sourceParts, textPart], onChunk);
@@ -157,22 +208,14 @@ Yêu cầu:
   }
 };
 
-// Bước 2 & 3: Sinh Đề tiếp theo
+// Bước 2 & 3: Sinh Đề tiếp theo (đề gốc đã nằm trong lịch sử phiên chat)
 export const generateVariantNextStep = async (
   chat: Chat,
-  stepNumber: number,
+  stepNumber: 2 | 3,
   onChunk: (text: string) => void
 ): Promise<void> => {
-  const prompt = `BƯỚC ${stepNumber}:
-Tiếp tục sinh ra **ĐỀ BIẾN THỂ SỐ ${stepNumber}** (Khác số liệu/cách hỏi so với các đề trước).
-Ngay sau đó, viết **ĐÁP ÁN CHI TIẾT CHO ĐỀ SỐ ${stepNumber}**.
-
-Yêu cầu:
-- Đề thi: Đủ số lượng câu và đúng cấu trúc như đề gốc (không ít hơn, không nhiều hơn).
-- Đáp án: Câu dễ chỉ cần đáp án. Câu khó phải có lời giải vắn tắt.`;
-
   try {
-    await streamWithContinuation(chat, prompt, onChunk);
+    await streamWithContinuation(chat, buildVariantStepPrompt(stepNumber), onChunk);
   } catch (error) {
     console.error(`[Variants] Error Step ${stepNumber}:`, error);
     throw error;

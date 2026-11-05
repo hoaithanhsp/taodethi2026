@@ -2826,12 +2826,12 @@ const App: React.FC = () => {
                   </div>
                   <h3 className="text-xl font-extrabold text-purple-900 mb-2">Sinh 3 đề biến thể</h3>
                   <p className="text-sm text-purple-700/70 mb-5 leading-relaxed">
-                    Upload 1 đề gốc → AI tự động sinh 3 đề khác nhau kèm đáp án chi tiết
+                    Upload 1 đề gốc → AI sinh đề tương tự, đề dạng ngược / bổ sung và đề nâng cao kèm đáp án
                   </p>
                   <div className="space-y-1.5 mb-6">
-                    <div className="mode-card-feature"><div className="dot" style={{ background: '#7c3aed' }} /><span>3 đề biến thể từ 1 gốc</span></div>
-                    <div className="mode-card-feature"><div className="dot" style={{ background: '#7c3aed' }} /><span>Streaming thời gian thực</span></div>
-                    <div className="mode-card-feature"><div className="dot" style={{ background: '#7c3aed' }} /><span>Đáp án chi tiết cho câu khó</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#7c3aed' }} /><span>Đề 1: tương tự, thay số và bối cảnh</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#7c3aed' }} /><span>Đề 2: dạng ngược hoặc bổ sung dạng tương tự</span></div>
+                    <div className="mode-card-feature"><div className="dot" style={{ background: '#7c3aed' }} /><span>Đề 3: nâng cao, khó hơn 2 đề còn lại</span></div>
                     <div className="mode-card-feature"><div className="dot" style={{ background: '#7c3aed' }} /><span>Xuất 1 file Word gộp 3 đề</span></div>
                   </div>
                   <button className="mode-card-btn" onClick={(e) => { e.stopPropagation(); setAppMode('variants'); }}>

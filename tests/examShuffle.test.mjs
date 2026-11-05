@@ -419,4 +419,126 @@ t('Bảng đáp án theo mã đề có đủ các dạng và bảng đối chi�
   assert.ok(!/Hướng dẫn giải chi tiết|Vì \.\.\./.test(key), 'không kèm lời giải');
 });
 
+const KEY_QUESTIONS = [
+  { num: 1, kind: 'mc' }, { num: 2, kind: 'mc' },
+  { num: 3, kind: 'tf' }, { num: 4, kind: 'tf' },
+  { num: 5, kind: 'short' }, { num: 6, kind: 'short' },
+];
+const key = text => m.parseAnswerKey(text, KEY_QUESTIONS).answers;
+const TF3 = { a: 'Đ', b: 'S', c: 'S', d: 'Đ' };
+const TF4 = { a: 'S', b: 'S', c: 'Đ', d: 'Đ' };
+
+t('Đáp án trắc nghiệm ghi cùng dòng với tiêu đề phần', () => {
+  for (const line of [
+    '**PHẦN I.** 1.B, 2.D',
+    'PHẦN I: 1.B, 2.D',
+    'PHẦN 1. 1B 2D',
+    '### PHẦN I. 1.B, 2.D',
+    'PHẦN I. TRẮC NGHIỆM (2 CÂU, 0,5 ĐIỂM): 1.B, 2.D',
+    'PHẦN I (Câu 1 – 2): Câu 1: B | Câu 2: D',
+    'Phần I. Trắc nghiệm nhiều lựa chọn: 1.B; 2.D',
+  ]) assert.deepEqual(key(line).mc, { 1: 'B', 2: 'D' }, line);
+});
+
+t('Nhãn "Phần 2: ĐÁP ÁN & HƯỚNG DẪN GIẢI" không bị coi là Phần II Đúng – Sai', () => {
+  for (const banner of ['**Phần 2: ĐÁP ÁN & HƯỚNG DẪN GIẢI**', '# Phần 2: ĐÁP ÁN & HƯỚNG DẪN GIẢI', 'Phần 2: ĐÁP ÁN']) {
+    const a = key(`${banner}\n1.B, 2.D\nCâu 3: ĐSSĐ\nCâu 5. Đáp số: 10`);
+    assert.deepEqual(a.mc, { 1: 'B', 2: 'D' }, banner);
+    assert.deepEqual(a.tf[3], TF3, banner);
+    assert.equal(a.short[5], '10', banner);
+  }
+  assert.deepEqual(key('Phần 2: ĐÁP ÁN: 1.B, 2.D').mc, { 1: 'B', 2: 'D' });
+});
+
+t('Dãy đáp án dài (trên 120 ký tự) ghi cùng dòng với tiêu đề phần', () => {
+  const pairs = Array.from({ length: 40 }, (_, i) => `${i + 1}.${'ABCD'[i % 4]}`).join(', ');
+  const mc = key(`PHẦN I. TRẮC NGHIỆM: ${pairs}`).mc;
+  assert.equal(Object.keys(mc).length, 40);
+  assert.equal(mc[1], 'A');
+  assert.equal(mc[40], 'D');
+});
+
+t('Đáp án Đúng – Sai ghi cùng dòng với tiêu đề phần', () => {
+  for (const line of [
+    'PHẦN II. Câu 3: ĐSSĐ; Câu 4: SSĐĐ',
+    '**PHẦN II.** 3. Đ S S Đ; 4. S S Đ Đ',
+    'PHẦN II. Đúng – Sai: Câu 3: a) Đ b) S c) S d) Đ; Câu 4: a) S b) S c) Đ d) Đ',
+    'Phần 2: Câu 3: Đúng, Sai, Sai, Đúng | Câu 4: Sai, Sai, Đúng, Đúng',
+  ]) {
+    const a = key(line);
+    assert.deepEqual(a.tf[3], TF3, line);
+    assert.deepEqual(a.tf[4], TF4, line);
+    assert.deepEqual(a.mc, {}, line);
+  }
+});
+
+t('Đáp án trả lời ngắn ghi cùng dòng với tiêu đề phần (giữ dấu phẩy thập phân, số âm)', () => {
+  for (const [line, exp] of [
+    ['PHẦN III. Câu 5: 10; Câu 6: 3,5', { 5: '10', 6: '3,5' }],
+    ['**PHẦN III.** 5. 10; 6. 3,5', { 5: '10', 6: '3,5' }],
+    ['PHẦN III. 5: -2 6: 0.5', { 5: '-2', 6: '0.5' }],
+    ['PHẦN III. Trả lời ngắn: 5. 10, 6. 3,5', { 5: '10', 6: '3,5' }],
+  ]) assert.deepEqual(key(line).short, exp, line);
+});
+
+t('Dòng chỉ là tiêu đề phần: không đọc nhầm thành đáp án, câu ở dòng sau vẫn đúng phần', () => {
+  for (const line of [
+    'PHẦN I. TRẮC NGHIỆM (24 CÂU, 6 ĐIỂM)',
+    'PHẦN I. Câu trắc nghiệm 4 phương án',
+    'PHẦN II. Đúng – Sai (Câu 13-16)',
+    'PHẦN 2: Đúng sai',
+    'PHẦN III. Trả lời ngắn (mỗi câu 0.5 điểm)',
+    'PHẦN III. Trả lời ngắn (Câu 5-6): 2 điểm',
+    'PHẦN IV. Tự luận: 1. 5 điểm',
+  ]) {
+    const a = key(line);
+    assert.deepEqual([a.mc, a.tf, a.short], [{}, {}, {}], line);
+  }
+  const a = key('PHẦN I. TRẮC NGHIỆM (2 CÂU)\n1.B, 2.D\nPHẦN II. Đúng – Sai\nCâu 3: ĐSSĐ\nPHẦN III. Trả lời ngắn\nCâu 5: 10');
+  assert.deepEqual(a.mc, { 1: 'B', 2: 'D' });
+  assert.deepEqual(a.tf[3], TF3);
+  assert.deepEqual(a.short, { 5: '10' });
+});
+
+t('Đề đầy đủ có đáp án cùng dòng tiêu đề phần: đọc đủ đáp án và đảo đề đúng', () => {
+  const src = String.raw`**Câu 1.** ID1 Hỏi một?
+A. Một 1
+B. Một 2
+C. Một 3
+D. Một 4
+
+**Câu 2.** ID2 Hỏi hai?
+A. Hai 1
+B. Hai 2
+C. Hai 3
+D. Hai 4
+
+**PHẦN II. Đúng – Sai**
+
+**Câu 3.** ID3 Xét đúng sai:
+a) ý một
+b) ý hai
+c) ý ba
+d) ý bốn
+
+**PHẦN III. Trả lời ngắn**
+
+**Câu 4.** ID4 Tính $5+5$.
+
+## ĐÁP ÁN
+
+**PHẦN I.** 1.B, 2.D
+
+**PHẦN II.** Câu 3: ĐSSĐ
+
+**PHẦN III.** Câu 4: 10
+`;
+  const e = m.parseExamForShuffle(src);
+  assert.deepEqual(e.answers.mc, { 1: 'B', 2: 'D' });
+  assert.deepEqual(e.answers.tf[3], TF3);
+  assert.equal(e.answers.short[4], '10');
+  assert.deepEqual(m.missingAnswers(e), []);
+  assertVersionsCorrect(e, m.generateExamVersions(e, e.answers, ALL, 5));
+});
+
 console.log(`\n${ok} kiểm thử đạt.`);
