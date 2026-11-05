@@ -14,7 +14,7 @@
 |---|--------|-------|
 | 🔧 | **Tạo đề theo CV 7991** | Pipeline 4 bước chuẩn: INPUT → Ma trận → Đặc tả → Đề thi |
 | 📋 | **Tạo đề tương tự** | Upload 1 đề mẫu → AI sinh đề mới giữ nguyên cấu trúc |
-| 🔀 | **Sinh 3 đề biến thể** | Upload 1 đề gốc → AI sinh 3 đề biến thể kèm đáp án |
+| 🔀 | **Sinh 3 đề biến thể** | Upload 1 đề gốc → AI sinh đề tương tự, đề dạng ngược / bổ sung, đề nâng cao kèm đáp án |
 
 ---
 
@@ -119,9 +119,9 @@ Chế độ mạnh mẽ nhất để **nhân bản đề thi** — từ 1 đề 
 
 ### Quy trình 3 bước tự động
 1. **Upload đề gốc** (PDF hoặc ảnh)
-2. AI sinh **Đề biến thể số 1** + Đáp án (streaming trực tiếp)
-3. AI sinh **Đề biến thể số 2** + Đáp án
-4. AI sinh **Đề biến thể số 3** + Đáp án
+2. AI sinh **Đề 1 – Đề tương tự** + Đáp án (streaming trực tiếp)
+3. AI sinh **Đề 2 – Đề dạng ngược / bổ sung** + Đáp án
+4. AI sinh **Đề 3 – Đề nâng cao** + Đáp án
 
 ### Giao diện 3 cột
 - Mỗi đề hiển thị trong **1 cột riêng** (layout 3 cột trên desktop)
@@ -129,8 +129,11 @@ Chế độ mạnh mẽ nhất để **nhân bản đề thi** — từ 1 đề 
 - **Thanh tiến trình**: Theo dõi bước 1 → 2 → 3
 
 ### Nguyên tắc sinh biến thể
-- ✓ Giữ nguyên cấu trúc, số lượng câu, mức độ khó
-- ✓ Thay đổi số liệu, bối cảnh, cách hỏi
+- ✓ Cả 3 đề giữ nguyên khung đề gốc: số phần, số câu, hình thức câu, thang điểm
+- ✓ **Đề 1 – Tương tự:** cùng dạng toán và mức độ, chỉ thay số liệu và bối cảnh tương tự
+- ✓ **Đề 2 – Dạng ngược / bổ sung:** đảo chiều bài toán, hoặc bổ sung dạng toán tương tự khi câu đó không đảo được; độ khó tương đương đề gốc
+- ✓ **Đề 3 – Nâng cao:** mỗi câu khó hơn câu tương ứng ít nhất một bậc, khó hơn rõ rệt so với Đề 1 và Đề 2, vẫn trong chương trình của khối lớp
+- ✓ Cuối đáp án Đề 2 và Đề 3 có 1 dòng đối chiếu từng câu với đề gốc để giáo viên kiểm tra nhanh
 - ✓ Đáp án là số đẹp, hợp lý
 - ✓ Câu dễ: Chỉ ghi đáp án | Câu khó: Lời giải vắn tắt
 

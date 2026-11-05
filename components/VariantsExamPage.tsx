@@ -4,7 +4,7 @@ import { Chat } from "@google/genai";
 import FileUploadZone from './FileUploadZone';
 import MarkdownRenderer from './MarkdownRenderer';
 import BbtQuickGenerator from './BbtQuickGenerator';
-import { createVariantSession, generateVariantStep1, generateVariantNextStep, cloneVariantSession, countVariantQuestions } from '../services/variantsExamService';
+import { createVariantSession, generateVariantStep1, generateVariantNextStep, cloneVariantSession, countVariantQuestions, VARIANT_PROFILES, VariantStep } from '../services/variantsExamService';
 import { exportToDoc } from '../services/exportUtils';
 import MathFormatSelect from './MathFormatSelect';
 import ShuffleExamPanel from './ShuffleExamPanel';
@@ -127,7 +127,7 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
           `Step ${step}`,
           async (chat) => {
             if (step === 1) await generateVariantStep1(chat, file, (chunk) => setCol(prev => prev + chunk));
-            else await generateVariantNextStep(chat, step, (chunk) => setCol(prev => prev + chunk));
+            else await generateVariantNextStep(chat, step as 2 | 3, (chunk) => setCol(prev => prev + chunk));
           },
           () => setCol('')
         );
@@ -177,7 +177,7 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
             Sinh <span className="text-blue-600">3 đề biến thể</span> từ 1 đề gốc
           </h2>
           <p className="text-base text-slate-600 max-w-xl mx-auto leading-relaxed">
-            Tải lên đề gốc (Word, PDF hoặc ảnh). Hệ thống sẽ tự động sinh 3 đề biến thể kèm đáp án chi tiết theo quy trình 3 bước.
+            Tải lên đề gốc (Word, PDF hoặc ảnh). Hệ thống tự động sinh 3 đề theo 3 mục tiêu khác nhau, kèm đáp án chi tiết.
           </p>
         </div>
 
@@ -214,11 +214,12 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
         )}
 
         {/* Feature highlights */}
-        <div className="grid grid-cols-3 gap-4 text-center">
-          {['Đề 1 + Đáp án', 'Đề 2 + Đáp án', 'Đề 3 + Đáp án'].map((label, i) => (
-            <div key={i} className="card-elevated p-4 flex flex-col items-center gap-2">
-              <div className="w-10 h-10 rounded-full badge-section text-white flex items-center justify-center font-bold">{i + 1}</div>
-              <p className="text-sm font-medium text-teal-800">{label}</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
+          {([1, 2, 3] as VariantStep[]).map(step => (
+            <div key={step} className="card-elevated p-4 flex flex-col items-center gap-2">
+              <div className="w-10 h-10 rounded-full badge-section text-white flex items-center justify-center font-bold">{step}</div>
+              <p className="text-sm font-bold text-teal-800">{VARIANT_PROFILES[step].label}</p>
+              <p className="text-xs text-slate-600 leading-relaxed">{VARIANT_PROFILES[step].description}</p>
             </div>
           ))}
         </div>
@@ -360,9 +361,9 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
 
       {/* 3 Column Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
-        {renderColumn("Bước 1: Đề & Đáp Án Đề 1", col1, VariantState.PROCESSING_STEP_1, "Chờ xử lý...")}
-        {renderColumn("Bước 2: Đề & Đáp Án Đề 2", col2, VariantState.PROCESSING_STEP_2, "Chờ Bước 1...")}
-        {renderColumn("Bước 3: Đề & Đáp Án Đề 3", col3, VariantState.PROCESSING_STEP_3, "Chờ Bước 2...")}
+        {renderColumn(`Đề 1: ${VARIANT_PROFILES[1].label}`, col1, VariantState.PROCESSING_STEP_1, "Chờ xử lý...")}
+        {renderColumn(`Đề 2: ${VARIANT_PROFILES[2].label}`, col2, VariantState.PROCESSING_STEP_2, "Chờ Bước 1...")}
+        {renderColumn(`Đề 3: ${VARIANT_PROFILES[3].label}`, col3, VariantState.PROCESSING_STEP_3, "Chờ Bước 2...")}
       </div>
     </div>
   );
