@@ -14,6 +14,8 @@ import {
   hasExamInfo,
   loadDocxExam,
   missingMixAnswers,
+  parseCodeList,
+  sequenceCodes,
   MixDocument,
   MixKind,
   MixMode,
@@ -90,6 +92,8 @@ const answerValid = (q: MixQuestion, v: string) => {
 
 const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
   const [mode, setMode] = useState<MixMode>('general');
+  const [codeStep, setCodeStep] = useState(1);
+  const [codeText, setCodeText] = useState('');
   const [answerText, setAnswerText] = useState('');
   const [answerNote, setAnswerNote] = useState('');
   const answerFileInput = useRef<HTMLInputElement>(null);
@@ -124,6 +128,18 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
   }, [built, doc]);
   const defaultInfo = useMemo(() => ({ ...DEFAULT_EXAM_INFO, subject: config.subject }), [config.subject]);
   const clampedCount = Math.min(MAX_VERSIONS, Math.max(1, settings.count || 1));
+  // Mã đề tự nhập được ưu tiên; để trống thì tạo dãy cách đều từ mã đầu tiên
+  const typedCodes = useMemo(() => parseCodeList(codeText), [codeText]);
+  const usingTyped = codeText.trim().length > 0;
+  const codes = useMemo(
+    () => (usingTyped ? typedCodes.codes : sequenceCodes(settings.startCode || 101, clampedCount, codeStep)),
+    [usingTyped, typedCodes, settings.startCode, clampedCount, codeStep],
+  );
+  const codeError = !usingTyped ? ''
+    : typedCodes.invalid.length ? `Mã đề chỉ gồm chữ số, cần sửa: ${typedCodes.invalid.join(', ')}.`
+      : typedCodes.duplicates.length ? `Mã đề bị trùng: ${typedCodes.duplicates.join(', ')}.`
+        : codes.length > MAX_VERSIONS ? `Mỗi lần tạo tối đa ${MAX_VERSIONS} mã đề, đang nhập ${codes.length} mã.`
+          : !codes.length ? 'Chưa có mã đề nào.' : '';
 
   const handleFile = async (file: File | undefined) => {
     if (!file) return;
@@ -167,9 +183,9 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
   };
 
   const handleMix = async () => {
-    if (!doc || !ov || !checkAuth()) return;
+    if (!doc || !ov || codeError || !checkAuth()) return;
     setError('');
-    const finalSettings = { ...settings, count: clampedCount, startCode: settings.startCode || 101 };
+    const finalSettings = { ...settings, count: codes.length, startCode: settings.startCode || 101, codes };
     setSettings(finalSettings);
     try {
       const plans = planVersions(doc, finalSettings, ov);
@@ -357,11 +373,15 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
             <div className="flex flex-wrap gap-4">
               <label className="text-sm text-slate-700">
                 <span className="block mb-1">Số mã đề (tối đa {MAX_VERSIONS})</span>
-                <input type="number" min={1} max={MAX_VERSIONS} value={settings.count || ''} onChange={e => updateSettings({ count: parseInt(e.target.value, 10) || 0 })} onBlur={() => updateSettings({ count: clampedCount })} className={`w-24 ${inputCls}`} />
+                <input type="number" min={1} max={MAX_VERSIONS} disabled={usingTyped} value={settings.count || ''} onChange={e => updateSettings({ count: parseInt(e.target.value, 10) || 0 })} onBlur={() => updateSettings({ count: clampedCount })} className={`w-24 disabled:bg-slate-100 disabled:text-slate-400 ${inputCls}`} />
               </label>
               <label className="text-sm text-slate-700">
                 <span className="block mb-1">Mã đề đầu tiên</span>
-                <input type="number" min={1} value={settings.startCode || ''} onChange={e => updateSettings({ startCode: parseInt(e.target.value, 10) || 0 })} className={`w-28 ${inputCls}`} />
+                <input type="number" min={1} disabled={usingTyped} value={settings.startCode || ''} onChange={e => updateSettings({ startCode: parseInt(e.target.value, 10) || 0 })} className={`w-28 disabled:bg-slate-100 disabled:text-slate-400 ${inputCls}`} />
+              </label>
+              <label className="text-sm text-slate-700">
+                <span className="block mb-1">Các mã cách nhau</span>
+                <input type="number" min={1} disabled={usingTyped} value={codeStep || ''} onChange={e => { setCodeStep(parseInt(e.target.value, 10) || 0); setBuilt([]); }} onBlur={() => setCodeStep(Math.max(1, codeStep || 1))} className={`w-24 disabled:bg-slate-100 disabled:text-slate-400 ${inputCls}`} />
               </label>
               <label className="text-sm text-slate-700">
                 <span className="block mb-1">Mã tái tạo kết quả</span>
@@ -372,6 +392,24 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
                   </button>
                 </span>
               </label>
+            </div>
+            <div className="text-sm text-slate-700">
+              <label htmlFor="mix-code-list" className="block mb-1">Hoặc tự nhập các mã đề cần tạo (không bắt buộc)</label>
+              <input
+                id="mix-code-list"
+                type="text"
+                value={codeText}
+                onChange={e => { setCodeText(e.target.value); setBuilt([]); }}
+                placeholder="Ví dụ: 101, 103, 105, 107"
+                aria-invalid={!!codeError}
+                className={`w-full ${inputCls} ${codeError ? 'border-red-400 bg-red-50' : ''}`}
+              />
+              {codeError
+                ? <p className="text-xs text-red-700 mt-1" role="alert">{codeError}</p>
+                : <p className="text-xs text-slate-600 mt-1">Sẽ tạo {codes.length} mã đề: <b>{codes.join(', ')}</b></p>}
+              <p className="text-xs text-slate-500 mt-0.5">
+                Nhiều đề gốc: trộn lần lượt từng đề rồi gộp lại. Ví dụ 2 đề gốc: đề 1 bắt đầu từ 101, đề 2 từ 102, cùng cách nhau 2 (mã lẻ, mã chẵn). 3 đề gốc thì cách nhau 3.
+              </p>
             </div>
             <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-sm text-slate-800">
               {doc.mode === 'english' && (
@@ -549,8 +587,8 @@ const DocxMixPage: React.FC<{ checkAuth: () => boolean }> = ({ checkAuth }) => {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <button type="button" onClick={handleMix} disabled={!!busy} className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-orange-600 hover:bg-orange-700 text-white font-bold disabled:opacity-50">
-              <Shuffle className="w-4 h-4" /> Trộn {clampedCount} mã đề
+            <button type="button" onClick={handleMix} disabled={!!busy || !!codeError} className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-orange-600 hover:bg-orange-700 text-white font-bold disabled:opacity-50">
+              <Shuffle className="w-4 h-4" /> Trộn {codes.length} mã đề
             </button>
             {busy && <span className="text-sm text-orange-800" role="status">{busy}</span>}
           </div>

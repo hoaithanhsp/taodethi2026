@@ -112,6 +112,8 @@ export const hasExamInfo = (info?: ExamInfo): info is ExamInfo => !!info && Obje
 export interface MixSettings {
   count: number;
   startCode: number;
+  /** Danh sách mã đề cần tạo; có thì thay cho số mã đề và mã đầu tiên */
+  codes?: string[];
   shuffleQuestions: boolean;
   shuffleOptions: boolean;
   shuffleStatements: boolean;
@@ -1739,6 +1741,26 @@ const planOne = (doc: MixDocument, s: MixSettings, ov: MixOverrides, code: strin
   return { code, questions, partOrder: partOrder.map(p => p.index) };
 };
 
+/**
+ * Đọc danh sách mã đề giáo viên tự nhập: "101, 103, 105" hoặc mỗi mã một dòng.
+ * Mã đề chỉ gồm chữ số; số 0 ở đầu được giữ nguyên ("0101").
+ */
+export const parseCodeList = (text: string): { codes: string[]; invalid: string[]; duplicates: string[] } => {
+  const codes: string[] = [];
+  const invalid: string[] = [];
+  const duplicates: string[] = [];
+  for (const raw of text.split(/[\s,;]+/).filter(Boolean)) {
+    if (!/^\d{1,10}$/.test(raw)) invalid.push(raw);
+    else if (codes.includes(raw)) { if (!duplicates.includes(raw)) duplicates.push(raw); }
+    else codes.push(raw);
+  }
+  return { codes, invalid, duplicates };
+};
+
+/** Dãy mã đề cách đều: bắt đầu từ 101, cách 2 → 101, 103, 105 (mã lẻ); từ 102, cách 2 → mã chẵn. */
+export const sequenceCodes = (start: number, count: number, step = 1): string[] =>
+  Array.from({ length: Math.max(0, count) }, (_, i) => String(start + i * Math.max(1, step)));
+
 const planSignature = (p: VersionPlan) => p.questions.map(q => `${q.id}:${q.perm ? q.perm.join('') : q.kind === 'mc' ? '0123' : ''}`).join('|');
 
 export const planVersions = (doc: MixDocument, s: MixSettings, ov: MixOverrides): VersionPlan[] => {
@@ -1747,8 +1769,8 @@ export const planVersions = (doc: MixDocument, s: MixSettings, ov: MixOverrides)
   seen.add(identity);
   const plans: VersionPlan[] = [];
   const rand = mulberry32(s.seed >>> 0);
-  for (let i = 0; i < s.count; i++) {
-    const code = String(s.startCode + i);
+  const codes = s.codes?.length ? s.codes : sequenceCodes(s.startCode, s.count);
+  for (const code of codes) {
     let plan = planOne(doc, s, ov, code, rand);
     for (let tries = 0; tries < 30 && seen.has(planSignature(plan)); tries++) plan = planOne(doc, s, ov, code, rand);
     seen.add(planSignature(plan));
@@ -2616,7 +2638,8 @@ const partLabel = (doc: MixDocument, part: number): string => {
  */
 export const answerRows = (plans: VersionPlan[]): Cell[][] => {
   const ordered = [...plans].sort((a, b) => Number(b.code) - Number(a.code));
-  const rows: Cell[][] = [['Câu\\Mã Đề', ...ordered.map(p => Number(p.code))]];
+  // Mã có số 0 ở đầu ("0101") phải giữ dạng chữ, nếu không Excel sẽ mất số 0
+  const rows: Cell[][] = [['Câu\\Mã Đề', ...ordered.map(p => (/^0\d/.test(p.code) ? p.code : Number(p.code)))]];
   const first = plans[0];
   if (!first) return rows;
   const byPosition = ordered.map(p => p.questions);

@@ -409,6 +409,29 @@ await t('phần không ghi "Câu" và không lặp lại vẫn được giữ tr
   assert.ok(text.includes('Chứng minh rằng tổng ba góc') && text.includes('PHẦN IV'));
 });
 
+await t('mã đề: tự nhập danh sách, mã chẵn lẻ, giữ số 0 ở đầu, báo lỗi mã sai và trùng', async () => {
+  assert.deepEqual(m.sequenceCodes(101, 4, 2), ['101', '103', '105', '107'], 'mã lẻ');
+  assert.deepEqual(m.sequenceCodes(102, 3, 2), ['102', '104', '106'], 'mã chẵn');
+  assert.deepEqual(m.sequenceCodes(103, 3, 3), ['103', '106', '109'], 'đề gốc thứ 3 trong 3 đề');
+  assert.deepEqual(m.sequenceCodes(101, 3), ['101', '102', '103'], 'mặc định liên tiếp');
+  assert.deepEqual(m.parseCodeList('101, 103; 105\n107  109'), { codes: ['101', '103', '105', '107', '109'], invalid: [], duplicates: [] });
+  assert.deepEqual(m.parseCodeList('101, 10A, 101'), { codes: ['101'], invalid: ['10A'], duplicates: ['101'] });
+  const s = { ...SETTINGS, count: 99, codes: ['0101', '205', '309'] };
+  const plans2 = m.planVersions(doc, s, ov);
+  assert.deepEqual(plans2.map(p => p.code), ['0101', '205', '309'], 'dùng đúng danh sách, không theo số mã đề');
+  const built2 = [];
+  for (const p of plans2) {
+    const b = await m.buildVersion(doc, p, s);
+    built2.push(b);
+    assert.deepEqual(b.problems, []);
+    assert.ok(plain((await readXml(b.blob)).xml).includes(`Mã đề thi: ${p.code}`), `mã ${p.code} trong đề`);
+  }
+  const wb = await JSZip.loadAsync(await (await m.buildAnswerWorkbook(doc, built2, s)).arrayBuffer());
+  const head = (await wb.file('xl/worksheets/sheet1.xml').async('string')).match(/<row r="1">.*?<\/row>/s)[0];
+  assert.ok(head.includes('>0101<'), 'giữ số 0 đầu trong Excel');
+  assert.deepEqual(m.planVersions(doc, { ...SETTINGS, count: 2, codes: undefined }, ov).map(p => p.code), ['101', '102'], 'không nhập thì như cũ');
+});
+
 /* ------------------- Đề Tiếng Anh: nhóm, thẻ, số câu liên tục ------------------- */
 const EN = { ...SETTINGS, count: 4, startCode: 8385, shuffleGroups: true };
 const inlineQ = (n, opts) => P(R(`Question ${n}. `, '<w:b/>'), R('A. ' + opts[0]), TAB, R('B. ' + opts[1]), TAB, R('C. ' + opts[2]), TAB, R('D. ' + opts[3]));
