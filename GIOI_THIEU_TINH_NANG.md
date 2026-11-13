@@ -151,7 +151,7 @@ Chế độ mạnh mẽ nhất để **nhân bản đề thi** — từ 1 đề 
 - Người dùng tự nhập **API Key** miễn phí từ Google AI Studio
 
 ### 🔐 Hệ thống xác thực
-- Cho phép **1 lượt dùng thử miễn phí** trước khi yêu cầu đăng nhập
+- Khách chưa đăng nhập được **5 lượt dùng thử miễn phí**, dùng chung cho mọi tính năng (mỗi lần bấm tạo/trộn trừ 1 lượt); hết lượt mới yêu cầu đăng nhập
 - Đăng nhập bằng tài khoản + mật khẩu
 - Phiên đăng nhập được **lưu trữ** (không cần đăng nhập lại)
 - Liên hệ Zalo để nhận tài khoản sử dụng không giới hạn

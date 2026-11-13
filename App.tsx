@@ -32,6 +32,10 @@ const mdParser = new MarkdownIt({
   linkify: true
 });
 
+/** Tổng số lượt dùng thử cho khách chưa đăng nhập, dùng chung cho mọi tính năng */
+const TRIAL_LIMIT = 5;
+const TRIAL_COUNT_KEY = 'examcraft_trial_count';
+
 const App: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<AppStep>(AppStep.INPUT);
   const [completedSteps, setCompletedSteps] = useState<number>(0);
@@ -73,9 +77,15 @@ const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return localStorage.getItem('examcraft_auth') === 'true';
   });
-  const [trialUsed, setTrialUsed] = useState<boolean>(() => {
-    return localStorage.getItem('examcraft_trial_used') === 'true';
+  // Khách chưa đăng nhập được dùng thử TRIAL_LIMIT lượt; số lượt đã dùng lưu trong trình duyệt
+  const [trialCount, setTrialCount] = useState<number>(() => {
+    const saved = parseInt(localStorage.getItem(TRIAL_COUNT_KEY) || '', 10);
+    if (Number.isFinite(saved) && saved >= 0) return saved;
+    // Bản cũ chỉ lưu "đã dùng thử" (1 lượt) → tính là đã dùng 1 lượt
+    return localStorage.getItem('examcraft_trial_used') === 'true' ? 1 : 0;
   });
+  const trialsLeft = Math.max(0, TRIAL_LIMIT - trialCount);
+  const trialUsed = trialsLeft === 0;
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -227,10 +237,11 @@ const App: React.FC = () => {
 
   const checkAuthOrTrial = (): boolean => {
     if (isAuthenticated) return true;
-    if (!trialUsed) {
-      // Đánh dấu đã dùng lượt thử
-      setTrialUsed(true);
-      localStorage.setItem('examcraft_trial_used', 'true');
+    if (trialsLeft > 0) {
+      // Trừ 1 lượt thử
+      const next = trialCount + 1;
+      setTrialCount(next);
+      localStorage.setItem(TRIAL_COUNT_KEY, String(next));
       return true;
     }
     // Hết lượt → hiện popup đăng nhập
@@ -2354,7 +2365,7 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <h2 className="text-xl font-bold">Đăng nhập để tiếp tục</h2>
-                  <p className="text-sm text-teal-100">Bạn đã hết lượt dùng thử miễn phí</p>
+                  <p className="text-sm text-teal-100">{trialUsed ? 'Bạn đã hết lượt dùng thử miễn phí' : `Bạn còn ${trialsLeft} lượt dùng thử miễn phí`}</p>
                 </div>
               </div>
               <button onClick={() => setShowLoginModal(false)} className="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-white/10 transition-colors">
@@ -2651,7 +2662,7 @@ const App: React.FC = () => {
                 title="Nhấn để đăng nhập"
               >
                 <LogIn className="w-3 h-3" />
-                {trialUsed ? 'Hết lượt thử · Đăng nhập' : '🎁 1 lượt thử miễn phí · Đăng nhập'}
+                {trialUsed ? 'Hết lượt thử · Đăng nhập' : `🎁 Còn ${trialsLeft} lượt thử miễn phí · Đăng nhập`}
               </button>
             )}
           </div>
@@ -2878,7 +2889,7 @@ const App: React.FC = () => {
                     <p className="text-sm text-slate-500 mb-4">
                       {trialUsed
                         ? 'Bạn đã hết lượt dùng thử. Đăng nhập để sử dụng không giới hạn.'
-                        : 'Đăng nhập ngay hoặc dùng thử 1 lần miễn phí.'}
+                        : `Đăng nhập ngay hoặc dùng thử miễn phí (còn ${trialsLeft}/${TRIAL_LIMIT} lượt).`}
                     </p>
                     <button
                       onClick={() => setShowLoginModal(true)}
