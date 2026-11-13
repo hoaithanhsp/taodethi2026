@@ -4,6 +4,7 @@ import './engine/graph.js';
 import './engine/geo3d.js';
 import './engine/geo2d.js';
 import './engine/export.js';
+import { isSubjectFigureType, renderSubjectFigure } from './subjectFigures';
 
 const g = typeof window !== 'undefined' ? (window as any) : (globalThis as any);
 
@@ -405,6 +406,8 @@ export function sanitizeAndValidateFigureSpec(
   contextHtml?: string
 ): Record<string, any> | null {
   if (!rawSpec || typeof rawSpec !== 'object') return null;
+  // Hình Hóa / Lí / Sinh không phải hình học: giữ nguyên, không đoán đỉnh hay preset
+  if (isSubjectFigureType(rawSpec.type)) return { ...rawSpec };
 
   const spec = { ...rawSpec };
   if (!spec.preset && spec.kind) {
@@ -607,6 +610,8 @@ export function renderFigureSpecToSvg(
     } else {
       rawSpec = specInput;
     }
+
+    if (rawSpec && isSubjectFigureType(rawSpec.type)) return renderSubjectFigure(rawSpec);
 
     const spec = sanitizeAndValidateFigureSpec(rawSpec, contextHtml);
     if (!spec || typeof spec !== 'object') {

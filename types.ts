@@ -218,6 +218,8 @@ export type SolutionMode = 'concise' | 'detailed' | 'very_detailed';
 export interface SimilarExamOptions {
   diagramMode: DiagramMode;
   solutionMode: SolutionMode;
+  /** Môn học giáo viên khai báo (bắt buộc ở giao diện) */
+  subject?: string;
 }
 
 // ============================================

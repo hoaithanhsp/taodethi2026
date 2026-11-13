@@ -3,6 +3,8 @@ import { Copy, RotateCcw, FileSpreadsheet, CheckCircle, Download, FileText, Slid
 import FileUploadZone from './FileUploadZone';
 import MarkdownRenderer from './MarkdownRenderer';
 import BbtQuickGenerator from './BbtQuickGenerator';
+import SubjectStudio from './SubjectStudio';
+import { SUBJECT_OPTIONS } from '../services/subjectFigures';
 import { generateSimilarExam } from '../services/similarExamService';
 import { exportToDoc } from '../services/exportUtils';
 import MathFormatSelect from './MathFormatSelect';
@@ -28,6 +30,9 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
   // Options
   const [diagramMode, setDiagramMode] = useState<DiagramMode>('standard');
   const [solutionMode, setSolutionMode] = useState<SolutionMode>('detailed');
+  // Môn học bắt buộc: quyết định Studio hình nạp kèm (Hóa, Lí, Sinh…)
+  const [subject, setSubject] = useState('');
+  const [subjectError, setSubjectError] = useState(false);
 
   const [fileError, setFileError] = useState('');
 
@@ -48,6 +53,7 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
 
   const handleGenerate = async () => {
     if (!fileData || isGenerating) return;
+    if (!subject) { setSubjectError(true); return; }
     if (!checkAuth()) return;
 
     // Sinh lại khi đã có kết quả: GIỮ kết quả cũ trên màn hình cho tới khi có đề mới (lỗi thì không mất đề cũ)
@@ -61,7 +67,7 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
       const generatedContent = await generateSimilarExam(
         fileData.base64,
         fileData.mimeType,
-        { diagramMode, solutionMode },
+        { diagramMode, solutionMode, subject },
         getSelectedModel(),
         undefined,
         (partial) => {
@@ -145,6 +151,24 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
             <Sliders className="w-4 h-4 text-teal-600" />
             <h3>Cấu hình sinh đề</h3>
           </div>
+          <div className="mb-6 space-y-2">
+            <label htmlFor="similar-subject" className="text-sm font-medium text-slate-700 flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-slate-400" /> Môn học <span className="text-red-600">*</span>
+            </label>
+            <select
+              id="similar-subject"
+              value={subject}
+              onChange={(e) => { setSubject(e.target.value); setSubjectError(false); }}
+              aria-invalid={subjectError}
+              className={`w-full p-2.5 input-elevated text-sm ${subjectError ? 'ring-2 ring-red-400' : ''}`}
+            >
+              <option value="">-- Chọn môn học của đề mẫu --</option>
+              {SUBJECT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+            {subjectError
+              ? <p className="text-xs text-red-600" role="alert">Vui lòng chọn Môn học trước khi tạo đề.</p>
+              : <p className="text-xs text-slate-500">Môn Hóa học, Vật lí, Sinh học có thêm Studio vẽ hình riêng của môn sau khi tạo đề.</p>}
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
@@ -203,9 +227,9 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
           )}
           <button
             onClick={handleGenerate}
-            disabled={!fileData || status === 'analyzing'}
+            disabled={!fileData || !subject || status === 'analyzing'}
             className={`group relative px-8 py-4 text-white font-bold text-lg rounded-2xl shadow-lg transition-all duration-300
-              ${!fileData || status === 'analyzing'
+              ${!fileData || !subject || status === 'analyzing'
                 ? 'bg-slate-400 cursor-not-allowed'
                 : 'bg-gradient-to-r from-teal-600 to-emerald-600 hover:-translate-y-1 hover:shadow-teal-500/30 active:scale-95'
               }`}
@@ -399,6 +423,16 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
               </button>
             </div>
           </div>
+
+          {result && (activeTab === 'examContent' || activeTab === 'detailedSolution') && (
+            <SubjectStudio
+              subject={subject}
+              documents={[
+                { id: 'exam', label: 'Đề thi', content: result.examContent, onUpdate: (next) => setResult((prev) => (prev ? { ...prev, examContent: next } : prev)) },
+                { id: 'solution', label: 'Lời giải', content: result.detailedSolution, onUpdate: (next) => setResult((prev) => (prev ? { ...prev, detailedSolution: next } : prev)) },
+              ]}
+            />
+          )}
 
           {result && (activeTab === 'examContent' || activeTab === 'detailedSolution') && (
             <BbtQuickGenerator

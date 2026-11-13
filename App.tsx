@@ -5,6 +5,7 @@ import StepIndicator from './components/StepIndicator';
 import Button from './components/Button';
 import MarkdownView from './components/MarkdownView';
 import BbtQuickGenerator from './components/BbtQuickGenerator';
+import SubjectStudio from './components/SubjectStudio';
 import SimilarExamPage from './components/SimilarExamPage';
 import VariantsExamPage from './components/VariantsExamPage';
 
@@ -645,6 +646,12 @@ const App: React.FC = () => {
   // -- Generation Handlers --
 
   const handleGenerateMatrix = async () => {
+    // Môn học bắt buộc: quyết định Studio hình (Hóa, Lí, Sinh…) nạp ở bước Đề thi
+    if (!inputData.subject.trim()) {
+      setGenState(prev => ({ ...prev, error: 'Vui lòng chọn Môn học trước khi tạo Ma trận.' }));
+      alert('Vui lòng chọn Môn học trước khi tạo Ma trận.');
+      return;
+    }
     if (!checkAuthOrTrial()) return;
 
     if (selectedLessonIds.size === 0) {
@@ -1452,7 +1459,7 @@ const App: React.FC = () => {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
           <div>
-            <label className="block text-sm font-semibold text-teal-700 mb-2">Môn học</label>
+            <label className="block text-sm font-semibold text-teal-700 mb-2">Môn học <span className="text-red-600">*</span></label>
             <select
               name="subject"
               value={isCustomSubject ? '__custom__' : inputData.subject}
@@ -2194,6 +2201,13 @@ const App: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+
+      {currentStep === AppStep.EXAM && content && (
+        <SubjectStudio
+          subject={inputData.subject}
+          documents={[{ id: 'exam', label: 'Đề thi', content, onUpdate: onUpdateContent }]}
+        />
       )}
 
       {currentStep === AppStep.EXAM && (

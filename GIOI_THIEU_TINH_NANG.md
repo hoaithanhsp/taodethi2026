@@ -142,6 +142,18 @@ Chế độ mạnh mẽ nhất để **nhân bản đề thi** — từ 1 đề 
 
 ---
 
+## 🧪 STUDIO VẼ HÌNH THEO MÔN
+
+Ở các chế độ Tạo đề CV 7991, Tạo đề tương tự và Sinh 3 đề biến thể, giáo viên **bắt buộc chọn Môn học**. Khi đã có đề, app nạp thêm Studio riêng của môn, bên cạnh Studio Toán (bảng biến thiên, đồ thị, hình học):
+
+- **Hóa học** (chuyển từ app Tạo đề Hóa học): bộ thí nghiệm (chưng cất, chiết, chuẩn độ, điện phân, pin Zn–Cu), dụng cụ rời (I), (II)…, phổ IR, phổ MS, công thức cấu tạo từ SMILES, glucose/fructose mạch vòng, chuỗi peptide, mắt xích polymer.
+- **Vật lí**: mạch điện nối tiếp / song song (R, biến trở, đèn, ampe kế, vôn kế, tụ, cuộn cảm, khóa K), lực tác dụng lên vật trên mặt phẳng nghiêng / ngang, tia sáng qua thấu kính hội tụ / phân kì (tự tính vị trí, tính chất ảnh), đồ thị chuyển động, đồ thị dao động điều hòa.
+- **Sinh học**: sơ đồ phả hệ, khung Punnett (tự tách giao tử, có gen trên X), lưới thức ăn tự xếp bậc dinh dưỡng, biểu đồ cột / đường.
+
+Hình được chèn ngay dưới lời dẫn của câu đã chọn, hiển thị trên web và xuất Word thành ảnh PNG 300 DPI.
+
+---
+
 ## 🔑 TÍNH NĂNG CHUNG
 
 ### 🤖 Tích hợp Google Gemini AI

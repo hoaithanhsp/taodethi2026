@@ -139,6 +139,10 @@ const parseJsonLoose = <T,>(text: string): T => {
 const buildCustomInstructions = (options?: SimilarExamOptions): string => {
   let customInstructions = "";
   if (!options) return customInstructions;
+  if (options.subject) {
+    customInstructions += `\n\n### MÔN HỌC (giáo viên đã khai báo): ${options.subject}
+- Đề mới PHẢI đúng môn ${options.subject}, cùng khối lớp và phạm vi kiến thức với đề mẫu.`;
+  }
   if (options.diagramMode === 'detailed') {
     customInstructions += `\n\n### YÊU CẦU NÂNG CAO VỀ HÌNH VẼ (High Detail):
 - BẮT BUỘC vẽ hình trực quan bằng khối \`\`\`figure-json ... \`\`\` cho mọi câu có Bảng biến thiên (type: "bbt"), Đồ thị hàm số / Diện tích hình phẳng (type: "graph"), Hình không gian 3D (type: "geo3d"), và Hình phẳng 2D (type: "geo2d").

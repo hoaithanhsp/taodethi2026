@@ -4,6 +4,8 @@ import { Chat } from "@google/genai";
 import FileUploadZone from './FileUploadZone';
 import MarkdownRenderer from './MarkdownRenderer';
 import BbtQuickGenerator from './BbtQuickGenerator';
+import SubjectStudio from './SubjectStudio';
+import { SUBJECT_OPTIONS } from '../services/subjectFigures';
 import { createVariantSession, generateVariantStep1, generateVariantNextStep, cloneVariantSession, countVariantQuestions, VARIANT_PROFILES, VariantStep } from '../services/variantsExamService';
 import { exportToDoc } from '../services/exportUtils';
 import MathFormatSelect from './MathFormatSelect';
@@ -18,6 +20,9 @@ interface VariantsExamPageProps {
 
 const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
   const [file, setFile] = useState<VariantFileData | null>(null);
+  // Môn học bắt buộc: quyết định Studio hình nạp kèm (Hóa, Lí, Sinh…)
+  const [subject, setSubject] = useState('');
+  const [subjectError, setSubjectError] = useState(false);
   const [col1, setCol1] = useState('');
   const [col2, setCol2] = useState('');
   const [col3, setCol3] = useState('');
@@ -95,6 +100,7 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
   /** Chạy quy trình từ bước `fromStep` (1 = từ đầu). Các đề trước bước đó được giữ nguyên. */
   const runFrom = async (fromStep: 1 | 2 | 3) => {
     if (!file) return;
+    if (!subject) { setSubjectError(true); return; }
     if (!checkAuth()) return;
 
     const provider = getAiProvider();
@@ -126,7 +132,7 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
         await executeStepWithRetry(
           `Step ${step}`,
           async (chat) => {
-            if (step === 1) await generateVariantStep1(chat, file, (chunk) => setCol(prev => prev + chunk));
+            if (step === 1) await generateVariantStep1(chat, file, (chunk) => setCol(prev => prev + chunk), subject);
             else await generateVariantNextStep(chat, step as 2 | 3, (chunk) => setCol(prev => prev + chunk));
           },
           () => setCol('')
@@ -182,6 +188,24 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
         </div>
 
         <div className="card-elevated p-6">
+          <div className="mb-5 space-y-1.5">
+            <label htmlFor="variants-subject" className="block text-sm font-semibold text-teal-800">
+              Môn học <span className="text-red-600">*</span>
+            </label>
+            <select
+              id="variants-subject"
+              value={subject}
+              onChange={(e) => { setSubject(e.target.value); setSubjectError(false); }}
+              aria-invalid={subjectError}
+              className={`w-full p-2.5 input-elevated text-sm ${subjectError ? 'ring-2 ring-red-400' : ''}`}
+            >
+              <option value="">-- Chọn môn học của đề gốc --</option>
+              {SUBJECT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+            {subjectError
+              ? <p className="text-xs text-red-600" role="alert">Vui lòng chọn Môn học trước khi sinh đề.</p>
+              : <p className="text-xs text-slate-500">Môn Hóa học, Vật lí, Sinh học có thêm Studio vẽ hình riêng của môn sau khi sinh đề.</p>}
+          </div>
           <FileUploadZone
             onFileSelect={handleFileSelect}
             selectedFileName={file?.name}
@@ -194,9 +218,9 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
 
           <button
             onClick={runProcess}
-            disabled={!file}
+            disabled={!file || !subject}
             className={`w-full mt-6 flex items-center justify-center gap-3 py-4 px-6 rounded-xl font-bold text-lg transition-all
-              ${!file
+              ${!file || !subject
                 ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
                 : 'bg-gradient-to-r from-teal-600 to-emerald-600 text-white hover:shadow-lg hover:-translate-y-0.5 active:scale-95'
               }`}
@@ -338,6 +362,17 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
           </div>
         );
       })()}
+
+      {(col1 || col2 || col3) && (
+        <SubjectStudio
+          subject={subject}
+          documents={[
+            { id: 'col1', label: 'Đề 1', content: col1, onUpdate: setCol1 },
+            { id: 'col2', label: 'Đề 2', content: col2, onUpdate: setCol2 },
+            { id: 'col3', label: 'Đề 3', content: col3, onUpdate: setCol3 },
+          ]}
+        />
+      )}
 
       {(col1 || col2 || col3) && (
         <BbtQuickGenerator
