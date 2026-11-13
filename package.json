@@ -13,6 +13,7 @@
     "test:shuffle": "node tests/examShuffle.test.mjs",
     "test:mixer": "node tests/docxMixer.test.mjs",
     "test:variants": "node tests/variantsExam.test.mjs",
+    "test:subject": "node tests/subjectFigures.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

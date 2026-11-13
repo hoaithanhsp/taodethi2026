@@ -194,11 +194,13 @@ ${COMMON_REQUIREMENTS}`;
 export const generateVariantStep1 = async (
   chat: Chat,
   file: VariantFileData,
-  onChunk: (text: string) => void
+  onChunk: (text: string) => void,
+  subject?: string
 ): Promise<void> => {
   // PDF/ảnh gửi nguyên file; Word .docx được app đọc trước (bảng, công thức LaTeX, hình)
   const sourceParts = await prepareExamSourceParts(file.data, file.type, file.name);
-  const textPart: Part = { text: buildVariantStepPrompt(1) };
+  const subjectNote = subject ? `MÔN HỌC (giáo viên đã khai báo): ${subject}. Cả 3 đề phải đúng môn ${subject}.\n\n` : '';
+  const textPart: Part = { text: subjectNote + buildVariantStepPrompt(1) };
 
   try {
     await streamWithContinuation(chat, [...sourceParts, textPart], onChunk);

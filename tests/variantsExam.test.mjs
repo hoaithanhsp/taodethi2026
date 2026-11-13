@@ -86,6 +86,13 @@ await t('Mỗi bước thực sự gửi đúng yêu cầu của đề đó, the
   assert.equal(chat.sent[2], P3);
 });
 
+await t('Môn học giáo viên khai báo được gửi kèm yêu cầu Đề 1', async () => {
+  const chat = fakeChat();
+  await m.generateVariantStep1(chat, { name: 'de.pdf', type: 'application/pdf', data: 'QUJD' }, () => {}, 'Hóa học');
+  assert.match(chat.sent[0][1].text, /^MÔN HỌC \(giáo viên đã khai báo\): Hóa học\./);
+  assert.ok(chat.sent[0][1].text.endsWith(P1));
+});
+
 const exam = (note) => `**ĐỀ SỐ 2**
 
 **PHẦN I. Trắc nghiệm**
