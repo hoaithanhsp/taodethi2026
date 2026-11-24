@@ -165,7 +165,7 @@ const buildCustomInstructions = (options?: SimilarExamOptions): string => {
   return customInstructions;
 };
 
-const TRUNCATED_NOTE = '\n\n> ⚠️ Lời giải quá dài nên bị cắt ở đây. Hãy chọn "Chi tiết lời giải: Ngắn gọn" hoặc model Pro rồi tạo lại để có lời giải đầy đủ.';
+const TRUNCATED_NOTE = '\n\n> ⚠️ Lời giải quá dài nên bị cắt ở đây. Hãy chọn "Chi tiết lời giải: Ngắn gọn" hoặc model Gemini 4 Hydrogen rồi tạo lại để có lời giải đầy đủ.';
 
 /**
  * Tạo đề tương tự theo 2 lượt (tránh đề dài bị cắt cụt khi gộp tất cả vào 1 JSON):
@@ -220,7 +220,7 @@ export const generateSimilarExam = async (
       const text = response.text;
       if (!text) throw new Error("AI không trả về nội dung.");
       if (wasTruncated(response)) {
-        throw new UserFacingError('Đề mẫu quá dài nên AI bị cắt giữa chừng khi tạo đề mới. Hãy tách đề mẫu thành 2 phần (ví dụ phần trắc nghiệm và phần tự luận) rồi tạo lần lượt, hoặc chọn model Pro.');
+        throw new UserFacingError('Đề mẫu quá dài nên AI bị cắt giữa chừng khi tạo đề mới. Hãy tách đề mẫu thành 2 phần (ví dụ phần trắc nghiệm và phần tự luận) rồi tạo lần lượt, hoặc chọn model Gemini 4 Hydrogen.');
       }
       try {
         const parsed = parseJsonLoose<{ analysis?: string; examContent?: string }>(text);

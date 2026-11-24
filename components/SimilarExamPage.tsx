@@ -15,9 +15,10 @@ import { prepareExamSourceParts, isDocxSource } from '../services/examSourceServ
 
 interface SimilarExamPageProps {
   checkAuth: () => boolean;
+  onOpenSettings?: () => void;
 }
 
-const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
+const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth, onOpenSettings }) => {
   const [status, setStatus] = useState<'idle' | 'analyzing' | 'success' | 'error'>('idle');
   const [result, setResult] = useState<SimilarExamResult | null>(null);
   const [activeTab, setActiveTab] = useState<'analysis' | 'examContent' | 'detailedSolution'>('analysis');
@@ -294,6 +295,14 @@ const SimilarExamPage: React.FC<SimilarExamPageProps> = ({ checkAuth }) => {
               className="px-6 py-3 bg-teal-700 text-white font-medium rounded-xl hover:bg-teal-800 transition-colors shadow-lg disabled:opacity-60"
             >
               Thử lại với file này
+            </button>
+          )}
+          {onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              className="px-6 py-3 bg-amber-50 text-amber-800 border border-amber-300 font-medium rounded-xl hover:bg-amber-100 transition-colors"
+            >
+              Thêm / Đổi API Key
             </button>
           )}
           <button

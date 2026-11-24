@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { Download, Play, RefreshCw, AlertCircle, Loader2, FileCheck, ArrowRight } from 'lucide-react';
-import { Chat } from "@google/genai";
+import { Download, Play, RefreshCw, AlertCircle, Loader2, FileCheck, ArrowRight, Key } from 'lucide-react';
+import { Chat, Content } from "@google/genai";
 import FileUploadZone from './FileUploadZone';
 import MarkdownRenderer from './MarkdownRenderer';
 import BbtQuickGenerator from './BbtQuickGenerator';
@@ -11,14 +11,32 @@ import { exportToDoc } from '../services/exportUtils';
 import MathFormatSelect from './MathFormatSelect';
 import ShuffleExamPanel from './ShuffleExamPanel';
 import { VariantFileData, VariantState } from '../types';
-import { getApiKey, getFriendlyGeminiErrorMessage, parseApiError, getAiProvider, getGeminiModelsToTry, getSelectedModel, setFallbackNotice, UserFacingError } from '../services/geminiService';
+import {
+  getApiKey,
+  getFriendlyGeminiErrorMessage,
+  classifyApiError,
+  getAiProvider,
+  getGeminiModelsToTry,
+  getSelectedModel,
+  setFallbackNotice,
+  UserFacingError,
+  hasAiAccess,
+  checkServerProxyAvailable,
+  getServerProxyStatus,
+  maskGoogleAiApiKey,
+  SERVER_PROXY_KEY_SENTINEL,
+} from '../services/geminiService';
+import { apiKeyManager } from '../services/apiKeyManager';
 import { prepareExamSourceParts, isDocxSource } from '../services/examSourceService';
 
 interface VariantsExamPageProps {
   checkAuth: () => boolean;
+  onOpenSettings?: () => void;
 }
 
-const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth, onOpenSettings }) => {
   const [file, setFile] = useState<VariantFileData | null>(null);
   // Môn học bắt buộc: quyết định Studio hình nạp kèm (Hóa, Lí, Sinh…)
   const [subject, setSubject] = useState('');
@@ -32,7 +50,9 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
   const [failedStep, setFailedStep] = useState<1 | 2 | 3 | null>(null);
 
   const chatSessionRef = useRef<Chat | null>(null);
-  const currentModelIndexRef = useRef<number>(0);
+  const historyBeforeFailedStepRef = useRef<Content[]>([]);
+  const currentModelRef = useRef<string>('');
+  const currentKeyRef = useRef<string>('');
 
   const handleFileSelect = async (data: { base64: string; mimeType: string; name: string }) => {
     setError(null);
@@ -52,46 +72,192 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
   const executeStepWithRetry = async (
     stepName: string,
     executeFn: (chat: Chat) => Promise<void>,
-    resetOutput: () => void
+    resetOutput: () => void,
+    historySnapshot: Content[]
   ) => {
-    let lastError: any = null;
     const provider = getAiProvider();
-    const models = getGeminiModelsToTry(getSelectedModel(), provider);
-    const apiKey = getApiKey(provider);
-    if (!apiKey) throw new Error(`Vui lòng nhập API Key cho ${provider === 'agent-platform' ? 'Agent Platform' : 'Google Gemini'} trong phần Cài đặt.`);
+    const models = getGeminiModelsToTry(currentModelRef.current || getSelectedModel(provider), provider);
 
-    for (let i = currentModelIndexRef.current; i < models.length; i++) {
-      try {
-        await executeFn(chatSessionRef.current!);
-        currentModelIndexRef.current = i;
-        setFallbackNotice(null);
-        return;
-      } catch (err: any) {
-        const errorType = parseApiError(err);
-        console.warn(`[Variants] (${provider}) Step '${stepName}' failed with ${models[i]} (${errorType}):`, err);
-        lastError = err;
-
-        // Sai API key hoặc lỗi về file (Word MathType, .doc cũ…) → đổi model cũng vô ích
-        if (errorType === 'INVALID_API_KEY' || err instanceof UserFacingError) {
-          break;
-        }
-
-        if (i < models.length - 1) {
-          resetOutput();
-          const currentModel = models[i];
-          const nextModel = models[i + 1];
-          setFallbackNotice(
-            `Đang tự động chuyển từ ${currentModel} sang ${nextModel} (do ${currentModel} đang bận)...`
-          );
-          console.log(`[Variants] (${provider}) Switching to fallback: ${nextModel}`);
-          if (chatSessionRef.current) {
-            chatSessionRef.current = await cloneVariantSession(apiKey, chatSessionRef.current, nextModel, provider);
+    // Nhánh Agent Platform (1 key riêng, fallback qua AGENT_PLATFORM_FALLBACK_MODELS)
+    if (provider === 'agent-platform') {
+      const apiKey = getApiKey('agent-platform');
+      if (!apiKey) {
+        throw new Error('Vui lòng nhập API Key cho Agent Platform trong phần Cài đặt.');
+      }
+      let lastError: any = null;
+      for (let i = 0; i < models.length; i++) {
+        const targetModel = models[i];
+        try {
+          if (!chatSessionRef.current || currentModelRef.current !== targetModel || currentKeyRef.current !== apiKey) {
+            chatSessionRef.current = await cloneVariantSession(apiKey, historySnapshot, targetModel, 'agent-platform');
+            currentModelRef.current = targetModel;
+            currentKeyRef.current = apiKey;
+          }
+          await executeFn(chatSessionRef.current);
+          setFallbackNotice(null);
+          return;
+        } catch (err: any) {
+          if (err instanceof UserFacingError) throw err;
+          lastError = err;
+          const classified = classifyApiError(err);
+          console.warn(`[Variants] (agent-platform) Step '${stepName}' failed with ${targetModel} (${classified.type}):`, err);
+          if (classified.type === 'INVALID_API_KEY' || classified.type === 'INVALID_ARGUMENT') {
+            break;
+          }
+          if (i < models.length - 1) {
+            resetOutput();
+            const nextModel = models[i + 1];
+            setFallbackNotice(`Đang tự động chuyển từ ${targetModel} sang ${nextModel} (do ${targetModel} đang bận)...`);
           }
         }
       }
+      setFallbackNotice(null);
+      throw new Error(getFriendlyGeminiErrorMessage(lastError, 'agent-platform'));
     }
-    setFallbackNotice(null);
-    throw new Error(getFriendlyGeminiErrorMessage(lastError));
+
+    // Nhánh Gemini API: 2 tầng (Multi-Key trên cùng model → Server Proxy → Model Free Tier kế tiếp → Short RPM wait)
+    if (!getServerProxyStatus().checked && apiKeyManager.getAllKeys().length === 0) {
+      await checkServerProxyAvailable();
+    }
+    const proxyStatus = getServerProxyStatus();
+    const hasAnyClientKey = apiKeyManager.getAllKeys().length > 0;
+    if (!hasAnyClientKey && !proxyStatus.available) {
+      throw new Error('Vui lòng nhập ít nhất 1 Gemini API Key trong phần Cài đặt.');
+    }
+
+    let lastError: any = null;
+    let hasWaitedRpm = false;
+
+    const runPass = async (): Promise<boolean> => {
+      for (let mIdx = 0; mIdx < models.length; mIdx++) {
+        const targetModel = models[mIdx];
+        const candidateKeys = apiKeyManager.getAvailableKeysForModel(
+          targetModel,
+          currentKeyRef.current && currentKeyRef.current !== SERVER_PROXY_KEY_SENTINEL ? currentKeyRef.current : undefined
+        );
+
+        let modelServerFailed = false;
+
+        // Tầng 1: Thử hết các key khả dụng trên CÙNG model
+        for (let kIdx = 0; kIdx < candidateKeys.length; kIdx++) {
+          const candidateKey = candidateKeys[kIdx];
+          try {
+            if (
+              !chatSessionRef.current ||
+              currentModelRef.current !== targetModel ||
+              currentKeyRef.current !== candidateKey
+            ) {
+              chatSessionRef.current = await cloneVariantSession(candidateKey, historySnapshot, targetModel, 'gemini');
+              currentModelRef.current = targetModel;
+              currentKeyRef.current = candidateKey;
+            }
+            await executeFn(chatSessionRef.current);
+            setFallbackNotice(null);
+            return true;
+          } catch (err: any) {
+            if (err instanceof UserFacingError) throw err;
+            lastError = err;
+            const classified = classifyApiError(err);
+            console.warn(
+              `[Variants] (gemini) Step '${stepName}' failed on model=${targetModel} key=${maskGoogleAiApiKey(candidateKey)} (${classified.type}):`,
+              err
+            );
+
+            // Reset output & vô hiệu session cũ để lần thử tiếp luôn bắt đầu từ historySnapshot sạch
+            resetOutput();
+            chatSessionRef.current = null;
+
+            if (classified.type === 'QUOTA_EXCEEDED' || classified.type === 'RATE_LIMIT') {
+              apiKeyManager.markKeyModelQuotaError(candidateKey, targetModel, classified.type, {
+                isPerMinute: classified.isPerMinute,
+                retryDelaySec: classified.retryDelaySec,
+              });
+              if (kIdx < candidateKeys.length - 1) {
+                setFallbackNotice(
+                  `Key ${maskGoogleAiApiKey(candidateKey)} tạm hết quota trên ${targetModel} — đang tự động xoay sang key dự phòng #${kIdx + 2}/${candidateKeys.length}...`
+                );
+                continue;
+              }
+              break;
+            }
+
+            if (classified.type === 'INVALID_API_KEY' || classified.type === 'PERMISSION_DENIED') {
+              apiKeyManager.markKeyError(candidateKey, classified.type, targetModel);
+              if (kIdx < candidateKeys.length - 1) {
+                setFallbackNotice(`Key ${maskGoogleAiApiKey(candidateKey)} bị từ chối — đang xoay sang key dự phòng...`);
+                continue;
+              }
+              break;
+            }
+
+            if (
+              classified.type === 'MODEL_OVERLOADED' ||
+              classified.type === 'TRANSIENT_SERVER_ERROR' ||
+              classified.type === 'NOT_FOUND' ||
+              classified.isThinkingConfigError
+            ) {
+              modelServerFailed = true;
+              break;
+            }
+
+            throw err;
+          }
+        }
+
+        // Tầng 3: Fallback sang Server Proxy (/api/gemini) nếu bật
+        if (!modelServerFailed && proxyStatus.available) {
+          try {
+            if (hasAnyClientKey) {
+              setFallbackNotice(`Key cá nhân tạm hết quota trên ${targetModel} — đang dùng kho key dự phòng máy chủ...`);
+            }
+            chatSessionRef.current = await cloneVariantSession(SERVER_PROXY_KEY_SENTINEL, historySnapshot, targetModel, 'gemini');
+            currentModelRef.current = targetModel;
+            currentKeyRef.current = SERVER_PROXY_KEY_SENTINEL;
+            await executeFn(chatSessionRef.current);
+            setFallbackNotice(null);
+            return true;
+          } catch (proxyErr: any) {
+            if (proxyErr instanceof UserFacingError) throw proxyErr;
+            lastError = proxyErr;
+            resetOutput();
+            chatSessionRef.current = null;
+            console.warn(`[Variants] (gemini-proxy) Step '${stepName}' failed on model=${targetModel}:`, proxyErr);
+          }
+        }
+
+        // Tầng 2: Hạ sang model Free Tier tiếp theo
+        if (mIdx < models.length - 1) {
+          const nextModel = models[mIdx + 1];
+          setFallbackNotice(
+            `Đang tự động chuyển từ ${targetModel} sang ${nextModel} (mỗi model có hạn mức miễn phí riêng)...`
+          );
+        }
+      }
+      return false;
+    };
+
+    try {
+      while (true) {
+        const ok = await runPass();
+        if (ok) return;
+        const lastType = lastError ? classifyApiError(lastError).type : 'UNKNOWN';
+        if (!hasWaitedRpm && (lastType === 'RATE_LIMIT' || lastType === 'QUOTA_EXCEEDED')) {
+          const soonestMs = apiKeyManager.getSoonestCooldownMs(models[0]);
+          if (soonestMs !== null && soonestMs > 0 && soonestMs <= 35_000) {
+            hasWaitedRpm = true;
+            const waitSec = Math.ceil(soonestMs / 1000);
+            setFallbackNotice(`Tất cả key đang nghỉ giới hạn tốc độ (RPM) — tự động thử lại sau ${waitSec} giây...`);
+            await delay(soonestMs + 500);
+            continue;
+          }
+        }
+        break;
+      }
+    } finally {
+      setFallbackNotice(null);
+    }
+
+    throw new Error(getFriendlyGeminiErrorMessage(lastError, 'gemini'));
   };
 
   const STEP_STATES = [VariantState.PROCESSING_STEP_1, VariantState.PROCESSING_STEP_2, VariantState.PROCESSING_STEP_3] as const;
@@ -104,30 +270,58 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
     if (!checkAuth()) return;
 
     const provider = getAiProvider();
-    const models = getGeminiModelsToTry(getSelectedModel(), provider);
-    const apiKey = getApiKey(provider);
-    if (!apiKey) {
+    if (provider === 'gemini' && !getServerProxyStatus().checked && apiKeyManager.getAllKeys().length === 0) {
+      await checkServerProxyAvailable();
+    }
+    if (!hasAiAccess(provider)) {
       setError(`Vui lòng nhập API Key cho ${provider === 'agent-platform' ? 'Agent Platform' : 'Google Gemini'} trong phần Cài đặt.`);
       return;
     }
 
+    const models = getGeminiModelsToTry(getSelectedModel(provider), provider);
+    const initialKey =
+      provider === 'agent-platform'
+        ? getApiKey('agent-platform')!
+        : apiKeyManager.getAvailableKeysForModel(models[0])[0] ||
+          apiKeyManager.getActiveKey(models[0]) ||
+          SERVER_PROXY_KEY_SENTINEL;
+
     setError(null);
     setFailedStep(null);
     setFallbackNotice(null);
-    if (fromStep === 1 || !chatSessionRef.current) {
-      // Bắt đầu lại từ đầu (hoặc chưa có phiên): tạo phiên mới
+    if (fromStep === 1 || (!chatSessionRef.current && historyBeforeFailedStepRef.current.length === 0)) {
+      // Bắt đầu lại từ đầu: tạo phiên mới
       fromStep = 1;
-      currentModelIndexRef.current = 0;
+      historyBeforeFailedStepRef.current = [];
+      currentModelRef.current = models[0];
+      currentKeyRef.current = initialKey;
       setCol1(''); setCol2(''); setCol3('');
-      chatSessionRef.current = createVariantSession(apiKey, models[0], provider);
+      chatSessionRef.current = createVariantSession(initialKey, models[0], provider);
     } else {
-      // Chạy tiếp: xoá phần dở dang của bước lỗi và các bước sau
+      // Chạy tiếp từ bước lỗi: xoá phần dở dang của bước lỗi và các bước sau, khôi phục từ snapshot sạch
       for (let k = fromStep; k <= 3; k++) setters[k - 1]('');
+      currentModelRef.current = models[0];
+      currentKeyRef.current = initialKey;
+      chatSessionRef.current = await cloneVariantSession(initialKey, historyBeforeFailedStepRef.current, models[0], provider);
     }
 
     for (let step = fromStep; step <= 3; step++) {
       setState(STEP_STATES[step - 1]);
       const setCol = setters[step - 1];
+      let historySnapshot: Content[] = [];
+      if (step > 1) {
+        if (chatSessionRef.current) {
+          try {
+            historySnapshot = await Promise.resolve(chatSessionRef.current.getHistory());
+          } catch {
+            historySnapshot = historyBeforeFailedStepRef.current;
+          }
+        } else {
+          historySnapshot = historyBeforeFailedStepRef.current;
+        }
+      }
+      historyBeforeFailedStepRef.current = historySnapshot;
+
       try {
         await executeStepWithRetry(
           `Step ${step}`,
@@ -135,7 +329,8 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
             if (step === 1) await generateVariantStep1(chat, file, (chunk) => setCol(prev => prev + chunk), subject);
             else await generateVariantNextStep(chat, step as 2 | 3, (chunk) => setCol(prev => prev + chunk));
           },
-          () => setCol('')
+          () => setCol(''),
+          historySnapshot
         );
       } catch (err: any) {
         handleError(err, step as 1 | 2 | 3);
@@ -171,7 +366,9 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
     setError(null);
     setFailedStep(null);
     chatSessionRef.current = null;
-    currentModelIndexRef.current = 0;
+    historyBeforeFailedStepRef.current = [];
+    currentModelRef.current = '';
+    currentKeyRef.current = '';
   };
 
   // ===== IDLE =====
@@ -338,9 +535,18 @@ const VariantsExamPage: React.FC<VariantsExamPageProps> = ({ checkAuth }) => {
 
       {/* Error Banner */}
       {error && (
-        <div className="mb-4 mx-auto max-w-2xl w-full p-4 bg-red-50 text-red-700 border border-red-200 rounded-xl flex items-center gap-3">
+        <div className="mb-4 mx-auto max-w-2xl w-full p-4 bg-red-50 text-red-700 border border-red-200 rounded-xl flex flex-wrap items-center gap-3">
           <AlertCircle className="w-5 h-5 shrink-0" />
-          <span className="break-words text-sm flex-1">{error}</span>
+          <span className="break-words text-sm flex-1 min-w-[200px]">{error}</span>
+          {onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-xs shrink-0"
+            >
+              <Key className="w-3.5 h-3.5" />
+              Thêm API Key
+            </button>
+          )}
           {failedStep && file && (
             <button onClick={() => runFrom(failedStep)} className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-xs shrink-0">
               {failedStep === 1 ? 'Thử lại' : `Chạy tiếp từ Đề ${failedStep}`}

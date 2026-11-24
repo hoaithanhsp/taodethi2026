@@ -61,7 +61,7 @@ export const getVariantModels = (provider: AiProvider = getAiProvider()) => {
 export const VARIANT_MODELS = getVariantModels('gemini');
 
 export const createVariantSession = (
-  apiKey: string,
+  apiKey: string | null | undefined,
   model?: string,
   provider: AiProvider = getAiProvider()
 ): Chat => {
@@ -81,22 +81,26 @@ export const createVariantSession = (
 };
 
 export const cloneVariantSession = async (
-  apiKey: string,
-  oldChat: Chat,
+  apiKey: string | null | undefined,
+  oldChatOrHistory: Chat | Content[],
   newModel: string,
   provider: AiProvider = getAiProvider()
 ): Promise<Chat> => {
   let history: Content[] = [];
-  try {
-    history = await oldChat.getHistory();
-  } catch (e) {
-    console.warn("[Variants] Could not retrieve history for cloning, starting fresh", e);
+  if (Array.isArray(oldChatOrHistory)) {
+    history = oldChatOrHistory.map(item => ({ ...item }));
+  } else if (oldChatOrHistory) {
+    try {
+      history = await oldChatOrHistory.getHistory();
+    } catch (e) {
+      console.warn("[Variants] Could not retrieve history for cloning, starting fresh", e);
+    }
   }
 
   const ai = createGoogleAiClient(apiKey, provider);
   return ai.chats.create({
     model: newModel,
-    history: history,
+    history,
     config: createGeminiConfig({
       provider,
       model: newModel,
@@ -108,7 +112,7 @@ export const cloneVariantSession = async (
 };
 
 const CONTINUE_PROMPT = 'Phần trả lời vừa rồi bị cắt do quá dài. Hãy VIẾT TIẾP ngay từ chỗ bị cắt (không lặp lại phần đã viết, không viết lại tiêu đề), cho tới hết đề và hết đáp án.';
-const TRUNCATED_NOTE = '\n\n> ⚠️ Nội dung quá dài nên bị cắt ở đây. Hãy chọn model Pro trong Cài đặt rồi chạy lại, hoặc dùng đề gốc ngắn hơn.';
+const TRUNCATED_NOTE = '\n\n> ⚠️ Nội dung quá dài nên bị cắt ở đây. Hãy chọn model Gemini 4 Hydrogen trong Cài đặt rồi chạy lại, hoặc dùng đề gốc ngắn hơn.';
 
 /**
  * Gửi 1 lượt trong phiên chat và stream kết quả.
