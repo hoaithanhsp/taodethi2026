@@ -176,50 +176,126 @@ export const GRADE_NO_ESSAY = ['12'];
 
 export type AiProvider = 'gemini' | 'agent-platform';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
-export const DEFAULT_AGENT_PLATFORM_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen';
+export const DEFAULT_AGENT_PLATFORM_MODEL = 'gemini-3-flash-preview';
 export const MODEL_NAME = DEFAULT_GEMINI_MODEL;
 
-export const GEMINI_MODEL_STORAGE_KEY = 'gemini_model_id_v38';
+export const GEMINI_MODEL_STORAGE_KEY = 'gemini_model_id_v4';
 export const LEGACY_GEMINI_MODEL_STORAGE_KEYS = [
+  'gemini_model_id_v38',
   'GEMINI_MODEL_ID',
   'examcraft_selected_model',
   'gemini_model_id',
+  'selected_model',
 ] as const;
 
-export const GEMINI_MODELS = [
-  { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', desc: 'Mới nhất (GA 09/2026) — thông minh, tốc độ cao & chịu tải tốt nhất', badge: 'Mặc định' },
-  { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', desc: 'Bản ổn định tốc độ cao, thực thi đa bước tin cậy (GA 08/2026)', badge: 'Stable' },
-  { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', desc: 'Tốc độ cực nhanh, chi phí thấp, dung lượng chịu tải rất lớn', badge: 'Lite' },
-  { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', desc: 'Bản ổn định thế hệ 3.6 cân bằng đa phương thức', badge: 'Stable' },
-  { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', desc: 'Bản ổn định thế hệ 3.5', badge: 'Stable' },
-  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Preview)', desc: 'Suy luận chuyên sâu phức tạp (yêu cầu Paid API Key)', badge: 'Pro' },
-  { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', desc: 'Nhẹ, tương thích ngược', badge: 'Lite' },
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Ổn định thế hệ 2.5, dự phòng cuối chuỗi', badge: 'Stable' },
-  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', desc: 'Suy luận sâu thế hệ 2.5', badge: 'Pro' },
+export const isGemini3Or4 = (model: string): boolean => /^gemini-[34]/i.test((model || '').trim());
+export const isLiteModel = (model: string): boolean => /flash-lite/i.test((model || '').trim());
+
+export interface ModelCatalogItem {
+  id: string;
+  name: string;
+  desc: string;
+  badge: string;
+  isFree?: boolean;
+  isDefault?: boolean;
+}
+
+// 6 model MIỄN PHÍ (Free Tier) đang hoạt động theo api.md v5.0 (24/11/2026), KHÔNG có model deprecated/auto-route
+export const GEMINI_MODELS: ModelCatalogItem[] = [
+  {
+    id: 'gemini-4-hydrogen',
+    name: 'Gemini 4 Hydrogen',
+    desc: 'Mới nhất (GA 11/2026, Miễn phí) — giảm >5x ảo giác, bám chuẩn CV 7991 & công thức Toán-Lý-Hóa xuất sắc',
+    badge: 'Mặc định',
+    isFree: true,
+    isDefault: true,
+  },
+  {
+    id: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
+    desc: 'Ổn định (GA 09/2026, Miễn phí) — chất lượng cao, sinh ma trận, đề thi & lời giải dài mượt mà',
+    badge: 'Miễn phí',
+    isFree: true,
+  },
+  {
+    id: 'gemini-3.5-flash-lite',
+    name: 'Gemini 3.5 Flash-Lite',
+    desc: 'Nhanh nhất (GA 07/2026, Miễn phí) — chịu tải lớn, quota rộng, lý tưởng khi cao điểm',
+    badge: 'Siêu nhanh',
+    isFree: true,
+  },
+  {
+    id: 'gemini-3.6-flash',
+    name: 'Gemini 3.6 Flash',
+    desc: 'Cân bằng (GA 07/2026, Miễn phí) — đọc ảnh/PDF & xử lý đa bước ổn định, hạn mức riêng biệt',
+    badge: 'Miễn phí',
+    isFree: true,
+  },
+  {
+    id: 'gemini-3.1-flash-lite',
+    name: 'Gemini 3.1 Flash-Lite',
+    desc: 'Nhẹ (GA 05/2026, Miễn phí) — dự phòng riêng biệt khi các model chính bận',
+    badge: 'Lite',
+    isFree: true,
+  },
+  {
+    id: 'gemini-3-flash-preview',
+    name: 'Gemini 3 Flash (Preview)',
+    desc: 'Preview (Miễn phí) — dự phòng cuối cùng dòng Gemini 3',
+    badge: 'Preview',
+    isFree: true,
+  },
 ];
 
-export const AGENT_PLATFORM_MODELS = [
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Mặc định cho Agent Platform API, tốc độ nhanh, ổn định', badge: 'Mặc định' },
-  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', desc: 'Tốc độ cao, chi phí thấp trên Agent Platform', badge: 'Lite' },
-  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', desc: 'Suy luận mạnh trên Agent Platform, xử lý tài liệu dài', badge: 'Pro' },
-  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Preview)', desc: 'Suy luận phức tạp thế hệ 3.1 trên Agent Platform', badge: 'Pro' },
+// Danh sách model Agent Platform Express Mode (cập nhật 11/2026 theo api.md §III)
+export const AGENT_PLATFORM_MODELS: ModelCatalogItem[] = [
+  {
+    id: 'gemini-3-flash-preview',
+    name: 'Gemini 3 Flash (Preview)',
+    desc: 'Mặc định mới cho Agent Platform API, tốc độ cao, tư duy mạnh',
+    badge: 'Mặc định',
+    isDefault: true,
+  },
+  {
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
+    desc: 'Ổn định trên Agent Platform Express Mode, tốc độ nhanh',
+    badge: 'Ổn định',
+  },
+  {
+    id: 'gemini-2.5-flash-lite',
+    name: 'Gemini 2.5 Flash-Lite',
+    desc: 'Tốc độ cao, chi phí thấp trên Agent Platform',
+    badge: 'Lite',
+  },
+  {
+    id: 'gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro',
+    desc: 'Suy luận mạnh trên Agent Platform, xử lý đề thi dài',
+    badge: 'Pro',
+  },
+  {
+    id: 'gemini-3.1-pro-preview',
+    name: 'Gemini 3.1 Pro (Preview)',
+    desc: 'Suy luận phức tạp thế hệ 3.1 trên Agent Platform',
+    badge: 'Pro',
+  },
 ];
 
 export const FALLBACK_GEMINI_MODELS = [
+  'gemini-4-hydrogen',
   'gemini-3.8-flash',
-  'gemini-3.7-flash',
   'gemini-3.5-flash-lite',
   'gemini-3.6-flash',
-  'gemini-3.5-flash',
   'gemini-3.1-flash-lite',
-  'gemini-2.5-flash',
+  'gemini-3-flash-preview',
 ] as const;
 
 export const AGENT_PLATFORM_FALLBACK_MODELS = [
+  'gemini-3-flash-preview',
   'gemini-2.5-flash',
   'gemini-2.5-flash-lite',
-  'gemini-2.5-pro',
 ] as const;
 
 export const PROVIDER_FALLBACK_MODELS: Record<AiProvider, string[]> = {
